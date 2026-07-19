@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.venv
+.tools
+.pytest_cache
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+data
+frontend/dist
+frontend/node_modules
+frontend/*.tsbuildinfo
