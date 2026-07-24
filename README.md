@@ -1,7 +1,7 @@
 # A-Share Laboratory
 
 A local laboratory for exploring mainland China A-share data with natural
-language, deterministic safety checks, and transparent Tushare results.
+language, deterministic safety checks, and transparent upstream results.
 
 The project is designed for data experiments rather than trade execution or
 investment advice. It currently covers equities listed on the Shanghai,
@@ -9,8 +9,8 @@ Shenzhen, and Beijing exchanges.
 
 ## Data foundation
 
-The laboratory uses the Tushare Pro stock-data catalog as its upstream API
-boundary:
+The first market-data provider is Tushare Pro. Its stock-data catalog defines
+the current upstream API boundary:
 
 - **Official stock OpenAPI documentation:**
   [Tushare Pro Stock Data](https://tushare.pro/document/2?doc_id=14)
@@ -33,9 +33,10 @@ How many A-share stocks rose or fell on July 17, 2026?
 The application will:
 
 1. interpret the request with DeepSeek;
-2. produce a structured Tushare query plan;
-3. validate the plan against the stock API allowlist and A-share boundary;
-4. call Tushare from the local Python backend;
+2. produce a provider-neutral structured query plan;
+3. validate the plan against the selected provider's operation catalog and the
+   A-share boundary;
+4. call the selected market-data provider from the local Python backend;
 5. compute supported local summaries;
 6. display the plan, source rows, and any upstream errors in the browser.
 
@@ -44,9 +45,12 @@ The application will:
 ```mermaid
 flowchart LR
     UI["Local React UI"] --> API["FastAPI backend"]
-    API --> PLANNER["DeepSeek query planner"]
+    API --> WORKFLOW["Provider-neutral workflow"]
+    WORKFLOW --> PLANNER_PORT["QueryPlanner port"]
+    PLANNER_PORT --> PLANNER["DeepSeek adapter"]
     PLANNER --> VALIDATOR["A-share plan validator"]
-    VALIDATOR --> EXECUTOR["Tushare executor"]
+    VALIDATOR --> PROVIDER_PORT["MarketDataProvider port"]
+    PROVIDER_PORT --> EXECUTOR["Tushare adapter"]
     EXECUTOR --> L1["Bounded in-memory cache"]
     L1 --> L2["Cloud Storage cache"]
     L2 --> TUSHARE["Tushare Pro stock APIs"]
@@ -56,9 +60,22 @@ flowchart LR
 ```
 
 DeepSeek does not call Tushare directly. It only returns a JSON query plan
-containing API names, parameters, requested fields, purposes, and optional
-controlled aggregations. The local backend validates and executes that plan.
-Tushare result rows are not sent back to DeepSeek.
+containing provider-neutral operation names, parameters, requested fields,
+purposes, and optional controlled aggregations. The local backend validates and
+executes that plan. Market-data result rows are not sent back to DeepSeek.
+
+The application core depends on two replaceable ports:
+
+- `QueryPlanner` translates natural language into a `QueryPlan`; DeepSeek is
+  the current adapter.
+- `MarketDataProvider` publishes an operation catalog and executes `DataQuery`
+  objects; Tushare is the current adapter.
+
+Provider-specific HTTP payloads, credentials, errors, operation names, and
+cache-expiration rules remain inside their adapters. Adding another model or
+data provider therefore does not require changing the API or orchestration
+workflow. Provider selection is currently fixed during application startup;
+runtime selection can be added later without changing these contracts.
 
 ## Current capabilities
 
@@ -73,10 +90,10 @@ Tushare result rows are not sent back to DeepSeek.
 | Local summaries | Controlled numeric counts such as advanced, declined, and unchanged |
 | Failure inspection | Original safe DeepSeek and Tushare error bodies |
 
-Most Tushare APIs use one generic request executor. The transport, token use,
-allowlist, market validation, result conversion, and error handling are local
-code. DeepSeek currently decides which API to use and which parameters and
-fields to request.
+Most Tushare APIs use one generic provider adapter. The transport, token use,
+operation catalog, market validation, result conversion, and error handling are
+local code. DeepSeek currently decides which operation to use and which
+parameters and fields to request.
 
 ## Configuration
 
@@ -86,11 +103,12 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-Add both credentials and the private cache bucket:
+Add the three credentials and the private cache bucket:
 
 ```dotenv
 TUSHARE_TOKEN=your_real_token
 DEEPSEEK_API_KEY=your_real_key
+ZAI_API_KEY=your_real_zai_key
 TUSHARE_CACHE_BUCKET=your_private_cache_bucket
 ```
 
@@ -105,13 +123,15 @@ the server:
 gcloud auth application-default login
 ```
 
-Successful Tushare responses are cached by API name, normalized parameters,
-ordered fields, and cache schema version. The process-local L1 cache is bounded
-to 256 records and 128 MiB. The persistent L2 cache stores gzip-compressed JSON
-objects and survives Cloud Run scale-to-zero events and deployments. Cache
-expiration is calculated in `Asia/Shanghai` from conservative Tushare
-publication windows. Upstream and cache errors are never stored as successful
-responses.
+Successful market-data responses are cached by provider name, operation name,
+normalized parameters, ordered fields, and cache schema version. Including the
+provider prevents collisions when another data source is added. The
+process-local L1 cache is bounded to 256 records and 128 MiB. The persistent L2
+cache stores gzip-compressed JSON objects and survives Cloud Run scale-to-zero
+events and deployments. The Tushare adapter calculates expiration in
+`Asia/Shanghai` from conservative Tushare publication windows. Each future
+provider can supply its own expiration policy. Upstream and cache errors are
+never stored as successful responses.
 
 ## Installation
 
@@ -140,7 +160,9 @@ Start the combined production-style application:
 a-share-web
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+Open [http://127.0.0.1:8000/analysis](http://127.0.0.1:8000/analysis) for
+data analysis or [http://127.0.0.1:8000/basic](http://127.0.0.1:8000/basic) for
+reference data. The root path redirects to `/analysis`.
 
 For frontend development, keep the backend running and start Vite separately:
 
@@ -149,14 +171,19 @@ cd frontend
 pnpm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` to
-the Python backend on port `8000`.
+Open [http://127.0.0.1:5173/analysis](http://127.0.0.1:5173/analysis) or
+[http://127.0.0.1:5173/basic](http://127.0.0.1:5173/basic). Vite proxies
+`/api` to the Python backend on port `8000`.
 
 ## Deploy to Google Cloud Run
 
 The repository includes a multi-stage `Dockerfile`. It builds the React
 frontend and serves the resulting files from the same FastAPI container, so a
 deployment exposes only one HTTPS service.
+
+The verified live-resource inventory, IAM boundaries, lifecycle policies, and
+cost posture are maintained in
+[`docs/gcp-resources.md`](docs/gcp-resources.md).
 
 Recommended initial Cloud Run settings:
 
@@ -169,9 +196,10 @@ Recommended initial Cloud Run settings:
 - Request timeout: 300 seconds
 - Health endpoint: `/api/health`
 
-Store `TUSHARE_TOKEN` and `DEEPSEEK_API_KEY` in Secret Manager and expose them
-to the service as environment variables. Configure `TUSHARE_CACHE_BUCKET` as a
-plain environment variable because it is a resource identifier, not a secret.
+Store `TUSHARE_TOKEN`, `DEEPSEEK_API_KEY`, and `ZAI_API_KEY` in Secret
+Manager and expose them to the service as environment variables. Configure
+`TUSHARE_CACHE_BUCKET` as a plain environment variable because it is a resource
+identifier, not a secret.
 Do not upload `.env`; it is excluded from Git, the Docker build context, and the
 `gcloud` source upload.
 
@@ -192,13 +220,14 @@ gcloud run deploy china-a-share-lab \
   --timeout 300 \
   --service-account china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com \
   --set-env-vars TUSHARE_CACHE_BUCKET=china-a-share-lab-cache-asia-east2 \
-  --set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest
+  --set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest
 ```
 
-Create the two named secrets and the private regional cache bucket before
-deployment. Apply `infra/cache-lifecycle.json`, disable object versioning and
-soft delete, and grant the Cloud Run service account `roles/storage.objectUser`
-on that bucket only. Making the service public with
+Create the three named secrets and the private regional cache bucket before
+deployment. After provisioning the Z.AI secret, update the verified live
+inventory in `docs/gcp-resources.md`. Apply `infra/cache-lifecycle.json`, disable
+object versioning and soft delete, and grant the Cloud Run service account
+`roles/storage.objectUser` on that bucket only. Making the service public with
 `--allow-unauthenticated` should only be done after login and request-rate
 protection are enabled, or for a short controlled connectivity test.
 

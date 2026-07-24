@@ -1,29 +1,37 @@
-"""A-share analysis tools powered by Tushare."""
+"""Provider-neutral A-share analysis tools."""
 
-from .client import TushareClient
 from .config import Settings
-from .contracts import (
+from .core.contracts import (
+    AnalysisImage,
     AnalysisRequest,
     AnalysisResponse,
     AnalysisStatus,
     ConditionalCount,
+    DataFilter,
+    DataOperation,
+    DataQuery,
+    DecisionTraceStep,
     QueryPlan,
     QueryResult,
     QueryStatus,
+    RequirementCoverage,
     ServiceError,
-    TushareQuery,
 )
 
 __all__ = [
+    "AnalysisImage",
     "AnalysisRequest",
     "AnalysisResponse",
     "AnalysisStatus",
     "ConditionalCount",
+    "DataFilter",
+    "DataOperation",
+    "DataQuery",
+    "DecisionTraceStep",
     "QueryPlan",
     "QueryResult",
     "QueryStatus",
+    "RequirementCoverage",
     "ServiceError",
     "Settings",
-    "TushareClient",
-    "TushareQuery",
 ]

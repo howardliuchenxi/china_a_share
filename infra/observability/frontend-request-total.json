@@ -1,0 +1,32 @@
+{
+  "name": "frontend_request_total",
+  "description": "Counts completed requests to bounded application API routes.",
+  "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"china-a-share-lab\" AND jsonPayload.event=\"http_request_completed\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1",
+    "labels": [
+      {
+        "key": "api_route",
+        "valueType": "STRING",
+        "description": "Bounded FastAPI route template."
+      },
+      {
+        "key": "method",
+        "valueType": "STRING",
+        "description": "HTTP request method."
+      },
+      {
+        "key": "status_class",
+        "valueType": "STRING",
+        "description": "Bounded HTTP response status class."
+      }
+    ]
+  },
+  "labelExtractors": {
+    "api_route": "EXTRACT(jsonPayload.api_route)",
+    "method": "EXTRACT(jsonPayload.method)",
+    "status_class": "EXTRACT(jsonPayload.status_class)"
+  }
+}

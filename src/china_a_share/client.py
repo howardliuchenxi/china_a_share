@@ -1,4 +1,4 @@
-"""Tushare Pro client with raw upstream error preservation."""
+"""Low-level Tushare transport with raw upstream error preservation."""
 
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -6,15 +6,14 @@ import pandas as pd
 import requests
 import tushare as ts
 
-from .cache import LayeredTushareResponseCache
-from .config import Settings
+from .core.errors import DataProviderError
 
 
 TUSHARE_API_BASE_URL = "http://api.waditu.com/dataapi"
 TUSHARE_REQUEST_TIMEOUT_SECONDS = 60
 
 
-class TushareApiError(RuntimeError):
+class TushareApiError(DataProviderError):
     """Tushare failure containing the original safe response body."""
 
     def __init__(
@@ -24,26 +23,29 @@ class TushareApiError(RuntimeError):
         http_status: Optional[int] = None,
         raw_response: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.http_status = http_status
-        self.raw_response = raw_response
+        super().__init__(
+            source="tushare",
+            message=message,
+            code=code,
+            http_status=http_status,
+            raw_response=raw_response,
+        )
 
 
-class TushareClient:
-    """Authenticate once and expose Tushare stock data calls."""
+class TushareTransport:
+    """Authenticate once and expose uncached Tushare data calls."""
 
     def __init__(
         self,
-        settings: Settings,
+        token: str,
         pro_api: Optional[Any] = None,
         session: Optional[requests.Session] = None,
-        response_cache: Optional[LayeredTushareResponseCache] = None,
     ) -> None:
-        self._settings = settings
-        self.pro = pro_api if pro_api is not None else ts.pro_api(settings.tushare_token)
+        if not token.strip():
+            raise ValueError("token must not be empty")
+        self._token = token
+        self.pro = pro_api if pro_api is not None else ts.pro_api(token)
         self.session = session if session is not None else requests.Session()
-        self.response_cache = response_cache
 
     def check_connection(self) -> pd.DataFrame:
         """Verify the token, network, and basic daily-data permission."""
@@ -82,23 +84,7 @@ class TushareClient:
         params: Dict[str, Any],
         fields: Sequence[str],
     ) -> pd.DataFrame:
-        """Call any allowlisted Tushare stock API and retain its error body."""
-        if self.response_cache is not None:
-            return self.response_cache.get_or_fetch(
-                api_name,
-                params,
-                fields,
-                lambda: self._query_uncached(api_name, params, fields),
-            )
-        return self._query_uncached(api_name, params, fields)
-
-    def _query_uncached(
-        self,
-        api_name: str,
-        params: Dict[str, Any],
-        fields: Sequence[str],
-    ) -> pd.DataFrame:
-        """Perform one upstream request without reading or writing cache state."""
+        """Perform one uncached Tushare call and retain its safe error body."""
         if api_name == "pro_bar":
             try:
                 return ts.pro_bar(pro_api=self.pro, **params)
@@ -107,7 +93,7 @@ class TushareClient:
 
         request_body = {
             "api_name": api_name,
-            "token": self._settings.tushare_token,
+            "token": self._token,
             "params": params,
             "fields": ",".join(fields),
         }

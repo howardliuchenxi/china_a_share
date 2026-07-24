@@ -1,0 +1,44 @@
+{
+  "name": "data_cache_lookup_total",
+  "description": "Counts final cache outcomes once per logical market-data query.",
+  "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"china-a-share-lab\" AND jsonPayload.event=\"cache_lookup_completed\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1",
+    "labels": [
+      {
+        "key": "api_route",
+        "valueType": "STRING",
+        "description": "Bounded FastAPI route template."
+      },
+      {
+        "key": "provider",
+        "valueType": "STRING",
+        "description": "Market-data provider identifier."
+      },
+      {
+        "key": "operation",
+        "valueType": "STRING",
+        "description": "Bounded provider operation name."
+      },
+      {
+        "key": "outcome",
+        "valueType": "STRING",
+        "description": "Final cache lookup outcome."
+      },
+      {
+        "key": "cache_layer",
+        "valueType": "STRING",
+        "description": "Cache layer serving the response or none."
+      }
+    ]
+  },
+  "labelExtractors": {
+    "api_route": "EXTRACT(jsonPayload.api_route)",
+    "provider": "EXTRACT(jsonPayload.provider)",
+    "operation": "EXTRACT(jsonPayload.operation)",
+    "outcome": "EXTRACT(jsonPayload.outcome)",
+    "cache_layer": "EXTRACT(jsonPayload.cache_layer)"
+  }
+}

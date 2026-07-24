@@ -7,7 +7,7 @@ from typing import Optional, Sequence
 
 import pandas as pd
 
-from .client import TushareClient
+from .client import TushareTransport
 from .config import ConfigurationError, Settings
 
 
@@ -45,7 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        client = TushareClient(Settings.from_env())
+        settings = Settings.from_env()
+        client = TushareTransport(settings.tushare_token)
         if args.command == "check":
             frame = client.check_connection()
             print(f"Tushare connection succeeded with {len(frame)} test rows.")

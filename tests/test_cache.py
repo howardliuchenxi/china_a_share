@@ -1,3 +1,4 @@
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Event, Lock
@@ -8,13 +9,13 @@ import pandas as pd
 import pytest
 
 from china_a_share.cache import (
-    CloudStorageTushareCacheStore,
-    LayeredTushareResponseCache,
-    MemoryTushareCacheStore,
-    build_tushare_cache_key,
-    resolve_tushare_cache_expiration,
+    CloudStorageDataCacheStore,
+    LayeredDataResponseCache,
+    MemoryDataCacheStore,
+    build_data_cache_key,
 )
-from china_a_share.contracts import TushareCacheRecord
+from china_a_share.core.contracts import DataCacheRecord
+from china_a_share.providers.tushare import TushareCacheExpirationPolicy
 
 
 BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
@@ -69,15 +70,16 @@ class FakeStorageClient:
 
 
 def make_record(
-    api_name="daily",
+    operation="daily",
     fetched_at=None,
     expires_at=None,
     close=10.5,
 ):
     fetched_at = fetched_at or datetime(2026, 7, 17, 17, 15, tzinfo=BEIJING_TIMEZONE)
     expires_at = expires_at or fetched_at + timedelta(days=1)
-    return TushareCacheRecord(
-        api_name=api_name,
+    return DataCacheRecord(
+        provider="tushare",
+        operation=operation,
         params={"trade_date": "20260717"},
         fields=["ts_code", "close"],
         fetched_at=fetched_at,
@@ -88,17 +90,20 @@ def make_record(
 
 
 def test_cache_key_normalizes_parameter_order_and_preserves_field_order():
-    first = build_tushare_cache_key(
+    first = build_data_cache_key(
+        "tushare",
         "daily",
         {"trade_date": "20260717", "ts_code": "000001.SZ"},
         ["ts_code", "close"],
     )
-    reordered_params = build_tushare_cache_key(
+    reordered_params = build_data_cache_key(
+        "tushare",
         "daily",
         {"ts_code": "000001.SZ", "trade_date": "20260717"},
         ["ts_code", "close"],
     )
-    reordered_fields = build_tushare_cache_key(
+    reordered_fields = build_data_cache_key(
+        "tushare",
         "daily",
         {"trade_date": "20260717", "ts_code": "000001.SZ"},
         ["close", "ts_code"],
@@ -106,11 +111,29 @@ def test_cache_key_normalizes_parameter_order_and_preserves_field_order():
 
     assert first == reordered_params
     assert first != reordered_fields
-    assert first.startswith("v1/daily/")
+    assert first.startswith("v4/tushare/daily/")
+
+
+def test_cache_key_isolated_by_market_data_provider():
+    tushare_key = build_data_cache_key(
+        "tushare",
+        "daily",
+        {"trade_date": "20260717"},
+        ["ts_code", "close"],
+    )
+    alternative_key = build_data_cache_key(
+        "alternative",
+        "daily",
+        {"trade_date": "20260717"},
+        ["ts_code", "close"],
+    )
+
+    assert tushare_key != alternative_key
+    assert alternative_key.startswith("v4/alternative/daily/")
 
 
 def test_memory_store_evicts_least_recently_used_entry():
-    store = MemoryTushareCacheStore(max_entries=2, max_bytes=1_000_000)
+    store = MemoryDataCacheStore(max_entries=2, max_bytes=1_000_000)
     store.put("first", make_record(close=10.0))
     store.put("second", make_record(close=11.0))
 
@@ -124,24 +147,24 @@ def test_memory_store_evicts_least_recently_used_entry():
 
 def test_cloud_storage_store_round_trips_compressed_record():
     client = FakeStorageClient()
-    store = CloudStorageTushareCacheStore("test-cache", storage_client=client)
+    store = CloudStorageDataCacheStore("test-cache", storage_client=client)
     record = make_record()
 
-    store.put("v1/daily/key", record)
-    restored = store.get("v1/daily/key")
+    store.put("v3/tushare/daily/key", record)
+    restored = store.get("v3/tushare/daily/key")
 
     assert client.bucket_names == ["test-cache"]
     assert restored == record
-    assert "cache/v1/daily/key.json.gz" in client.objects
+    assert "cache/v3/tushare/daily/key.json.gz" in client.objects
 
 
 def test_cloud_storage_store_returns_none_for_missing_object():
-    store = CloudStorageTushareCacheStore(
+    store = CloudStorageDataCacheStore(
         "test-cache",
         storage_client=FakeStorageClient(),
     )
 
-    assert store.get("v1/daily/missing") is None
+    assert store.get("v3/tushare/daily/missing") is None
 
 
 def test_layered_cache_promotes_valid_l2_record_into_l1():
@@ -149,9 +172,10 @@ def test_layered_cache_promotes_valid_l2_record_into_l1():
     memory_store = DictCacheStore()
     persistent_store = DictCacheStore()
     persistent_store.records["key"] = make_record(fetched_at=now)
-    cache = LayeredTushareResponseCache(
+    cache = LayeredDataResponseCache(
         memory_store,
         persistent_store,
+        TushareCacheExpirationPolicy(),
         now_provider=lambda: now,
     )
 
@@ -162,13 +186,14 @@ def test_layered_cache_promotes_valid_l2_record_into_l1():
     assert persistent_store.get_calls == ["key"]
 
 
-def test_layered_cache_deduplicates_concurrent_upstream_misses():
+def test_layered_cache_deduplicates_concurrent_upstream_misses(caplog):
     now = datetime(2026, 7, 17, 17, 15, tzinfo=BEIJING_TIMEZONE)
     memory_store = DictCacheStore()
     persistent_store = DictCacheStore()
-    cache = LayeredTushareResponseCache(
+    cache = LayeredDataResponseCache(
         memory_store,
         persistent_store,
+        TushareCacheExpirationPolicy(),
         now_provider=lambda: now,
     )
     fetch_started = Event()
@@ -184,32 +209,55 @@ def test_layered_cache_deduplicates_concurrent_upstream_misses():
         assert release_fetch.wait(timeout=2)
         return pd.DataFrame([{"ts_code": "000001.SZ", "close": 10.5}])
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(
-                cache.get_or_fetch,
-                "daily",
-                {"trade_date": "20260717"},
-                ["ts_code", "close"],
-                fetch,
-            )
-            for _ in range(4)
-        ]
-        assert fetch_started.wait(timeout=2)
-        release_fetch.set()
-        results = [future.result(timeout=2) for future in futures]
+    with caplog.at_level(logging.INFO):
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [
+                executor.submit(
+                    cache.get_or_fetch,
+                    "tushare",
+                    "daily",
+                    {"trade_date": "20260717"},
+                    ["ts_code", "close"],
+                    fetch,
+                    api_route="/api/analysis",
+                    request_id=f"request-{index}",
+                    query_id="daily-prices",
+                )
+                for index in range(4)
+            ]
+            assert fetch_started.wait(timeout=2)
+            release_fetch.set()
+            results = [future.result(timeout=2) for future in futures]
 
     assert fetch_count == 1
     assert all(result.iloc[0]["close"] == 10.5 for result in results)
+    events = [
+        record.structured_fields
+        for record in caplog.records
+        if hasattr(record, "structured_fields")
+    ]
+    cache_events = [
+        event for event in events if event["event"] == "cache_lookup_completed"
+    ]
+    provider_events = [
+        event for event in events if event["event"] == "provider_call_completed"
+    ]
+    assert len(cache_events) == 4
+    assert sum(event["outcome"] == "miss" for event in cache_events) == 1
+    assert sum(event["outcome"] == "hit" for event in cache_events) == 3
+    assert len(provider_events) == 1
+    assert provider_events[0]["status"] == "success"
+    assert provider_events[0]["row_count"] == 1
 
 
-def test_layered_cache_does_not_store_upstream_errors():
+def test_layered_cache_does_not_store_upstream_errors(caplog):
     now = datetime(2026, 7, 17, 17, 15, tzinfo=BEIJING_TIMEZONE)
     memory_store = DictCacheStore()
     persistent_store = DictCacheStore()
-    cache = LayeredTushareResponseCache(
+    cache = LayeredDataResponseCache(
         memory_store,
         persistent_store,
+        TushareCacheExpirationPolicy(),
         now_provider=lambda: now,
     )
     fetch_count = 0
@@ -219,19 +267,37 @@ def test_layered_cache_does_not_store_upstream_errors():
         fetch_count += 1
         raise RuntimeError("upstream unavailable")
 
-    for _ in range(2):
-        with pytest.raises(RuntimeError, match="upstream unavailable"):
-            cache.get_or_fetch("daily", {}, [], fetch)
+    with caplog.at_level(logging.INFO):
+        for index in range(2):
+            with pytest.raises(RuntimeError, match="upstream unavailable"):
+                cache.get_or_fetch(
+                    "tushare",
+                    "daily",
+                    {},
+                    [],
+                    fetch,
+                    api_route="/api/analysis",
+                    request_id=f"request-{index}",
+                    query_id="daily-prices",
+                )
 
     assert fetch_count == 2
     assert memory_store.records == {}
     assert persistent_store.records == {}
+    provider_events = [
+        record.structured_fields
+        for record in caplog.records
+        if getattr(record, "structured_fields", {}).get("event")
+        == "provider_call_completed"
+    ]
+    assert len(provider_events) == 2
+    assert all(event["status"] == "error" for event in provider_events)
 
 
 def test_daily_expiration_is_short_before_publication_completion():
     fetched_at = datetime(2026, 7, 17, 16, 0, tzinfo=BEIJING_TIMEZONE)
 
-    expires_at = resolve_tushare_cache_expiration(
+    expires_at = TushareCacheExpirationPolicy().resolve(
         "daily",
         {"trade_date": "20260717"},
         fetched_at,
@@ -243,7 +309,7 @@ def test_daily_expiration_is_short_before_publication_completion():
 def test_daily_expiration_is_long_after_fixed_date_is_complete():
     fetched_at = datetime(2026, 7, 17, 17, 15, tzinfo=BEIJING_TIMEZONE)
 
-    expires_at = resolve_tushare_cache_expiration(
+    expires_at = TushareCacheExpirationPolicy().resolve(
         "daily",
         {"trade_date": "20260717"},
         fetched_at,
@@ -255,6 +321,8 @@ def test_daily_expiration_is_long_after_fixed_date_is_complete():
 def test_trade_calendar_uses_long_reference_ttl():
     fetched_at = datetime(2026, 7, 17, 9, 0, tzinfo=BEIJING_TIMEZONE)
 
-    expires_at = resolve_tushare_cache_expiration("trade_cal", {}, fetched_at)
+    expires_at = TushareCacheExpirationPolicy().resolve(
+        "trade_cal", {}, fetched_at
+    )
 
     assert expires_at == fetched_at + timedelta(days=30)

@@ -5,12 +5,11 @@ import os
 
 import uvicorn
 
+from china_a_share.observability import StructuredLogFormatter
+
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
-APPLICATION_LOG_FORMAT = (
-    "timestamp=%(asctime)s level=%(levelname)s logger=%(name)s message=%(message)s"
-)
 
 
 def server_address() -> tuple[str, int]:
@@ -23,7 +22,9 @@ def server_address() -> tuple[str, int]:
 
 def configure_logging() -> None:
     """Emit application decision logs through the process root handler."""
-    logging.basicConfig(level=logging.INFO, format=APPLICATION_LOG_FORMAT)
+    handler = logging.StreamHandler()
+    handler.setFormatter(StructuredLogFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
 
 
 def main() -> None:

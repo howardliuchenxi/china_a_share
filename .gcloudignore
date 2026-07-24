@@ -3,11 +3,14 @@
 .gitignore
 .env
 .venv
+.pnpm-store
 .tools
 .pytest_cache
+.loop
 __pycache__
 *.py[cod]
 *.egg-info
+node_modules
 build
 dist
 data

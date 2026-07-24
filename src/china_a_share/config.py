@@ -19,6 +19,8 @@ class Settings:
     tushare_token: str
     deepseek_api_key: str = ""
     tushare_cache_bucket: str = ""
+    # GLM is optional for text-only requests and required for screenshots.
+    zai_api_key: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -35,8 +37,12 @@ class Settings:
                 "DEEPSEEK_API_KEY is missing. Add a valid DeepSeek API key to .env."
             )
         tushare_cache_bucket = os.getenv("TUSHARE_CACHE_BUCKET", "").strip()
+        zai_api_key = os.getenv("ZAI_API_KEY", "").strip()
+        if zai_api_key == "your_zai_api_key_here":
+            zai_api_key = ""
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
             tushare_cache_bucket=tushare_cache_bucket,
+            zai_api_key=zai_api_key,
         )

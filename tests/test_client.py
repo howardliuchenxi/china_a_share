@@ -1,7 +1,7 @@
 import pandas as pd
 
-from china_a_share.client import TushareClient
-from china_a_share.config import Settings
+from china_a_share.client import TushareTransport
+from china_a_share.providers.tushare import TushareDataProvider
 
 
 class FakeProApi:
@@ -21,14 +21,35 @@ class FakeResponseCache:
     def __init__(self):
         self.calls = []
 
-    def get_or_fetch(self, api_name, params, fields, fetch):
-        self.calls.append((api_name, params, fields))
+    def get_or_fetch(
+        self,
+        provider,
+        operation,
+        params,
+        fields,
+        fetch,
+        *,
+        api_route,
+        request_id,
+        query_id,
+    ):
+        self.calls.append(
+            (
+                provider,
+                operation,
+                params,
+                fields,
+                api_route,
+                request_id,
+                query_id,
+            )
+        )
         return pd.DataFrame([{"ts_code": "000001.SZ", "close": 10.5}])
 
 
 def test_daily_forwards_query_parameters():
     api = FakeProApi()
-    client = TushareClient(Settings("test-token"), pro_api=api)
+    client = TushareTransport("test-token", pro_api=api)
 
     result = client.daily("000001.SZ", "20240101", "20240131")
 
@@ -47,7 +68,7 @@ def test_daily_forwards_query_parameters():
 
 def test_stock_basic_requests_analysis_fields():
     api = FakeProApi()
-    client = TushareClient(Settings("test-token"), pro_api=api)
+    client = TushareTransport("test-token", pro_api=api)
 
     result = client.stock_basic(exchange="SSE")
 
@@ -56,25 +77,32 @@ def test_stock_basic_requests_analysis_fields():
     assert "industry" in api.calls[0][1]["fields"]
 
 
-def test_generic_query_delegates_to_configured_response_cache():
+def test_tushare_provider_delegates_to_provider_aware_cache():
     response_cache = FakeResponseCache()
-    client = TushareClient(
-        Settings("test-token"),
+    provider = TushareDataProvider(
+        "test-token",
+        response_cache,
         pro_api=FakeProApi(),
-        response_cache=response_cache,
     )
 
-    result = client.query(
+    result = provider.query(
         "daily",
         {"trade_date": "20260717"},
         ["ts_code", "close"],
+        api_route="/api/analysis",
+        request_id="request-1",
+        query_id="query-1",
     )
 
     assert result.iloc[0]["close"] == 10.5
     assert response_cache.calls == [
         (
+            "tushare",
             "daily",
             {"trade_date": "20260717"},
             ["ts_code", "close"],
+            "/api/analysis",
+            "request-1",
+            "query-1",
         )
     ]
