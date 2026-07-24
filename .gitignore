@@ -1,4 +1,5 @@
 .venv/
+.pnpm-store/
 .tools/
 __pycache__/
 *.py[cod]
@@ -6,6 +7,7 @@ __pycache__/
 .env
 data/*.csv
 frontend/node_modules/
+node_modules/
 frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
@@ -13,3 +15,13 @@ frontend/vite.config.d.ts
 dist/
 build/
 *.egg-info/
+.aider*
+
+# Loop engineering artifacts
+.loop/screenshots/*.png
+.loop/screenshots/*.jpg
+.loop/logs/*.log
+
+# Playwright
+frontend/test-results/
+frontend/.playwright/

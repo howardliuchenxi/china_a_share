@@ -2,6 +2,7 @@
 .gitignore
 .env
 .venv
+.pnpm-store
 .tools
 .pytest_cache
 __pycache__

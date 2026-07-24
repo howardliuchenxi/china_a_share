@@ -1,0 +1,676 @@
+"""Provider-neutral request, plan, result, and cache contracts."""
+
+import base64
+import binascii
+from datetime import date as CalendarDate
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional, Union
+
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+
+MAX_ANALYSIS_PROMPT_LENGTH = 4_000
+MAX_ANALYSIS_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_ANALYSIS_IMAGE_BASE64_LENGTH = 4 * ((MAX_ANALYSIS_IMAGE_BYTES + 2) // 3)
+DATA_CACHE_SCHEMA_VERSION = 4
+PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9_-]*$"
+OPERATION_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
+
+
+class AnalysisStatus(str, Enum):
+    """Overall completion state of an analysis request."""
+
+    SUCCESS = "success"
+    PARTIAL_SUCCESS = "partial_success"
+    ERROR = "error"
+
+
+class QueryStatus(str, Enum):
+    """Execution state of one market-data query."""
+
+    SUCCESS = "success"
+    ERROR = "error"
+
+
+class AnalysisImage(BaseModel):
+    """One screenshot supplied as context for an analysis request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_type: Literal["image/png", "image/jpeg", "image/webp"] = Field(
+        description="Validated MIME type used to reconstruct the screenshot data URL.",
+    )
+    base64_data: str = Field(
+        min_length=1,
+        max_length=MAX_ANALYSIS_IMAGE_BASE64_LENGTH,
+        description=(
+            "Base64-encoded screenshot bytes, limited to 10 MiB before encoding."
+        ),
+    )
+
+    @field_validator("base64_data")
+    @classmethod
+    def validate_base64_data(cls, value: str) -> str:
+        """Reject malformed or oversized decoded screenshot payloads."""
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Screenshot data must be valid Base64.") from exc
+        if len(decoded) > MAX_ANALYSIS_IMAGE_BYTES:
+            raise ValueError("Screenshot data may not exceed 10 MiB.")
+        return value
+
+
+class AnalysisRequest(BaseModel):
+    """Natural-language request submitted by the web client."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        min_length=1,
+        max_length=MAX_ANALYSIS_PROMPT_LENGTH,
+        description="Natural-language description of the requested A-share data.",
+    )
+    image: Optional[AnalysisImage] = Field(
+        default=None,
+        description="Optional screenshot interpreted before the query plan is generated.",
+    )
+
+
+class DataOperation(BaseModel):
+    """One provider-native read operation available to a query planner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Provider-native operation name used to retrieve market data.",
+    )
+    description: str = Field(
+        min_length=1,
+        description=(
+            "Planner guidance covering the operation purpose, important parameters, "
+            "and relevant output fields."
+        ),
+    )
+
+
+class ConditionalCount(BaseModel):
+    """Controlled count over a numeric column in one query result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(
+        min_length=1,
+        description="Human-readable label displayed with the computed count.",
+    )
+    field: str = Field(
+        min_length=1,
+        description="Numeric result column evaluated by the condition.",
+    )
+    operator: Literal["gt", "ge", "eq", "le", "lt"] = Field(
+        description="Comparison operator applied to the numeric result column.",
+    )
+    value: float = Field(
+        description="Numeric threshold used by the comparison operator.",
+    )
+
+
+class DataFilter(BaseModel):
+    """One deterministic scalar filter applied to provider result rows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(
+        min_length=1,
+        description="Numeric result column evaluated by the filter.",
+    )
+    operator: Literal["gt", "ge", "eq", "le", "lt"] = Field(
+        description="Comparison operator applied to the numeric result column.",
+    )
+    value: Union[float, str] = Field(
+        description=(
+            "Numeric threshold, or a string value when the operator is equality."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_string_operator(self) -> "DataFilter":
+        """Allow string values only for exact equality filters."""
+        if isinstance(self.value, str) and self.operator != "eq":
+            raise ValueError("string filter values require the eq operator")
+        return self
+
+
+class DataQuery(BaseModel):
+    """One provider-native read operation selected by a query planner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query_id: str = Field(
+        min_length=1,
+        description="Request-local identifier used to match a result to this query.",
+    )
+    operation: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Provider-native operation selected from the active catalog.",
+    )
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Validated keyword arguments passed to the active data provider.",
+    )
+    fields: List[str] = Field(
+        default_factory=list,
+        description="Requested output fields; an empty list uses provider defaults.",
+    )
+    purpose: str = Field(
+        min_length=1,
+        description="Short explanation of why this query is required.",
+    )
+    transform: Optional[
+        Literal[
+            "cr10_float_trend",
+            "count_by_trade_date",
+            "top_count_by_trade_date",
+            "count_by_ts_code",
+            "top_10_count_by_ts_code",
+            "count_by_industry",
+            "top_20_by_amount",
+            "top_20_by_turnover_rate",
+            "top_20_total_amount_by_ts_code",
+            "period_return_by_ts_code",
+            "top_10_by_dv_ratio",
+        ]
+    ] = Field(
+        default=None,
+        description=(
+            "Optional deterministic transformation applied to one provider result; "
+            "Supported transforms provide audited concentration calculations, grouped "
+            "counts, top-amount ranking, or period returns."
+        ),
+    )
+    filters: List[DataFilter] = Field(
+        default_factory=list,
+        description=(
+            "Deterministic local row filters applied after provider retrieval; "
+            "missing or nonnumeric values do not match numeric filters."
+        ),
+    )
+    aggregations: List[ConditionalCount] = Field(
+        default_factory=list,
+        description="Optional local conditional counts computed without another model call.",
+    )
+
+
+class RequirementCoverage(BaseModel):
+    """Auditable mapping from one user requirement to its implementation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requirement: str = Field(
+        min_length=1,
+        description="Atomic user requirement extracted from the natural-language request.",
+    )
+    status: Literal["covered", "unsupported"] = Field(
+        description="Whether available provider data and local operations satisfy it.",
+    )
+    implementation: Optional[str] = Field(
+        default=None,
+        description="Provider or deterministic local operation used to satisfy it.",
+    )
+    evidence: str = Field(
+        min_length=1,
+        description="Concrete capability evidence supporting the coverage decision.",
+    )
+
+
+class QueryPlan(BaseModel):
+    """Structured A-share retrieval plan produced from one user request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    market: Literal["A_SHARE"] = Field(
+        default="A_SHARE",
+        description="Fixed market boundary enforced for every analysis request.",
+    )
+    interpretation: str = Field(
+        min_length=1,
+        description="Concise interpretation of the user's data request.",
+    )
+    feasibility: Literal["supported", "unsupported"] = Field(
+        default="supported",
+        description="Whether the complete request can be fulfilled without guessing.",
+    )
+    requirements: List[RequirementCoverage] = Field(
+        default_factory=list,
+        description="Coverage evidence for each atomic user requirement.",
+    )
+    limitations: List[str] = Field(
+        default_factory=list,
+        description="Concrete missing capabilities that prevent faithful execution.",
+    )
+    result_transform: Optional[
+        Literal["two_limit_up_next_day_probability"]
+    ] = Field(
+        default=None,
+        description=(
+            "Optional deterministic cross-query calculation applied after all "
+            "source queries succeed."
+        ),
+    )
+    queries: List[DataQuery] = Field(
+        default_factory=list,
+        description="Ordered provider-native reads required to satisfy the request.",
+    )
+
+    @model_validator(mode="after")
+    def validate_feasibility(self) -> "QueryPlan":
+        """Reject executable unsupported plans and empty supported plans."""
+        if self.feasibility == "supported" and not self.queries:
+            raise ValueError("supported plans must contain at least one query")
+        if self.feasibility == "unsupported":
+            if self.queries:
+                raise ValueError("unsupported plans must not contain queries")
+            if not self.limitations:
+                raise ValueError("unsupported plans must explain their limitations")
+        return self
+
+
+class DecisionTraceStep(BaseModel):
+    """One structured and displayable decision in the analysis workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: Literal[
+        "requirements", "capability", "planning", "validation", "execution", "result"
+    ] = Field(
+        description="Stable workflow stage that produced this decision.",
+    )
+    status: Literal["success", "warning", "error", "skipped"] = Field(
+        description="Display status of this workflow decision.",
+    )
+    title: str = Field(
+        min_length=1,
+        description="Short user-facing label for the decision.",
+    )
+    detail: str = Field(
+        min_length=1,
+        description="Concise explanation of what was decided and why.",
+    )
+    evidence: List[str] = Field(
+        default_factory=list,
+        description="Concrete parameters, fields, rules, or outcomes supporting the decision.",
+    )
+    external_call: bool = Field(
+        default=False,
+        description="Whether this workflow step issued a billable external API call.",
+    )
+
+
+class ServiceError(BaseModel):
+    """Safe error details produced by a planner, data provider, or the application."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(
+        min_length=1,
+        pattern=PROVIDER_NAME_PATTERN,
+        description="Stable planner, data-provider, or system identifier.",
+    )
+    code: Optional[Union[int, str]] = Field(
+        default=None,
+        description="Original upstream error code when one is available.",
+    )
+    message: str = Field(
+        min_length=1,
+        description="Original upstream message or a safe application message.",
+    )
+    http_status: Optional[int] = Field(
+        default=None,
+        ge=100,
+        le=599,
+        description="HTTP status returned by an upstream service when available.",
+    )
+    raw_response: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Safe upstream body with credentials and private headers removed.",
+    )
+
+
+class QueryResult(BaseModel):
+    """Normalized table result or provider error for one data query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query_id: str = Field(
+        min_length=1,
+        description="Identifier of the query that produced this result.",
+    )
+    provider: str = Field(
+        min_length=1,
+        pattern=PROVIDER_NAME_PATTERN,
+        description="Data-provider identifier that executed the query.",
+    )
+    operation: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Provider-native operation used to retrieve the result.",
+    )
+    status: QueryStatus = Field(
+        description="Whether this individual query succeeded or failed.",
+    )
+    columns: List[str] = Field(
+        default_factory=list,
+        description="Ordered table column names returned by the provider.",
+    )
+    rows: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="JSON-compatible table rows returned by the provider.",
+    )
+    row_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of rows returned for this query.",
+    )
+    summary: Dict[str, Union[int, float]] = Field(
+        default_factory=dict,
+        description="Local counts or rates requested by the validated query plan.",
+    )
+    error: Optional[ServiceError] = Field(
+        default=None,
+        description="Provider error details when this query failed.",
+    )
+
+
+class AnalysisResponse(BaseModel):
+    """Complete provider-neutral response returned to the web client."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(
+        min_length=1,
+        description="Identifier used to correlate client requests and server logs.",
+    )
+    planner: str = Field(
+        min_length=1,
+        pattern=PROVIDER_NAME_PATTERN,
+        description="Planner implementation that interpreted the natural-language request.",
+    )
+    data_provider: str = Field(
+        min_length=1,
+        pattern=PROVIDER_NAME_PATTERN,
+        description="Market-data provider selected for all queries in this response.",
+    )
+    status: AnalysisStatus = Field(
+        description="Overall completion state across planning and query execution.",
+    )
+    plan: Optional[QueryPlan] = Field(
+        default=None,
+        description="Validated query plan when planning completed successfully.",
+    )
+    results: List[QueryResult] = Field(
+        default_factory=list,
+        description="Ordered results corresponding to the plan queries.",
+    )
+    decision_trace: List[DecisionTraceStep] = Field(
+        default_factory=list,
+        description="Ordered, auditable workflow decisions rendered by the client.",
+    )
+    error: Optional[ServiceError] = Field(
+        default=None,
+        description="Planning or system error when no query-level result applies.",
+    )
+
+
+class StockListItem(BaseModel):
+    """Normalized reference data for one currently listed A-share security."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(
+        min_length=1,
+        description="Tushare security code including its exchange suffix.",
+    )
+    symbol: str = Field(
+        min_length=1,
+        description="Six-digit security symbol without an exchange suffix.",
+    )
+    name: str = Field(
+        min_length=1,
+        description="Official short company name returned by Tushare.",
+    )
+    area: Optional[str] = Field(
+        default=None,
+        description="Registration area returned by Tushare when available.",
+    )
+    industry: Optional[str] = Field(
+        default=None,
+        description="Industry classification returned by Tushare when available.",
+    )
+    board: Optional[str] = Field(
+        default=None,
+        description="Listing board returned in the Tushare market field.",
+    )
+    exchange: Literal["SSE", "SZSE", "BSE"] = Field(
+        description="Tushare exchange identifier for the listed security.",
+    )
+    listed_on: CalendarDate = Field(
+        description="Initial listing date normalized to an ISO calendar date.",
+    )
+
+
+class StockListResponse(BaseModel):
+    """One deterministic page of currently listed A-share securities."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(
+        min_length=1,
+        description="Identifier used to correlate client requests and server logs.",
+    )
+    page: int = Field(
+        ge=1,
+        description="Current one-based page number.",
+    )
+    page_size: int = Field(
+        ge=1,
+        le=100,
+        description="Maximum number of securities returned on one page.",
+    )
+    total: int = Field(
+        ge=0,
+        description="Number of securities matching the active filters.",
+    )
+    total_pages: int = Field(
+        ge=1,
+        description="Number of pages matching the active filters, with one empty page.",
+    )
+    available_industries: List[str] = Field(
+        default_factory=list,
+        description="Sorted industries available across all currently listed securities.",
+    )
+    items: List[StockListItem] = Field(
+        default_factory=list,
+        description="Normalized securities contained in the current page.",
+    )
+
+
+class StockListErrorResponse(BaseModel):
+    """Structured failure returned by the stock catalog endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(
+        min_length=1,
+        description="Identifier used to correlate client requests and server logs.",
+    )
+    error: ServiceError = Field(
+        description="Safe provider or application error details.",
+    )
+
+
+class TradingCalendarBreadth(BaseModel):
+    """End-of-day advancing and declining security counts for one market scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    advanced: int = Field(
+        ge=0,
+        description="Securities with a positive daily percentage change.",
+    )
+    declined: int = Field(
+        ge=0,
+        description="Securities with a negative daily percentage change.",
+    )
+    unchanged: int = Field(
+        ge=0,
+        description="Securities with a zero daily percentage change.",
+    )
+    traded: int = Field(
+        ge=0,
+        description="Securities with valid daily market data included in the counts.",
+    )
+    advance_decline_ratio: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Advanced securities divided by declined securities, or null when no "
+            "security declined."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_traded_count(self) -> "TradingCalendarBreadth":
+        """Reject breadth totals that disagree with their component counts."""
+        if self.traded != self.advanced + self.declined + self.unchanged:
+            raise ValueError("traded must equal advanced + declined + unchanged")
+        return self
+
+
+class TradingCalendarDay(BaseModel):
+    """Normalized trading status for one mainland A-share calendar date."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: CalendarDate = Field(
+        description="Calendar date represented by this trading status.",
+    )
+    is_open: bool = Field(
+        description="Whether the reference exchange is open for trading on this date.",
+    )
+    previous_trading_date: Optional[CalendarDate] = Field(
+        default=None,
+        description="Most recent preceding open trading date when supplied by Tushare.",
+    )
+    breadth: Optional[TradingCalendarBreadth] = Field(
+        default=None,
+        description=(
+            "End-of-day market breadth for an open historical date, or null for "
+            "closed, future, or unavailable dates."
+        ),
+    )
+
+
+class TradingCalendarResponse(BaseModel):
+    """One complete month of mainland A-share trading-calendar data."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(
+        min_length=1,
+        description="Identifier used to correlate client requests and server logs.",
+    )
+    market: Literal["A_SHARE"] = Field(
+        default="A_SHARE",
+        description="Fixed mainland A-share market boundary represented by this calendar.",
+    )
+    month: str = Field(
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+        description="Requested calendar month formatted as YYYY-MM.",
+    )
+    exchange: Literal["ALL", "SSE", "SZSE", "BSE"] = Field(
+        description="Exchange scope selected for the calendar and breadth counts.",
+    )
+    source_exchanges: List[Literal["SSE", "SZSE", "BSE"]] = Field(
+        min_length=1,
+        max_length=3,
+        description="Exchange calendars and securities included in the response.",
+    )
+    days: List[TradingCalendarDay] = Field(
+        min_length=28,
+        max_length=31,
+        description="Chronological trading status for every calendar date in the month.",
+    )
+
+
+class TradingCalendarErrorResponse(BaseModel):
+    """Structured failure returned by the trading-calendar endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(
+        min_length=1,
+        description="Identifier used to correlate client requests and server logs.",
+    )
+    error: ServiceError = Field(
+        description="Safe provider or application error details.",
+    )
+
+
+class DataCacheRecord(BaseModel):
+    """Serializable successful provider response stored in the layered cache."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[DATA_CACHE_SCHEMA_VERSION] = Field(
+        default=DATA_CACHE_SCHEMA_VERSION,
+        description="Cache payload version included in compatibility checks and keys.",
+    )
+    provider: str = Field(
+        min_length=1,
+        pattern=PROVIDER_NAME_PATTERN,
+        description="Data-provider identifier included in the cache namespace.",
+    )
+    operation: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Provider-native operation that produced the cached response.",
+    )
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Normalized provider parameters used to identify the response.",
+    )
+    fields: List[str] = Field(
+        default_factory=list,
+        description="Ordered output fields requested from the provider.",
+    )
+    fetched_at: AwareDatetime = Field(
+        description="Timezone-aware instant when the provider returned the response.",
+    )
+    expires_at: AwareDatetime = Field(
+        description="Timezone-aware instant after which the response must not be served.",
+    )
+    columns: List[str] = Field(
+        default_factory=list,
+        description="Ordered table columns returned by the provider.",
+    )
+    rows: List[List[Any]] = Field(
+        default_factory=list,
+        description="JSON-compatible table rows aligned with the ordered columns.",
+    )
+
+    @model_validator(mode="after")
+    def validate_expiration(self) -> "DataCacheRecord":
+        """Reject records that are invalid at their fetch instant."""
+        if self.expires_at <= self.fetched_at:
+            raise ValueError("expires_at must be later than fetched_at")
+        return self

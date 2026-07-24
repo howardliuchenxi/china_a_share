@@ -1,0 +1,38 @@
+{
+  "name": "provider_call_total",
+  "description": "Counts real upstream market-data calls after final cache misses.",
+  "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"china-a-share-lab\" AND jsonPayload.event=\"provider_call_completed\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1",
+    "labels": [
+      {
+        "key": "api_route",
+        "valueType": "STRING",
+        "description": "Bounded FastAPI route template."
+      },
+      {
+        "key": "provider",
+        "valueType": "STRING",
+        "description": "Market-data provider identifier."
+      },
+      {
+        "key": "operation",
+        "valueType": "STRING",
+        "description": "Bounded provider operation name."
+      },
+      {
+        "key": "status",
+        "valueType": "STRING",
+        "description": "Upstream call completion status."
+      }
+    ]
+  },
+  "labelExtractors": {
+    "api_route": "EXTRACT(jsonPayload.api_route)",
+    "provider": "EXTRACT(jsonPayload.provider)",
+    "operation": "EXTRACT(jsonPayload.operation)",
+    "status": "EXTRACT(jsonPayload.status)"
+  }
+}

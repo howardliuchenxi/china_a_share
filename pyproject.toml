@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "china-a-share"
 version = "0.1.0"
-description = "A-share data analysis powered by Tushare"
+description = "Provider-neutral A-share market-data laboratory"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
     "pandas>=2.0,<3.0",
     "pydantic>=2.8,<3.0",
     "python-dotenv>=1.0,<2.0",
+    "requests>=2.31,<3.0",
     "tushare>=1.4,<2.0",
     # The macOS system Python links LibreSSL and requires urllib3 1.x.
     "urllib3>=1.26,<2.0",
