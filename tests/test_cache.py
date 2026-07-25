@@ -16,6 +16,8 @@ from china_a_share.cache import (
 )
 from china_a_share.core.contracts import DataCacheRecord
 from china_a_share.providers.tushare import TushareCacheExpirationPolicy
+from china_a_share.providers.tushare import PROFILED_OPERATIONS
+from china_a_share.registry import STOCK_API_NAMES
 
 
 BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
@@ -315,7 +317,7 @@ def test_daily_expiration_is_long_after_fixed_date_is_complete():
         fetched_at,
     )
 
-    assert expires_at == fetched_at + timedelta(days=30)
+    assert expires_at == fetched_at + timedelta(days=90)
 
 
 def test_trade_calendar_uses_long_reference_ttl():
@@ -326,3 +328,95 @@ def test_trade_calendar_uses_long_reference_ttl():
     )
 
     assert expires_at == fetched_at + timedelta(days=30)
+
+
+def test_every_catalog_operation_has_an_explicit_cache_profile():
+    assert PROFILED_OPERATIONS == set(STOCK_API_NAMES)
+
+
+def test_fixed_float_holder_snapshot_uses_quarterly_disclosure_ttl():
+    fetched_at = datetime(2026, 7, 17, 9, 0, tzinfo=BEIJING_TIMEZONE)
+
+    expires_at = TushareCacheExpirationPolicy().resolve(
+        "top10_floatholders",
+        {"ts_code": "600000.SH", "period": "20260331"},
+        fetched_at,
+    )
+
+    assert expires_at == fetched_at + timedelta(days=90)
+
+
+def test_latest_float_holder_query_refreshes_daily():
+    fetched_at = datetime(2026, 7, 17, 9, 0, tzinfo=BEIJING_TIMEZONE)
+
+    expires_at = TushareCacheExpirationPolicy().resolve(
+        "top10_floatholders",
+        {"ts_code": "600000.SH"},
+        fetched_at,
+    )
+
+    assert expires_at == fetched_at + timedelta(hours=24)
+
+
+def test_realtime_operation_bypasses_both_cache_layers():
+    now = datetime(2026, 7, 17, 10, 0, tzinfo=BEIJING_TIMEZONE)
+    memory_store = DictCacheStore()
+    persistent_store = DictCacheStore()
+    cache = LayeredDataResponseCache(
+        memory_store,
+        persistent_store,
+        TushareCacheExpirationPolicy(),
+        now_provider=lambda: now,
+    )
+    fetch_count = 0
+
+    def fetch():
+        nonlocal fetch_count
+        fetch_count += 1
+        return pd.DataFrame([{"ts_code": "000001.SZ", "price": 10.5}])
+
+    for request_id in ("request-1", "request-2"):
+        cache.get_or_fetch(
+            "tushare",
+            "rt_k",
+            {"ts_code": "000001.SZ"},
+            ["ts_code", "price"],
+            fetch,
+            api_route="/api/analysis",
+            request_id=request_id,
+            query_id="realtime-price",
+        )
+
+    assert fetch_count == 2
+    assert memory_store.records == {}
+    assert persistent_store.records == {}
+
+
+def test_intraday_history_is_cached_but_current_intraday_data_is_not():
+    fetched_at = datetime(2026, 7, 17, 10, 0, tzinfo=BEIJING_TIMEZONE)
+    policy = TushareCacheExpirationPolicy()
+
+    historical_expiration = policy.resolve(
+        "stk_mins",
+        {"end_date": "20260716"},
+        fetched_at,
+    )
+    current_expiration = policy.resolve(
+        "stk_mins",
+        {"trade_date": "20260717"},
+        fetched_at,
+    )
+
+    assert historical_expiration == fetched_at + timedelta(days=90)
+    assert current_expiration is None
+
+
+def test_unknown_operation_has_no_implicit_cache_default():
+    fetched_at = datetime(2026, 7, 17, 10, 0, tzinfo=BEIJING_TIMEZONE)
+
+    with pytest.raises(ValueError, match="has no cache profile"):
+        TushareCacheExpirationPolicy().resolve(
+            "future_operation",
+            {},
+            fetched_at,
+        )

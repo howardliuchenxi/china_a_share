@@ -132,49 +132,6 @@ label {
   font-weight: 650;
 }
 
-.experiment-library {
-  margin-bottom: 28px;
-  border: 1px solid #d2d6ce;
-  background: #f2f3ed;
-  padding: 20px;
-}
-
-.library-title {
-  margin-bottom: 18px;
-}
-
-.library-title .panel-label {
-  margin-bottom: 6px;
-}
-
-.library-title h3 {
-  margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.4rem;
-  font-weight: 500;
-}
-
-.experiment-selectors {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.group-control {
-  flex: 0 0 280px;
-}
-
-.question-control {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.group-control label,
-.question-control label {
-  margin-bottom: 6px;
-  font-size: 0.72rem;
-}
-
 select {
   width: 100%;
   border: 1px solid #9da69d;
@@ -190,10 +147,24 @@ select:focus {
   box-shadow: 0 0 0 2px rgba(180, 76, 39, 0.13);
 }
 
-.library-description {
-  margin: 14px 0 0;
+.prompt-history {
+  display: grid;
+  grid-template-columns: auto minmax(0, 480px);
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 12px;
+}
+
+.prompt-history label {
+  margin: 0;
   color: #657169;
-  font-size: 0.84rem;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.prompt-history select {
+  padding: 7px 10px;
+  font-size: 0.82rem;
 }
 
 textarea {
@@ -219,6 +190,12 @@ textarea:focus {
   align-items: center;
   gap: 12px;
   margin-top: 12px;
+}
+
+.task-progress {
+  margin: 10px 0 0;
+  color: #657169;
+  font-size: 0.84rem;
 }
 
 .screenshot-control input[type="file"] {
@@ -452,24 +429,13 @@ button:disabled {
   line-height: 1.2;
 }
 
-.execution-trace {
-  border-top: 1px solid #d8dcd4;
-  padding: 26px;
+.plan-content > .decision-trace,
+.plan-content > .workflow-list {
+  margin: 22px 0 0;
 }
 
-.execution-trace h3 {
-  margin: 0 0 20px;
-  font-size: 1rem;
-}
-
-.execution-trace .decision-trace,
-.execution-trace .workflow-list {
-  margin: 0;
-}
-
-.collapsible-panel > .empty-output {
-  border-top: 1px solid #d8dcd4;
-  padding: 26px;
+.plan-content > .empty-output + .workflow-list {
+  margin-top: 22px;
 }
 
 .query-card {
@@ -985,13 +951,9 @@ th { position: sticky; top: 0; background: #e9ece5; }
     justify-self: start;
   }
 
-  .experiment-selectors {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .group-control {
-    flex-basis: auto;
+  .prompt-history {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .stock-filters {

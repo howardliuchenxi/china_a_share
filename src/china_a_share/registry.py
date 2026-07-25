@@ -70,14 +70,19 @@ CORE_OPERATION_GUIDANCE = {
         "YYYY0930, or YYYY1231), never an arbitrary calendar date. Interpret an "
         "arbitrary user date as an as-of date and pass it as end_date without period; "
         "the transform then selects the latest disclosed reporting snapshot. "
-        "The resulting non_top10_float_ratio is a dispersion proxy, not the verified "
-        "ownership percentage of individual investors. Missing source ratios produce "
+        "The resulting non_top10_float_ratio is the project's fixed proxy for retail "
+        "ratio: 100% minus the disclosed top-ten unrestricted float-holder ratios. It "
+        "includes both retail holders and institutions outside the top ten and is not "
+        "a verified account-level percentage held by individual investors. Missing "
+        "source ratios produce "
         "a partial result with a known ratio and an uncovered-ratio upper bound, not a "
         "complete CR10 value."
     ),
     "stock_basic": (
         "A-share security master. Parameters include ts_code, exchange, market, "
-        "and list_status."
+        "and list_status. Common fields include ts_code,symbol,name,area,industry,"
+        "market,list_date. Retrieve the listed security master and apply an exact "
+        "local industry classification when an analysis requires an industry universe."
     ),
     "income": "Listed-company income statements by ts_code or reporting dates.",
     "balancesheet": "Listed-company balance sheets by ts_code or reporting dates.",

@@ -215,9 +215,30 @@ class LayeredDataResponseCache:
         query_id: str,
     ) -> pd.DataFrame:
         """Return cached data or perform one deduplicated provider fetch."""
+        now = self._now()
+        expires_at = self._expiration_policy.resolve(operation, params, now)
+        if expires_at is None:
+            self._log_cache_lookup(
+                api_route=api_route,
+                provider=provider,
+                operation=operation,
+                outcome="bypass",
+                cache_layer="none",
+                started_at=perf_counter(),
+                request_id=request_id,
+                query_id=query_id,
+            )
+            return self._fetch_provider(
+                provider,
+                operation,
+                fetch,
+                api_route=api_route,
+                request_id=request_id,
+                query_id=query_id,
+            )
+
         cache_key = build_data_cache_key(provider, operation, params, fields)
         lookup_started_at = perf_counter()
-        now = self._now()
         record, cache_layer = self._get_with_layer(cache_key, now)
         if record is not None:
             self._log_cache_lookup(
@@ -260,42 +281,13 @@ class LayeredDataResponseCache:
                 request_id=request_id,
                 query_id=query_id,
             )
-            provider_started_at = perf_counter()
-            try:
-                frame = fetch()
-            except Exception as exc:
-                # Provider failures are recorded before propagation so retries remain visible.
-                log_event(
-                    logger,
-                    logging.ERROR,
-                    "provider_call_completed",
-                    exc_info=True,
-                    api_route=api_route,
-                    provider=provider,
-                    operation=operation,
-                    status="error",
-                    duration_ms=self._elapsed_milliseconds(provider_started_at),
-                    row_count=0,
-                    request_id=request_id,
-                    query_id=query_id,
-                    error_code=(
-                        str(exc.code) if getattr(exc, "code", None) is not None else None
-                    ),
-                )
-                raise
-            log_event(
-                logger,
-                logging.INFO,
-                "provider_call_completed",
+            frame = self._fetch_provider(
+                provider,
+                operation,
+                fetch,
                 api_route=api_route,
-                provider=provider,
-                operation=operation,
-                status="success",
-                duration_ms=self._elapsed_milliseconds(provider_started_at),
-                row_count=len(frame),
                 request_id=request_id,
                 query_id=query_id,
-                error_code=None,
             )
             safe_frame = frame.astype(object).where(pd.notnull(frame), None)
             record = DataCacheRecord(
@@ -304,12 +296,62 @@ class LayeredDataResponseCache:
                 params=params,
                 fields=list(fields),
                 fetched_at=now,
-                expires_at=self._expiration_policy.resolve(operation, params, now),
+                expires_at=expires_at,
                 columns=list(safe_frame.columns),
                 rows=[list(row) for row in safe_frame.itertuples(index=False, name=None)],
             )
             self.put(cache_key, record)
             return frame.copy(deep=True)
+
+    @classmethod
+    def _fetch_provider(
+        cls,
+        provider: str,
+        operation: str,
+        fetch: Callable[[], pd.DataFrame],
+        *,
+        api_route: str,
+        request_id: str,
+        query_id: str,
+    ) -> pd.DataFrame:
+        """Execute and log one provider call without changing cache policy."""
+        provider_started_at = perf_counter()
+        try:
+            frame = fetch()
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "provider_call_completed",
+                exc_info=True,
+                api_route=api_route,
+                provider=provider,
+                operation=operation,
+                status="error",
+                duration_ms=cls._elapsed_milliseconds(provider_started_at),
+                row_count=0,
+                request_id=request_id,
+                query_id=query_id,
+                error_code=(
+                    str(exc.code) if getattr(exc, "code", None) is not None else None
+                ),
+            )
+            raise
+        log_event(
+            logger,
+            logging.INFO,
+            "provider_call_completed",
+            api_route=api_route,
+            provider=provider,
+            operation=operation,
+            status="success",
+            duration_ms=cls._elapsed_milliseconds(provider_started_at),
+            row_count=len(frame),
+            request_id=request_id,
+            query_id=query_id,
+            error_code=None,
+        )
+        return frame
 
     @staticmethod
     def _elapsed_milliseconds(started_at: float) -> int:

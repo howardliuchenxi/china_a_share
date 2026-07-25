@@ -21,6 +21,9 @@ class Settings:
     tushare_cache_bucket: str = ""
     # GLM is optional for text-only requests and required for screenshots.
     zai_api_key: str = ""
+    google_cloud_project: str = ""
+    cloud_run_region: str = "asia-east2"
+    analysis_job_name: str = "china-a-share-analysis-worker"
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -40,9 +43,18 @@ class Settings:
         zai_api_key = os.getenv("ZAI_API_KEY", "").strip()
         if zai_api_key == "your_zai_api_key_here":
             zai_api_key = ""
+        google_cloud_project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+        cloud_run_region = os.getenv("CLOUD_RUN_REGION", "asia-east2").strip()
+        analysis_job_name = os.getenv(
+            "ANALYSIS_JOB_NAME",
+            "china-a-share-analysis-worker",
+        ).strip()
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
             tushare_cache_bucket=tushare_cache_bucket,
             zai_api_key=zai_api_key,
+            google_cloud_project=google_cloud_project,
+            cloud_run_region=cloud_run_region,
+            analysis_job_name=analysis_job_name,
         )

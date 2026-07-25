@@ -14,6 +14,7 @@ import {
   stockListFixture,
   successWithMultiRowFixture,
   successWithSingleRowFixture,
+  unsupportedAnalysisFixture,
 } from "./fixtures";
 
 /* ------------------------------------------------------------------ */
@@ -65,12 +66,12 @@ test("page load renders analysis page with hero and form", async ({
   const analysisTab = page.locator('.page-tabs button[role="tab"]').first();
   await expect(analysisTab).toHaveAttribute("aria-selected", "true");
 
-  // Experiment library is visible
-  await expect(page.locator(".experiment-library")).toBeVisible();
-
   // Prompt textarea is visible
   const promptField = page.locator("#analysis-prompt");
   await expect(promptField).toBeVisible();
+
+  // Prompt history is empty before the first submission
+  await expect(page.locator("#prompt-history")).toBeDisabled();
 
   // Submit button is disabled when prompt is empty
   const submitButton = page.locator('button[type="submit"]');
@@ -81,44 +82,30 @@ test("page load renders analysis page with hero and form", async ({
 });
 
 /* ------------------------------------------------------------------ */
-/*  Scenario: template selection                                        */
+/*  Scenario: prompt history                                            */
 /* ------------------------------------------------------------------ */
 
-test("template selection populates prompt input", async ({ page }) => {
+test("prompt history selection populates prompt input", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "china-a-share.prompt-history",
+      JSON.stringify([
+        "查询2026年7月17日A股涨跌分布",
+        "查询A股列表",
+      ]),
+    );
+  });
   await mockApiRoutes(page, successWithMultiRowFixture);
 
   await page.goto("/analysis");
 
-  // Select a question from the template dropdown
-  const questionSelect = page.locator("#experiment-question");
-  await questionSelect.selectOption({ index: 1 }); // first actual template
+  const historySelect = page.locator("#prompt-history");
+  await expect(historySelect).toBeEnabled();
+  await historySelect.selectOption("查询A股列表");
 
-  // Prompt textarea should be populated
   const promptField = page.locator("#analysis-prompt");
-  const promptValue = await promptField.inputValue();
-  expect(promptValue.length).toBeGreaterThan(0);
-
-  // Submit button should be enabled
-  const submitButton = page.locator('button[type="submit"]');
-  await expect(submitButton).toBeEnabled();
-});
-
-test("template group switching updates available templates", async ({
-  page,
-}) => {
-  await mockApiRoutes(page, successWithMultiRowFixture);
-
-  await page.goto("/analysis");
-
-  // Switch to a different experiment group
-  const groupSelect = page.locator("#experiment-group");
-  await groupSelect.selectOption("capital-activity");
-
-  // Question dropdown options should refresh
-  const questionSelect = page.locator("#experiment-question");
-  const options = await questionSelect.locator("option").all();
-  // First option is the placeholder, then templates
-  expect(options.length).toBeGreaterThan(1);
+  await expect(promptField).toHaveValue("查询A股列表");
+  await expect(page.locator('button[type="submit"]')).toBeEnabled();
 });
 
 /* ------------------------------------------------------------------ */
@@ -141,6 +128,22 @@ test("custom prompt input enables submit button", async ({ page }) => {
 
   // Submit button becomes enabled
   await expect(submitButton).toBeEnabled();
+});
+
+test("unsupported analysis displays its limitation instead of a blank result", async ({
+  page,
+}) => {
+  await mockApiRoutes(page, unsupportedAnalysisFixture);
+  await page.goto("/analysis");
+
+  await page.locator("#analysis-prompt").fill("分析医疗行业的散户比例分组表现");
+  await page.locator('button[type="submit"]').click();
+
+  const alert = page.locator('.results-panel [role="alert"]');
+  await expect(alert).toContainText("当前请求无法完整处理");
+  await expect(alert).toContainText(
+    "The current executor cannot dynamically fan out the full healthcare universe.",
+  );
 });
 
 /* ------------------------------------------------------------------ */
@@ -235,7 +238,7 @@ test("planning error shows DeepSeek error card", async ({ page }) => {
 /*  Scenario: query-details visibility                                  */
 /* ------------------------------------------------------------------ */
 
-test("query details panel is accessible and shows plan information", async ({
+test("query and execution details share one panel", async ({
   page,
 }) => {
   await mockApiRoutes(page, successWithMultiRowFixture);
@@ -257,6 +260,7 @@ test("query details panel is accessible and shows plan information", async ({
   // It should be collapsed by default
   const summary = detailsPanel.locator("summary");
   await expect(summary).toBeVisible();
+  await expect(summary).toContainText("查询与执行详情");
 
   // Click to expand
   await summary.click();
@@ -275,8 +279,8 @@ test("query details panel is accessible and shows plan information", async ({
   await expect(queryCards.first()).toBeVisible();
   await expect(queryCards.first()).toContainText("daily");
 
-  // Execution trace should be visible
-  await expect(detailsPanel.locator(".execution-trace")).toBeVisible();
+  // Execution trace is part of the same plan content
+  await expect(planContent.locator(".decision-trace")).toBeVisible();
 });
 
 /* ------------------------------------------------------------------ */

@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "react-intl": "^10.1.18"
+  },
+  "devDependencies": {
+    "@formatjs/cli": "^6.16.14",
+    "@playwright/test": "^1.61.1"
+  }
+}

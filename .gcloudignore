@@ -17,3 +17,6 @@ data
 frontend/dist
 frontend/node_modules
 frontend/*.tsbuildinfo
+/package.json
+/package-lock.json
+/pnpm-lock.yaml

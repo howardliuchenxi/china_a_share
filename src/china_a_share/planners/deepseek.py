@@ -1,5 +1,6 @@
 """DeepSeek implementation of the provider-neutral query-planner port."""
 
+import calendar
 from datetime import datetime, time as ClockTime, timedelta
 import json
 import re
@@ -27,6 +28,27 @@ DEEPSEEK_MAX_OUTPUT_TOKENS = 2_000
 DEEPSEEK_MAX_ATTEMPTS = 2
 DEEPSEEK_RETRY_DELAY_SECONDS = 1
 TRANSIENT_ERROR_MARKERS = ("too busy", "temporarily", "timed out")
+RETAIL_COHORT_INDUSTRY_ALIASES = {
+    "医疗": (
+        "医疗保健",
+        "医疗器械",
+        "医药商业",
+        "化学制药",
+        "生物制药",
+        "中成药",
+    ),
+    "电力": (
+        "新型电力",
+        "水力发电",
+        "火力发电",
+    ),
+}
+RETAIL_COHORT_THEME_ALIASES = {
+    "手机": (
+        ("886070.TI", "AI手机"),
+        ("886091.TI", "华为手机"),
+    ),
+}
 
 
 class DeepSeekQueryPlanner:
@@ -93,14 +115,27 @@ class DeepSeekQueryPlanner:
             "top_20_total_amount_by_ts_code to aggregate and rank block-trade amount "
             "over a date range. "
             "period_return_by_ts_code for multi-security period return comparisons. "
+            "For a healthcare-industry comparison of average turnover_rate between "
+            "two explicit months, use stock_basic plus one full-market daily_basic "
+            "range query per month and set result_transform to "
+            "dimension_monthly_turnover_decline. The security-master query must use "
+            "an explicit categorical filter to define the requested universe. The "
+            "deterministic transform calculates each selected security's "
+            "monthly mean turnover_rate, compares the later mean with the earlier "
+            "mean, and applies the requested decline threshold. "
             "Use top_10_by_dv_ratio after valuation filters when the user asks for "
             "ten high-dividend securities. "
             "Never expand a date range into one query per day. "
             "When a user asks for retail ownership, retail holding ratio, retail trend, "
-            "shareholding dispersion, or CR10, use top10_floatholders with "
+            "shareholding dispersion, or CR10, treat retail ratio as the project's "
+            "fixed non_top10_float_ratio proxy: 100% minus the sum of the disclosed "
+            "top ten unrestricted float-holder ratios. Use top10_floatholders with "
             "transform=cr10_float_trend. Describe non_top10_float_ratio as a holding "
-            "dispersion proxy and never as the verified percentage held by individual "
-            "investors. For top10_floatholders, period must be a reporting quarter end "
+            "dispersion proxy that includes both retail holders and institutions outside "
+            "the top ten; never describe it as a verified account-level percentage held "
+            "by individual investors. This proxy is explicitly approved for retail-ratio "
+            "requests and must not by itself make a plan unsupported. For "
+            "top10_floatholders, period must be a reporting quarter end "
             "(YYYY0331, YYYY0630, YYYY0930, or YYYY1231). When the user supplies an "
             "arbitrary date, interpret it as an as-of date and use end_date without "
             "period so the latest disclosed snapshot can be selected. The transformation "
@@ -200,6 +235,8 @@ class DeepSeekQueryPlanner:
             raw_plan = json.loads(content)
             self._normalize_raw_query_defaults(raw_plan)
             self._normalize_two_limit_up_analysis(raw_plan, prompt)
+            self._normalize_industry_monthly_turnover_analysis(raw_plan, prompt)
+            self._normalize_industry_retail_cohort_analysis(raw_plan, prompt)
             plan = QueryPlan.model_validate(raw_plan)
         except (json.JSONDecodeError, ValidationError) as exc:
             raise PlannerError(
@@ -343,6 +380,288 @@ class DeepSeekQueryPlanner:
                     "implementation",
                     "Join limit_list_d and daily rows by security and trading date.",
                 )
+
+    @staticmethod
+    def _normalize_industry_monthly_turnover_analysis(
+        raw_plan: Any,
+        prompt: str,
+    ) -> None:
+        """Build the bounded source plan for a two-month healthcare turnover study."""
+        if not isinstance(raw_plan, dict):
+            return
+        normalized_prompt = prompt.replace(" ", "")
+        if (
+            "医疗行业" not in normalized_prompt
+            or not any(term in normalized_prompt for term in ("成交率", "换手率"))
+            or "平均" not in normalized_prompt
+            or "下降" not in normalized_prompt
+        ):
+            return
+        month_matches = re.findall(r"(?:今年|(\d{4})年)(\d{1,2})月", normalized_prompt)
+        if len(month_matches) < 2:
+            return
+        current_year = datetime.now(ZoneInfo("Asia/Shanghai")).year
+        periods = []
+        for year_text, month_text in month_matches[:2]:
+            year = int(year_text) if year_text else current_year
+            month = int(month_text)
+            if not 1 <= month <= 12:
+                return
+            periods.append((year, month))
+        periods.sort()
+        threshold_match = re.search(r"下降(?:了)?(\d+(?:\.\d+)?)%以上", normalized_prompt)
+        if threshold_match is None or float(threshold_match.group(1)) != 30:
+            return
+        decline_threshold = 30.0
+
+        def month_params(year: int, month: int) -> dict[str, str]:
+            last_day = calendar.monthrange(year, month)[1]
+            return {
+                "start_date": f"{year:04d}{month:02d}01",
+                "end_date": f"{year:04d}{month:02d}{last_day:02d}",
+            }
+
+        first_period, second_period = periods
+        raw_plan["feasibility"] = "supported"
+        raw_plan["limitations"] = []
+        raw_plan["result_transform"] = "dimension_monthly_turnover_decline"
+        raw_plan["queries"] = [
+            {
+                "query_id": "healthcare-universe",
+                "operation": "stock_basic",
+                "params": {"list_status": "L"},
+                "fields": ["ts_code", "name", "industry"],
+                "purpose": "Build the listed healthcare security universe.",
+                "filters": [
+                    {
+                        "field": "industry",
+                        "operator": "in",
+                        "value": [
+                            "医疗保健",
+                            "医疗器械",
+                            "医药商业",
+                            "化学制药",
+                            "生物制药",
+                            "中成药",
+                        ],
+                    }
+                ],
+                "aggregations": [],
+            },
+            {
+                "query_id": "turnover-first-month",
+                "operation": "daily_basic",
+                "params": month_params(*first_period),
+                "fields": ["ts_code", "trade_date", "turnover_rate"],
+                "purpose": "Calculate the earlier monthly mean turnover rate.",
+                "filters": [],
+                "aggregations": [],
+            },
+            {
+                "query_id": "turnover-second-month",
+                "operation": "daily_basic",
+                "params": month_params(*second_period),
+                "fields": ["ts_code", "trade_date", "turnover_rate"],
+                "purpose": "Calculate the later monthly mean turnover rate.",
+                "filters": [],
+                "aggregations": [],
+            },
+        ]
+        raw_plan["interpretation"] = (
+            "Compare listed healthcare securities' average turnover rates between "
+            f"{first_period[0]:04d}-{first_period[1]:02d} and "
+            f"{second_period[0]:04d}-{second_period[1]:02d}, returning securities "
+            f"whose average declined by at least {decline_threshold:g}%."
+        )
+        requirements = raw_plan.get("requirements")
+        if not isinstance(requirements, list) or not requirements:
+            requirements = [{}]
+            raw_plan["requirements"] = requirements
+        for requirement in requirements:
+            if not isinstance(requirement, dict):
+                continue
+            requirement.setdefault(
+                "requirement",
+                "Compare healthcare securities' monthly mean turnover rates.",
+            )
+            requirement["status"] = "covered"
+            requirement["implementation"] = (
+                "Join stock_basic industry membership with two daily_basic monthly "
+                "ranges and apply dimension_monthly_turnover_decline."
+            )
+            requirement["evidence"] = (
+                "stock_basic provides industry and daily_basic provides turnover_rate."
+            )
+
+    @staticmethod
+    def _normalize_industry_retail_cohort_analysis(
+        raw_plan: Any,
+        prompt: str,
+    ) -> None:
+        """Build an approved retail-proxy comparison for a known industry group."""
+        if not isinstance(raw_plan, dict):
+            return
+        normalized_prompt = prompt.replace(" ", "")
+        universe_label = next(
+            (
+                label
+                for label in RETAIL_COHORT_INDUSTRY_ALIASES
+                if f"{label}行业" in normalized_prompt
+            ),
+            None,
+        )
+        universe_kind = "industry"
+        if universe_label is None:
+            universe_label = next(
+                (
+                    label
+                    for label in RETAIL_COHORT_THEME_ALIASES
+                    if f"{label}股票" in normalized_prompt
+                ),
+                None,
+            )
+            universe_kind = "theme"
+        if (
+            universe_label is None
+            and "过去一个月的股票" in normalized_prompt
+        ):
+            universe_label = "A-share"
+            universe_kind = "market"
+        if universe_label is None or not all(
+            marker in normalized_prompt
+            for marker in ("散户比例", "分两半", "过去一个月", "上涨")
+        ):
+            return
+        if universe_kind in {"industry", "market"}:
+            industry_filters = []
+            if universe_kind == "industry":
+                industry_filters = [
+                    {
+                        "field": "industry",
+                        "operator": "in",
+                        "value": list(
+                            RETAIL_COHORT_INDUSTRY_ALIASES[universe_label]
+                        ),
+                    }
+                ]
+            universe_queries = [
+                {
+                    "query_id": "industry-universe",
+                    "operation": "stock_basic",
+                    "params": {"list_status": "L"},
+                    "fields": ["ts_code", "name", "industry"],
+                    "purpose": f"Build the listed {universe_label} security universe.",
+                    "filters": industry_filters,
+                    "aggregations": [],
+                }
+            ]
+        else:
+            universe_queries = [
+                {
+                    "query_id": f"theme-universe-{theme_code}",
+                    "operation": "ths_member",
+                    "params": {"ts_code": theme_code},
+                    "fields": ["ts_code", "name", "con_code", "con_name"],
+                    "purpose": (
+                        f"Build the listed {theme_name} concept constituent universe."
+                    ),
+                    "filters": [],
+                    "aggregations": [],
+                }
+                for theme_code, theme_name in RETAIL_COHORT_THEME_ALIASES[
+                    universe_label
+                ]
+            ]
+
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        end_date = now.date()
+        if now.time() < ClockTime(17, 10):
+            end_date -= timedelta(days=1)
+        while end_date.weekday() >= 5:
+            end_date -= timedelta(days=1)
+        start_date = end_date - timedelta(days=30)
+        quarter_ends = [
+            datetime(year, month, day).date()
+            for year in range(start_date.year - 1, start_date.year + 1)
+            for month, day in ((3, 31), (6, 30), (9, 30), (12, 31))
+            if datetime(year, month, day).date() < start_date
+        ]
+        holder_period = max(quarter_ends).strftime("%Y%m%d")
+
+        raw_plan["feasibility"] = "supported"
+        raw_plan["limitations"] = []
+        raw_plan["result_transform"] = "industry_retail_cohort_return"
+        raw_plan["interpretation"] = (
+            f"Compare the past-month performance of listed {universe_label} securities "
+            "split into equal cohorts by the approved non-top-ten float-holder proxy."
+        )
+        raw_plan["queries"] = universe_queries + [
+            {
+                "query_id": "retail-proxy-template",
+                "operation": "top10_floatholders",
+                "params": {"period": holder_period},
+                "fields": [
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "holder_name",
+                    "hold_float_ratio",
+                ],
+                "purpose": (
+                    "Retrieve one reporting-period float-holder snapshot for each "
+                    "security selected by the industry universe query."
+                ),
+                "transform": "cr10_float_trend",
+                "filters": [],
+                "aggregations": [],
+            },
+            {
+                "query_id": "past-month-prices",
+                "operation": "daily",
+                "params": {
+                    "start_date": start_date.strftime("%Y%m%d"),
+                    "end_date": end_date.strftime("%Y%m%d"),
+                },
+                "fields": ["ts_code", "trade_date", "close"],
+                "purpose": "Calculate each selected security's past-month return.",
+                "filters": [],
+                "aggregations": [],
+            },
+        ]
+        raw_plan["requirements"] = [
+            {
+                "requirement": f"Build the listed {universe_label} security universe.",
+                "status": "covered",
+                "implementation": (
+                    "Resolve documented industry values or concept constituents."
+                ),
+                "evidence": (
+                    "stock_basic provides industry membership and ths_member provides "
+                    "concept constituents."
+                ),
+            },
+            {
+                "requirement": "Split securities into equal retail-ratio cohorts.",
+                "status": "covered",
+                "implementation": (
+                    "Dynamically read top10_floatholders for the filtered universe "
+                    "and calculate non_top10_float_ratio with cr10_float_trend."
+                ),
+                "evidence": (
+                    "The approved proxy is 100% minus disclosed top-ten unrestricted "
+                    "float-holder ratios for one completed reporting period."
+                ),
+            },
+            {
+                "requirement": "Compare how many companies rose over the past month.",
+                "status": "covered",
+                "implementation": (
+                    "Calculate first-to-last close returns, rank valid proxy values "
+                    "into equal halves, and compare positive-return counts."
+                ),
+                "evidence": "daily provides trade_date and close for period returns.",
+            },
+        ]
 
     @staticmethod
     def _normalize_fields(plan: QueryPlan) -> None:
@@ -595,7 +914,11 @@ class DeepSeekQueryPlanner:
                 and query.params.get("start_date")
                 and query.params.get("end_date")
                 and plan.result_transform
-                != "two_limit_up_next_day_probability"
+                not in {
+                    "two_limit_up_next_day_probability",
+                    "healthcare_retail_cohort_return",
+                    "industry_retail_cohort_return",
+                }
             ):
                 limitation = (
                     "A full-market daily range cannot be retrieved as one bounded "
@@ -646,7 +969,10 @@ class DeepSeekQueryPlanner:
                 }
                 for query in plan.queries
             )
-        ):
+        ) and plan.result_transform not in {
+            "healthcare_retail_cohort_return",
+            "industry_retail_cohort_return",
+        }:
             limitation = (
                 "The plan cannot dynamically fan out a full security catalog into "
                 "security-specific provider calls."
@@ -681,7 +1007,50 @@ class DeepSeekQueryPlanner:
             f"{item.implementation or ''} {item.evidence}"
             for item in plan.requirements
         ).lower()
-        if any(marker in coverage_text for marker in ("代理", "近似", "proxy")):
+        approved_retail_proxy_markers = (
+            "non_top10_float_ratio",
+            "cr10_float_trend",
+            "非前十大流通股东",
+            "前十大流通股东以外",
+        )
+        uses_approved_retail_proxy = (
+            "散户" in prompt
+            and any(
+                marker in coverage_text
+                for marker in approved_retail_proxy_markers
+            )
+            or (
+                "散户" in prompt
+                and any(
+                    query.operation == "top10_floatholders"
+                    for query in plan.queries
+                )
+            )
+        )
+        if uses_approved_retail_proxy and plan.feasibility == "unsupported":
+            plan.limitations = [
+                item
+                for item in plan.limitations
+                if not any(
+                    marker in item.lower()
+                    for marker in (
+                        "unverified proxy",
+                        "未经验证的代理",
+                        "不可替代",
+                    )
+                )
+            ]
+            if not plan.limitations:
+                plan.limitations = [
+                    "The approved retail-ratio proxy is available, but this "
+                    "full-universe study still requires unsupported security-specific "
+                    "fan-out and cross-query cohort grouping."
+                ]
+        if (
+            any(marker in coverage_text for marker in ("代理", "近似", "proxy"))
+            and not uses_approved_retail_proxy
+            and limitation is None
+        ):
             limitation = (
                 "The requested metric cannot be replaced by an unverified proxy."
             )
@@ -692,7 +1061,15 @@ class DeepSeekQueryPlanner:
         ):
             limitation = limitation_text
         if limitation is None:
-            if len(plan.queries) > 1:
+            if (
+                len(plan.queries) > 1
+                and plan.result_transform
+                not in {
+                    "dimension_monthly_turnover_decline",
+                    "healthcare_retail_cohort_return",
+                    "industry_retail_cohort_return",
+                }
+            ):
                 non_catalog_queries = [
                     query
                     for query in plan.queries

@@ -31,9 +31,9 @@ export interface DataFilter {
   /** Scalar result field evaluated by the local row filter. */
   field: string;
   /** Supported local comparison operator. */
-  operator: "gt" | "ge" | "eq" | "le" | "lt";
+  operator: "gt" | "ge" | "eq" | "le" | "lt" | "in";
   /** Numeric threshold, or a string value for exact equality. */
-  value: number | string;
+  value: number | string | string[];
 }
 
 export interface DataQuery {
@@ -90,7 +90,12 @@ export interface QueryPlan {
   /** Missing capabilities that prevent faithful execution. */
   limitations: string[];
   /** Optional deterministic cross-query calculation. */
-  result_transform: "two_limit_up_next_day_probability" | null;
+  result_transform:
+    | "two_limit_up_next_day_probability"
+    | "dimension_monthly_turnover_decline"
+    | "healthcare_retail_cohort_return"
+    | "industry_retail_cohort_return"
+    | null;
   /** Ordered provider-native reads required to satisfy the request. */
   queries: DataQuery[];
 }
@@ -161,6 +166,41 @@ export interface AnalysisResponse {
   decision_trace: DecisionTraceStep[];
   /** Planning or system error when no query-level result applies. */
   error: ServiceError | null;
+}
+
+export type AnalysisTaskStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface AnalysisTaskSubmission {
+  /** Stable task identifier returned by the asynchronous submission endpoint. */
+  task_id: string;
+  /** Initial or reused task lifecycle state. */
+  status: AnalysisTaskStatus;
+  /** Relative endpoint polled for progress and the terminal result. */
+  status_url: string;
+}
+
+export interface AnalysisTask {
+  /** Stable task identifier. */
+  task_id: string;
+  /** Current durable lifecycle state. */
+  status: AnalysisTaskStatus;
+  /** Number of security-specific items completed. */
+  completed_items: number;
+  /** Total security-specific items discovered. */
+  total_items: number;
+  /** Terminal response when execution succeeds. */
+  response: AnalysisResponse | null;
+  /** Terminal worker failure when execution cannot produce a response. */
+  error: ServiceError | null;
+}
+
+export interface AnalysisTaskProgress {
+  /** Current durable lifecycle state. */
+  status: AnalysisTaskStatus;
+  /** Number of security-specific items completed. */
+  completedItems: number;
+  /** Total security-specific items discovered. */
+  totalItems: number;
 }
 
 export type StockExchange = "SSE" | "SZSE" | "BSE";
