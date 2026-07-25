@@ -510,6 +510,7 @@ function ReferenceDataPage() {
   const [exchangeFilter, setExchangeFilter] = useState<StockExchange | "">("");
   const [industryFilter, setIndustryFilter] = useState("");
   const [stockPage, setStockPage] = useState(1);
+  const [calendarExchange, setCalendarExchange] = useState<StockExchange | "">("");
   const [stockResponse, setStockResponse] = useState<StockListResponse | null>(null);
   const [availableIndustries, setAvailableIndustries] = useState<string[]>([]);
   const [stockServiceError, setStockServiceError] = useState<ServiceError | null>(null);
@@ -676,7 +677,18 @@ function ReferenceDataPage() {
         <section className="reference-panel" aria-labelledby="calendar-heading">
           <div className="calendar-header">
             <div>
-              <p className="panel-label">上海 · 深圳 · 北京</p>
+              <label className="calendar-exchange-field">
+                <span>市场</span>
+                <select
+                  value={calendarExchange}
+                  onChange={(event) => setCalendarExchange(event.target.value as StockExchange | "")}
+                >
+                  <option value="">上海 · 深圳 · 北京</option>
+                  <option value="SSE">上海</option>
+                  <option value="SZSE">深圳</option>
+                  <option value="BSE">北京</option>
+                </select>
+              </label>
               <h2 id="calendar-heading">2026年7月</h2>
             </div>
             <div className="calendar-legend" aria-label="日历图例">
