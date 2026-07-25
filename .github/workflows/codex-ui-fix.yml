@@ -27,10 +27,13 @@ jobs:
           git merge-base --is-ancestor HEAD origin/main
 
       - name: Install the pinned PI coding agent
-        run: npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.82.0
+        run: |
+          npm install --global --ignore-scripts \
+            @earendil-works/pi-coding-agent@0.82.0 \
+            pnpm@11.17.0
 
       - name: Install locked frontend dependencies
-        run: npm ci --prefix frontend
+        run: pnpm --dir frontend install --frozen-lockfile
 
       - name: Build the bounded PI prompt
         env:
