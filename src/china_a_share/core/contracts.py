@@ -41,6 +41,13 @@ class AnalysisTaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class UiFeedbackStatus(str, Enum):
+    """Lifecycle state exposed for one administrator UI improvement request."""
+
+    SUBMITTED = "submitted"
+    DISPATCH_FAILED = "dispatch_failed"
+
+
 class QueryStatus(str, Enum):
     """Execution state of one market-data query."""
 
@@ -754,3 +761,112 @@ class DataCacheRecord(BaseModel):
         if self.expires_at <= self.fetched_at:
             raise ValueError("expires_at must be later than fetched_at")
         return self
+
+
+class UiFeedbackRect(BaseModel):
+    """Viewport-relative rectangle associated with selected page content."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(description="Horizontal viewport coordinate in CSS pixels.")
+    y: float = Field(description="Vertical viewport coordinate in CSS pixels.")
+    width: float = Field(ge=0, description="Selected width in CSS pixels.")
+    height: float = Field(ge=0, description="Selected height in CSS pixels.")
+
+
+class UiFeedbackViewport(BaseModel):
+    """Browser viewport dimensions captured with one UI improvement request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    width: int = Field(ge=1, le=10_000, description="Viewport width in CSS pixels.")
+    height: int = Field(ge=1, le=10_000, description="Viewport height in CSS pixels.")
+    scroll_x: float = Field(
+        ge=0,
+        description="Horizontal document scroll offset in CSS pixels.",
+    )
+    scroll_y: float = Field(
+        ge=0,
+        description="Vertical document scroll offset in CSS pixels.",
+    )
+
+
+class UiFeedbackRequest(BaseModel):
+    """Administrator-authored request to improve selected production UI content."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_path: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Application path containing the selected content.",
+    )
+    feedback_id: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+        description="Stable frontend component identifier nearest the selection.",
+    )
+    selected_text: str = Field(
+        default="",
+        max_length=2_000,
+        description="Bounded visible text selected by the administrator.",
+    )
+    suggestion: str = Field(
+        default="",
+        max_length=4_000,
+        description="Optional administrator instruction describing the desired change.",
+    )
+    rect: UiFeedbackRect = Field(
+        description="Viewport-relative selection or component rectangle.",
+    )
+    viewport: UiFeedbackViewport = Field(
+        description="Browser viewport dimensions used to interpret the rectangle.",
+    )
+
+    @model_validator(mode="after")
+    def validate_feedback_context(self) -> "UiFeedbackRequest":
+        """Require either selected text or an explicit administrator suggestion."""
+        if not self.selected_text.strip() and not self.suggestion.strip():
+            raise ValueError("selected_text or suggestion is required")
+        return self
+
+
+class UiFeedbackConfig(BaseModel):
+    """Public configuration required to enable administrator UI feedback."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        description="Whether every required backend and GitHub credential is configured.",
+    )
+    google_client_id: str = Field(
+        default="",
+        description="Public Google Web OAuth client identifier used by the frontend.",
+    )
+    git_branch: str = Field(
+        default="",
+        description="Git branch recorded for the currently deployed application.",
+    )
+    git_sha: str = Field(
+        default="",
+        description="Full Git commit recorded for the currently deployed application.",
+    )
+
+
+class UiFeedbackSubmission(BaseModel):
+    """Public acknowledgement returned after a UI request is persisted and dispatched."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    feedback_id: str = Field(
+        min_length=1,
+        description="Opaque identifier used to correlate the feedback workflow.",
+    )
+    status: UiFeedbackStatus = Field(
+        description="Current durable UI feedback workflow state.",
+    )
+    actions_url: str = Field(
+        min_length=1,
+        description="GitHub Actions page where the administrator can inspect progress.",
+    )

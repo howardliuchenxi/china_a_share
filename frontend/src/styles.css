@@ -35,6 +35,99 @@ select {
   margin-bottom: 32px;
 }
 
+.ui-feedback-admin {
+  position: fixed;
+  z-index: 40;
+  top: 16px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid #b9c0b7;
+  background: rgba(248, 249, 245, 0.96);
+  box-shadow: 0 8px 24px rgba(24, 36, 31, 0.1);
+}
+
+.ui-feedback-admin > span {
+  color: #68736c;
+  font-size: 0.75rem;
+}
+
+.ui-feedback-area-button,
+.ui-feedback-floating-button {
+  border: 1px solid #a84220;
+  background: #b44c27;
+  color: #fff;
+  cursor: pointer;
+}
+
+.ui-feedback-floating-button {
+  position: fixed;
+  z-index: 55;
+  padding: 7px 14px;
+  box-shadow: 0 5px 16px rgba(24, 36, 31, 0.24);
+}
+
+.ui-feedback-backdrop {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(24, 36, 31, 0.46);
+}
+
+.ui-feedback-dialog {
+  width: min(560px, 100%);
+  padding: 28px;
+  border: 1px solid #aeb7ad;
+  background: #f8f9f5;
+  box-shadow: 0 24px 70px rgba(24, 36, 31, 0.24);
+}
+
+.ui-feedback-dialog h2 {
+  margin: 8px 0 16px;
+}
+
+.ui-feedback-dialog label,
+.ui-feedback-dialog textarea {
+  display: block;
+  width: 100%;
+}
+
+.ui-feedback-dialog textarea {
+  margin-top: 7px;
+  padding: 12px;
+  border: 1px solid #aeb7ad;
+  background: #fff;
+}
+
+.ui-feedback-context {
+  max-height: 150px;
+  overflow: auto;
+  padding: 12px;
+  background: #e9ece5;
+  color: #465149;
+}
+
+.ui-feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.ui-feedback-error {
+  color: #9d3218;
+}
+
+.ui-feedback-success a {
+  margin-left: 8px;
+  color: #9d3218;
+}
+
 .hero .eyebrow {
   margin-bottom: 12px;
   font-size: 0.95rem;

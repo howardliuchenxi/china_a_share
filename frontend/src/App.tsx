@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { fetchStocks, StockListRequestError, submitAnalysis } from "./api";
+import { UiFeedbackController } from "./UiFeedbackController";
 import type {
   AnalysisImage,
   AnalysisResponse,
@@ -563,7 +564,7 @@ function ReferenceDataPage() {
   }
 
   return (
-    <div className="reference-page">
+    <div className="reference-page" data-feedback-id="reference-page">
       <nav className="reference-tabs" aria-label="基础信息分类" role="tablist">
         {([
           ["stocks", "股票列表"],
@@ -823,13 +824,14 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
-      <header className="hero">
+    <main className="app-shell" data-feedback-id="app-shell">
+      <UiFeedbackController />
+      <header className="hero" data-feedback-id="hero">
         <p className="eyebrow">数据世界</p>
         <h1>{activePage === "reference" ? "整理 A股基础信息。" : "用自然语言探索 A股数据。"}</h1>
       </header>
 
-      <nav className="page-tabs" aria-label="主要功能" role="tablist">
+      <nav className="page-tabs" aria-label="主要功能" role="tablist" data-feedback-id="page-tabs">
         <button
           type="button"
           role="tab"
@@ -849,7 +851,7 @@ export default function App() {
       </nav>
 
       {activePage === "analysis" ? <>
-      <section className="request-panel" aria-labelledby="request-heading">
+      <section className="request-panel" aria-labelledby="request-heading" data-feedback-id="request-panel">
         <div className="section-heading"><span>01</span><h2 id="request-heading">数据请求</h2></div>
         <form onSubmit={handleSubmit}>
           <label htmlFor="analysis-prompt">描述你需要的数据</label>
@@ -941,7 +943,7 @@ export default function App() {
         </form>
       </section>
 
-      <section className="results-panel" aria-labelledby="results-heading">
+      <section className="results-panel" aria-labelledby="results-heading" data-feedback-id="results-panel">
         <div className="section-heading"><span>02</span><h2 id="results-heading">数据与错误</h2></div>
         {localError && <div className="error-card" role="alert"><strong>本地错误</strong><p>{localError}</p></div>}
         {response?.error && <ErrorCard error={response.error} />}
@@ -971,7 +973,7 @@ export default function App() {
         {!localError && !response && <p className="empty-output">数据源查询结果将在这里显示。</p>}
       </section>
 
-      <section className="details-stack" aria-label="查询与执行详情">
+      <section className="details-stack" aria-label="查询与执行详情" data-feedback-id="execution-details">
         <details className="collapsible-panel">
           <summary><span>03</span><strong>查询与执行详情</strong></summary>
           <div className="plan-content">

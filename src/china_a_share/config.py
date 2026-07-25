@@ -24,6 +24,12 @@ class Settings:
     google_cloud_project: str = ""
     cloud_run_region: str = "asia-east2"
     analysis_job_name: str = "china-a-share-analysis-worker"
+    admin_email: str = ""
+    google_oauth_client_id: str = ""
+    github_fix_repo: str = ""
+    github_fix_token: str = ""
+    app_git_branch: str = ""
+    app_git_sha: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -49,6 +55,12 @@ class Settings:
             "ANALYSIS_JOB_NAME",
             "china-a-share-analysis-worker",
         ).strip()
+        admin_email = os.getenv("ADMIN_EMAIL", "").strip().casefold()
+        google_oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+        github_fix_repo = os.getenv("GITHUB_FIX_REPO", "").strip()
+        github_fix_token = os.getenv("GITHUB_FIX_TOKEN", "").strip()
+        app_git_branch = os.getenv("APP_GIT_BRANCH", "").strip()
+        app_git_sha = os.getenv("APP_GIT_SHA", "").strip()
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
@@ -57,4 +69,10 @@ class Settings:
             google_cloud_project=google_cloud_project,
             cloud_run_region=cloud_run_region,
             analysis_job_name=analysis_job_name,
+            admin_email=admin_email,
+            google_oauth_client_id=google_oauth_client_id,
+            github_fix_repo=github_fix_repo,
+            github_fix_token=github_fix_token,
+            app_git_branch=app_git_branch,
+            app_git_sha=app_git_sha,
         )

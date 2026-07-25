@@ -11,6 +11,9 @@ from china_a_share.core.contracts import (
     AnalysisStatus,
     StockListItem,
     StockListResponse,
+    UiFeedbackConfig,
+    UiFeedbackStatus,
+    UiFeedbackSubmission,
 )
 from china_a_share.tasks import AnalysisTaskCoordinator, MemoryAnalysisTaskStore
 
@@ -57,6 +60,27 @@ class FakeStockCatalogService:
         return self.response.model_copy(update={"request_id": request_id})
 
 
+class FakeUiFeedbackService:
+    def __init__(self):
+        self.calls = []
+
+    def config(self):
+        return UiFeedbackConfig(
+            enabled=True,
+            google_client_id="public-client-id",
+            git_branch="main",
+            git_sha="a" * 40,
+        )
+
+    def submit(self, token, request):
+        self.calls.append((token, request))
+        return UiFeedbackSubmission(
+            feedback_id="feedback-1",
+            status=UiFeedbackStatus.SUBMITTED,
+            actions_url="https://github.com/example/repository/actions",
+        )
+
+
 def stock_response():
     return StockListResponse(
         request_id="placeholder",
@@ -98,6 +122,84 @@ def test_health_endpoint_reports_backend_availability(caplog):
     assert event["method"] == "GET"
     assert event["status_class"] == "2xx"
     assert event["request_id"]
+
+
+def test_ui_feedback_config_exposes_only_public_values():
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            ui_feedback_service=FakeUiFeedbackService(),
+        )
+    )
+
+    response = client.get("/api/ui-feedback/config")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "enabled": True,
+        "google_client_id": "public-client-id",
+        "git_branch": "main",
+        "git_sha": "a" * 40,
+    }
+
+
+def test_ui_feedback_requires_bearer_authentication():
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            ui_feedback_service=FakeUiFeedbackService(),
+        )
+    )
+
+    response = client.post(
+        "/api/ui-feedback",
+        json={
+            "page_path": "/analysis",
+            "feedback_id": "results-panel",
+            "selected_text": "Selected result",
+            "suggestion": "",
+            "rect": {"x": 1, "y": 2, "width": 3, "height": 4},
+            "viewport": {
+                "width": 1280,
+                "height": 800,
+                "scroll_x": 0,
+                "scroll_y": 100,
+            },
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Administrator authentication is required."
+
+
+def test_ui_feedback_dispatches_authenticated_request():
+    service = FakeUiFeedbackService()
+    client = TestClient(
+        create_app(FakeAnalysisService(), ui_feedback_service=service)
+    )
+
+    response = client.post(
+        "/api/ui-feedback",
+        headers={"Authorization": "Bearer google-token"},
+        json={
+            "page_path": "/analysis",
+            "feedback_id": "results-panel",
+            "selected_text": "Selected result",
+            "suggestion": "Clarify this result.",
+            "rect": {"x": 1, "y": 2, "width": 3, "height": 4},
+            "viewport": {
+                "width": 1280,
+                "height": 800,
+                "scroll_x": 0,
+                "scroll_y": 100,
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["feedback_id"] == "feedback-1"
+    assert service.calls[0][0] == "google-token"
+    assert service.calls[0][1].feedback_id == "results-panel"
 
 
 def test_analysis_endpoint_runs_the_injected_service(caplog):

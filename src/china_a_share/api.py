@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import Literal, Optional, Union
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -16,7 +16,8 @@ from .application.stock_catalog import StockCatalogService
 from .bootstrap import create_analysis_service as build_analysis_service
 from .bootstrap import create_analysis_task_coordinator
 from .bootstrap import create_stock_catalog_service as build_stock_catalog_service
-from .config import Settings
+from .bootstrap import create_ui_feedback_service as build_ui_feedback_service
+from .config import ConfigurationError, Settings
 from .core.contracts import (
     AnalysisRequest,
     AnalysisResponse,
@@ -25,8 +26,12 @@ from .core.contracts import (
     ServiceError,
     StockListErrorResponse,
     StockListResponse,
+    UiFeedbackConfig,
+    UiFeedbackRequest,
+    UiFeedbackSubmission,
 )
 from .core.errors import DataProviderError
+from .feedback import UiFeedbackAuthenticationError, UiFeedbackService
 from .observability import log_event
 from .tasks import AnalysisTaskCoordinator, requires_async_analysis
 
@@ -41,9 +46,17 @@ ANALYSIS_API_ROUTE = "/api/analysis"
 ANALYSIS_TASK_API_ROUTE = "/api/analysis/tasks"
 HEALTH_API_ROUTE = "/api/health"
 STOCKS_API_ROUTE = "/api/stocks"
+UI_FEEDBACK_API_ROUTE = "/api/ui-feedback"
+UI_FEEDBACK_CONFIG_API_ROUTE = "/api/ui-feedback/config"
 ANALYSIS_PAGE_ROUTE = "/analysis"
 BASIC_PAGE_ROUTE = "/basic"
-MONITORED_API_ROUTES = {ANALYSIS_API_ROUTE, HEALTH_API_ROUTE, STOCKS_API_ROUTE}
+MONITORED_API_ROUTES = {
+    ANALYSIS_API_ROUTE,
+    HEALTH_API_ROUTE,
+    STOCKS_API_ROUTE,
+    UI_FEEDBACK_API_ROUTE,
+    UI_FEEDBACK_CONFIG_API_ROUTE,
+}
 MILLISECONDS_PER_SECOND = 1_000
 DEFAULT_STOCK_PAGE_SIZE = 20
 MAX_STOCK_PAGE_SIZE = 100
@@ -67,6 +80,7 @@ def create_app(
     service: Optional[AnalysisService] = None,
     stock_catalog_service: Optional[StockCatalogService] = None,
     task_coordinator: Optional[AnalysisTaskCoordinator] = None,
+    ui_feedback_service: Optional[UiFeedbackService] = None,
 ) -> FastAPI:
     """Create the local HTTP application."""
     application = FastAPI(
@@ -114,6 +128,77 @@ def create_app(
     active_service = service
     active_stock_catalog_service = stock_catalog_service
     active_task_coordinator = task_coordinator
+    active_ui_feedback_service = ui_feedback_service
+
+    def get_ui_feedback_service() -> UiFeedbackService:
+        """Build the optional administrator workflow only when it is requested."""
+        nonlocal active_ui_feedback_service
+        if active_ui_feedback_service is None:
+            active_ui_feedback_service = build_ui_feedback_service(Settings.from_env())
+        return active_ui_feedback_service
+
+    @application.get(
+        UI_FEEDBACK_CONFIG_API_ROUTE,
+        response_model=UiFeedbackConfig,
+    )
+    def get_ui_feedback_config() -> UiFeedbackConfig:
+        """Expose only the public configuration needed by Google Identity Services."""
+        try:
+            return get_ui_feedback_service().config()
+        except ConfigurationError as exc:
+            # The private control must disappear entirely until every dependency exists.
+            log_event(
+                logger,
+                logging.INFO,
+                "ui_feedback_disabled",
+                api_route=UI_FEEDBACK_CONFIG_API_ROUTE,
+                reason=str(exc),
+            )
+            return UiFeedbackConfig(enabled=False)
+
+    @application.post(
+        UI_FEEDBACK_API_ROUTE,
+        response_model=UiFeedbackSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_ui_feedback(
+        request: UiFeedbackRequest,
+        authorization: str = Header(default=""),
+    ) -> UiFeedbackSubmission:
+        """Authenticate and dispatch one administrator UI improvement request."""
+        if not authorization.startswith("Bearer ") or not authorization[7:].strip():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Administrator authentication is required.",
+            )
+        try:
+            return get_ui_feedback_service().submit(
+                authorization[7:].strip(),
+                request,
+            )
+        except UiFeedbackAuthenticationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(exc),
+            ) from exc
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "ui_feedback_submission_failed",
+                api_route=UI_FEEDBACK_API_ROUTE,
+                source="system",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="UI feedback could not be dispatched.",
+            ) from exc
 
     @application.post(
         ANALYSIS_API_ROUTE,

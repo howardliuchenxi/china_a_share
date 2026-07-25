@@ -8,6 +8,9 @@ import type {
   StockListErrorResponse,
   StockListQuery,
   StockListResponse,
+  UiFeedbackConfig,
+  UiFeedbackRequest,
+  UiFeedbackSubmission,
 } from "./contracts";
 
 const ANALYSIS_TASK_POLL_INTERVAL_MS = 2_000;
@@ -111,4 +114,38 @@ export async function fetchStocks(
     throw new Error(`本地 API 返回 HTTP ${response.status}。`);
   }
   return payload as StockListResponse;
+}
+
+export async function fetchUiFeedbackConfig(): Promise<UiFeedbackConfig> {
+  const response = await fetch("/api/ui-feedback/config");
+  if (!response.ok) {
+    throw new Error(`页面改进配置返回 HTTP ${response.status}。`);
+  }
+  return response.json() as Promise<UiFeedbackConfig>;
+}
+
+export async function submitUiFeedback(
+  request: UiFeedbackRequest,
+  googleIdToken: string,
+): Promise<UiFeedbackSubmission> {
+  const response = await fetch("/api/ui-feedback", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${googleIdToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+  const payload = (await response.json()) as
+    | UiFeedbackSubmission
+    | { detail?: unknown };
+  if (!response.ok) {
+    const detail = "detail" in payload ? payload.detail : null;
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : `页面改进请求返回 HTTP ${response.status}。`,
+    );
+  }
+  return payload as UiFeedbackSubmission;
 }

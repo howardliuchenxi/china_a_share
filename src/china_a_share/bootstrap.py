@@ -15,6 +15,12 @@ from china_a_share.cache import (
     NoopDataCacheStore,
 )
 from china_a_share.config import ConfigurationError, Settings
+from china_a_share.feedback import (
+    CloudStorageUiFeedbackStore,
+    GitHubUiFeedbackDispatcher,
+    GoogleAdminVerifier,
+    UiFeedbackService,
+)
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
     CloudRunJobDispatcher,
@@ -72,6 +78,39 @@ def create_analysis_task_coordinator(
             settings.cloud_run_region,
             settings.analysis_job_name,
         ),
+    )
+
+
+def create_ui_feedback_service(settings: Settings) -> UiFeedbackService:
+    """Assemble the private administrator UI feedback workflow."""
+    required_settings = {
+        "ADMIN_EMAIL": settings.admin_email,
+        "GOOGLE_OAUTH_CLIENT_ID": settings.google_oauth_client_id,
+        "GITHUB_FIX_REPO": settings.github_fix_repo,
+        "GITHUB_FIX_TOKEN": settings.github_fix_token,
+        "TUSHARE_CACHE_BUCKET": settings.tushare_cache_bucket,
+        "APP_GIT_BRANCH": settings.app_git_branch,
+        "APP_GIT_SHA": settings.app_git_sha,
+    }
+    missing = [name for name, value in required_settings.items() if not value]
+    if missing:
+        raise ConfigurationError(
+            "UI feedback is disabled because required settings are missing: "
+            + ", ".join(missing)
+        )
+    return UiFeedbackService(
+        GoogleAdminVerifier(
+            settings.google_oauth_client_id,
+            settings.admin_email,
+        ),
+        CloudStorageUiFeedbackStore(settings.tushare_cache_bucket),
+        GitHubUiFeedbackDispatcher(
+            settings.github_fix_repo,
+            settings.github_fix_token,
+        ),
+        google_client_id=settings.google_oauth_client_id,
+        git_branch=settings.app_git_branch,
+        git_sha=settings.app_git_sha,
     )
 
 

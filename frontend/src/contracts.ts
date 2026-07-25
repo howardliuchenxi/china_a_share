@@ -313,3 +313,43 @@ export interface TradingCalendarErrorResponse {
   /** Safe provider or application error details. */
   error: ServiceError;
 }
+
+export interface UiFeedbackConfig {
+  /** Whether every private administrator feedback dependency is configured. */
+  enabled: boolean;
+  /** Public OAuth client identifier used by Google Identity Services. */
+  google_client_id: string;
+  /** Source branch represented by the deployed application. */
+  git_branch: string;
+  /** Exact source commit represented by the deployed application. */
+  git_sha: string;
+}
+
+export interface UiFeedbackRequest {
+  /** Browser path where the administrator selected the content. */
+  page_path: string;
+  /** Stable application component identifier nearest the selection. */
+  feedback_id: string;
+  /** Visible text selected by the administrator or captured from an area. */
+  selected_text: string;
+  /** Optional administrator instruction for the requested improvement. */
+  suggestion: string;
+  /** Viewport-relative selected area coordinates in CSS pixels. */
+  rect: { x: number; y: number; width: number; height: number };
+  /** Viewport and scroll state used to understand the selected area. */
+  viewport: {
+    width: number;
+    height: number;
+    scroll_x: number;
+    scroll_y: number;
+  };
+}
+
+export interface UiFeedbackSubmission {
+  /** Durable identifier assigned to the feedback request. */
+  feedback_id: string;
+  /** Initial dispatch state stored with the feedback record. */
+  status: "submitted" | "dispatch_failed";
+  /** Repository Actions page where the administrator can inspect execution. */
+  actions_url: string;
+}

@@ -21,6 +21,17 @@
           "analysis-jobs/"
         ]
       }
+    },
+    {
+      "action": {
+        "type": "Delete"
+      },
+      "condition": {
+        "age": 30,
+        "matchesPrefix": [
+          "fix-requests/"
+        ]
+      }
     }
   ]
 }
