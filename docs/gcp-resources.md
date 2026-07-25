@@ -256,7 +256,7 @@ GitHub connection replaces this source configuration.
 | Provider | GitHub through the Google-managed Cloud Build GitHub App |
 | Installation state | Pending user OAuth authorization |
 | Credential storage | Google-managed Secret Manager secrets created for the connection |
-| IAM boundary | The temporary project-level Secret Manager Admin grant used during creation was removed |
+| IAM boundary | Temporary project-level `roles/secretmanager.admin` is active for the Cloud Build service agent until OAuth and GitHub App installation complete |
 | Expected cost impact | Secret versions are expected to remain within the Secret Manager free allowance |
 
 No repository is linked to the connection yet. Complete user OAuth and GitHub
