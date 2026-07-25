@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00026-jx2` |
+| Latest ready revision | `china-a-share-lab-00027-qft` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `44ab319a33233b300df90992f338e0f7a18d129b` |
+| Deployed Git commit | `79f4c6efec959e20b81c2edc6279a73ee992afa1` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -110,7 +110,7 @@ project-wide Cloud Run administration.
 | Bucket | `gs://china-a-share-lab-cache-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 7,715,422 bytes at last verification |
+| Current logical size | 7,719,183 bytes at last verification |
 | Public access prevention | Enforced |
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
@@ -129,7 +129,7 @@ Run scale-to-zero events and deployments. It is not a general query database.
 | Bucket | `gs://run-sources-china-a-share-lab-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 36,705,079 bytes at last verification |
+| Current logical size | 36,958,738 bytes at last verification |
 | Uniform bucket-level access | Enabled |
 | Soft-delete retention | 7 days |
 | Build access | `roles/storage.objectViewer` for the default compute service account |
@@ -310,3 +310,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-07-24 | Deployed revision `china-a-share-lab-00024-trh` through `make deploy`; recorded source `main@81905284404ffe8de2eb5c2caf9461c0d30f4d7a`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00025-ddv` through `make deploy`; recorded source `main@6479d9c61ca9cf804d9e688ef55906350de1f101`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00026-jx2` through `make deploy`; recorded source `main@44ab319a33233b300df90992f338e0f7a18d129b`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00027-qft` through `make deploy`; recorded source `main@79f4c6efec959e20b81c2edc6279a73ee992afa1`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
