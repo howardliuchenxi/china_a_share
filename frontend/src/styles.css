@@ -130,8 +130,16 @@ select {
 
 .hero .eyebrow {
   margin-bottom: 12px;
-  font-size: 0.95rem;
+  font-size: 1.6rem;
   letter-spacing: 0.1em;
+}
+
+.hero h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
 }
 
 .page-tabs {
