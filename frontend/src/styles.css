@@ -522,12 +522,12 @@ button:disabled {
 }
 
 .plan-content h2 {
-  max-width: 340px;
-  margin-bottom: 24px;
+  max-width: 380px;
+  margin-bottom: 20px;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.7rem;
+  font-size: 1.2rem;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 1.35;
 }
 
 .plan-content > .decision-trace,
