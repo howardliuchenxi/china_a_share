@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00028-l6k` |
+| Latest ready revision | `china-a-share-lab-00029-6xs` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `a1dbfbd60a62eab9e45da9d870851f5721f6713d` |
+| Deployed Git commit | `79f24d7cf277e65f979de0a2cc5ce176bee96327` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -214,11 +214,12 @@ account's monthly free allotment; expected low traffic should remain within the
 | Identity | Purpose | Access |
 | --- | --- | --- |
 | `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build and deploy verified `main` commits | Project-level `roles/run.admin` and `roles/logging.logWriter`; `roles/artifactregistry.writer` on `cloud-run-source-deploy`; `roles/storage.objectViewer` on the source bucket; `roles/iam.serviceAccountUser` on the runtime identity |
-| `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` | Invoke scheduled Cloud Build reconciliation | Project-level `roles/cloudbuild.builds.editor` |
+| `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` | Invoke scheduled Cloud Build reconciliation | Project-level `roles/cloudbuild.builds.editor`; `roles/iam.serviceAccountUser` on the dedicated deployer identity only |
 
 Neither identity has a user-managed key. The deployer can administer all Cloud
 Run services and jobs in this project. The Scheduler identity can create,
-inspect, and cancel builds across the project.
+inspect, and cancel builds across the project and can act only as the dedicated
+deployment identity.
 
 ### Source-build identity
 
@@ -243,10 +244,8 @@ inspect, and cancel builds across the project.
 | Current state | Verified by successful build and deployment |
 | Expected cost impact | Cloud Build usage only when invoked |
 
-The obsolete first-generation trigger
-`china-a-share-reconcile-main` (`9999fb69-2e0b-4446-9808-5b3b01774472`)
-remains provisioned but cannot read the private repository. Delete it after
-the Scheduler invocation path is verified.
+The obsolete first-generation trigger was deleted after the second-generation
+trigger completed both a real deployment and a scheduled no-op reconciliation.
 
 ### GitHub connection
 
@@ -273,7 +272,7 @@ GitHub authorization.
 | Schedule | Every 10 minutes (`*/10 * * * *`, UTC) |
 | Target | Cloud Build trigger `c3932b82-c9bb-4870-85af-c77eb2d24bbd` |
 | Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` |
-| State | Paused pending approval for the invocation identity to act as the dedicated deployer |
+| State | Enabled; real deployment and scheduled no-op reconciliation verified |
 | Retry count | 1 |
 | Expected cost impact | Within the monthly free allowance for three Scheduler jobs |
 

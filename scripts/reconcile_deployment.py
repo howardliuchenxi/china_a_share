@@ -14,6 +14,7 @@ GITHUB_REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 GIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 GITHUB_API_ROOT = "https://api.github.com"
 REQUEST_TIMEOUT_SECONDS = 30
+NON_DEPLOYING_PATHS = frozenset({"docs/gcp-resources.md"})
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,8 +42,8 @@ def fetch_comparison_status(
     repository: str,
     deployed_sha: str,
     target_sha: str,
-) -> str:
-    """Return GitHub's relationship from the deployed commit to the target."""
+) -> tuple[str, tuple[str, ...]]:
+    """Return GitHub's commit relationship and changed paths."""
     url = (
         f"{GITHUB_API_ROOT}/repos/{repository}/compare/"
         f"{deployed_sha}...{target_sha}"
@@ -70,12 +71,16 @@ def fetch_comparison_status(
     status = payload.get("status")
     if status not in {"ahead", "identical", "behind", "diverged"}:
         raise RuntimeError(f"GitHub returned an unexpected comparison status: {status}")
-    return status
+    files = payload.get("files", [])
+    changed_paths = tuple(file["filename"] for file in files)
+    return status, changed_paths
 
 
-def deployment_action(status: str) -> str:
+def deployment_action(status: str, changed_paths: tuple[str, ...] = ()) -> str:
     """Map a verified commit relationship to a fail-fast deployment action."""
     if status == "ahead":
+        if changed_paths and set(changed_paths) <= NON_DEPLOYING_PATHS:
+            return "skip"
         return "deploy"
     if status == "identical":
         return "skip"
@@ -92,12 +97,12 @@ def main() -> int:
         if args.deployed_sha == args.target_sha:
             print("skip")
             return 0
-        status = fetch_comparison_status(
+        status, changed_paths = fetch_comparison_status(
             args.repository,
             args.deployed_sha,
             args.target_sha,
         )
-        print(deployment_action(status))
+        print(deployment_action(status, changed_paths))
         return 0
     except (RuntimeError, ValueError) as error:
         print(str(error), file=sys.stderr)

@@ -255,8 +255,9 @@ Production also has a scheduled reconciliation workflow declared in
 trigger every ten minutes. The build compares the deployed `APP_GIT_SHA` with
 the latest `main` commit and deploys only when `main` is strictly ahead.
 Identical commits are a no-op; behind or diverged histories fail visibly.
-Unlike `make deploy`, scheduled reconciliation never writes deployment state
-back to Git.
+An inventory-only change to `docs/gcp-resources.md` is also a no-op so recording
+a verified deployment cannot trigger another deployment. Unlike `make deploy`,
+scheduled reconciliation never writes deployment state back to Git.
 
 After authenticating the Google Cloud CLI and selecting the project, a source
 deployment can be created manually for recovery with:

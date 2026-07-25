@@ -24,6 +24,23 @@ def test_deployment_action_deploys_only_when_target_is_ahead():
     assert reconcile_deployment.deployment_action("identical") == "skip"
 
 
+def test_deployment_action_skips_inventory_only_commit():
+    assert (
+        reconcile_deployment.deployment_action(
+            "ahead",
+            ("docs/gcp-resources.md",),
+        )
+        == "skip"
+    )
+    assert (
+        reconcile_deployment.deployment_action(
+            "ahead",
+            ("docs/gcp-resources.md", "src/china_a_share/server.py"),
+        )
+        == "deploy"
+    )
+
+
 @pytest.mark.parametrize("status", ["behind", "diverged"])
 def test_deployment_action_rejects_unsafe_history(status):
     with pytest.raises(RuntimeError, match=status):
@@ -35,17 +52,23 @@ def test_fetch_comparison_status_uses_deployed_commit_as_base(monkeypatch):
 
     def fake_urlopen(request, timeout):
         requested_urls.append((request.full_url, timeout))
-        return FakeResponse({"status": "ahead"})
+        return FakeResponse(
+            {
+                "status": "ahead",
+                "files": [{"filename": "frontend/src/App.tsx"}],
+            }
+        )
 
     monkeypatch.setattr(reconcile_deployment.urllib.request, "urlopen", fake_urlopen)
 
-    status = reconcile_deployment.fetch_comparison_status(
+    status, changed_paths = reconcile_deployment.fetch_comparison_status(
         "owner/repository",
         "1" * 40,
         "2" * 40,
     )
 
     assert status == "ahead"
+    assert changed_paths == ("frontend/src/App.tsx",)
     assert requested_urls == [
         (
             "https://api.github.com/repos/owner/repository/compare/"
