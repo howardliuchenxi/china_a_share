@@ -43,7 +43,7 @@ const SUPPORTED_ANALYSIS_IMAGE_TYPES = new Set([
   "image/jpeg",
   "image/webp",
 ]);
-const MAX_VISIBLE_ROWS = 100;
+const RESULT_PAGE_SIZE = 100;
 const MAX_PROMPT_HISTORY_ITEMS = 20;
 const PROMPT_HISTORY_STORAGE_KEY = "china-a-share.prompt-history";
 const STOCK_PAGE_SIZE = 20;
@@ -367,6 +367,7 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
   const [searchText, setSearchText] = useState("");
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("default");
+  const [resultPage, setResultPage] = useState(1);
   const processedRows = useMemo(() => {
     const normalizedSearch = searchText.trim().toLocaleLowerCase();
     const filteredRows = normalizedSearch
@@ -384,8 +385,15 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
       ))
       .map(({ row }) => row);
   }, [result.rows, searchText, sortColumn, sortDirection]);
+
+  useEffect(() => {
+    setResultPage(1);
+  }, [processedRows.length]);
+
   if (result.error) return <ErrorCard error={result.error} />;
-  const visibleRows = processedRows.slice(0, MAX_VISIBLE_ROWS);
+  const totalPages = Math.max(1, Math.ceil(processedRows.length / RESULT_PAGE_SIZE));
+  const safePage = Math.min(resultPage, totalPages);
+  const visibleRows = processedRows.slice((safePage - 1) * RESULT_PAGE_SIZE, safePage * RESULT_PAGE_SIZE);
 
   function updateSort(column: string) {
     if (sortColumn !== column) {
@@ -475,8 +483,24 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
               </tbody>
             </table>
           </div>
-          {processedRows.length > MAX_VISIBLE_ROWS && (
-            <p className="table-note">找到 {processedRows.length.toLocaleString()} 行，当前显示前 {MAX_VISIBLE_ROWS} 行。</p>
+          {processedRows.length > RESULT_PAGE_SIZE && (
+            <nav className="result-pagination" aria-label="结果分页">
+              <button
+                type="button"
+                disabled={safePage === 1}
+                onClick={() => setResultPage((page) => Math.max(1, page - 1))}
+              >
+                上一页
+              </button>
+              <span>第 {safePage} 页，共 {totalPages} 页（{processedRows.length.toLocaleString()} 行）</span>
+              <button
+                type="button"
+                disabled={safePage === totalPages}
+                onClick={() => setResultPage((page) => Math.min(totalPages, page + 1))}
+              >
+                下一页
+              </button>
+            </nav>
           )}
         </>
       ) : result.row_count > 0 ? (
