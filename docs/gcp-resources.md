@@ -247,6 +247,21 @@ The first-generation URI source configuration cannot read the private GitHub
 repository. Do not resume its Scheduler job until a verified second-generation
 GitHub connection replaces this source configuration.
 
+### GitHub connection
+
+| Setting | Value |
+| --- | --- |
+| Connection | `china-a-share-github` |
+| Region | `asia-east2` |
+| Provider | GitHub through the Google-managed Cloud Build GitHub App |
+| Installation state | Pending user OAuth authorization |
+| Credential storage | Google-managed Secret Manager secrets created for the connection |
+| IAM boundary | The temporary project-level Secret Manager Admin grant used during creation was removed |
+| Expected cost impact | Secret versions are expected to remain within the Secret Manager free allowance |
+
+No repository is linked to the connection yet. Complete user OAuth and GitHub
+App installation before registering the private repository.
+
 ### Cloud Scheduler
 
 | Setting | Value |
