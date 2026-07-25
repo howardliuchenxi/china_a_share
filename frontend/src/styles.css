@@ -918,6 +918,31 @@ th { position: sticky; top: 0; background: #e9ece5; }
   margin-bottom: 6px;
 }
 
+.calendar-exchange-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 0.7rem;
+  color: #526059;
+}
+
+.calendar-exchange-field select {
+  border: 1px solid #9da69d;
+  border-radius: 0;
+  outline: none;
+  background: #f8f8f3;
+  color: #18241f;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.calendar-exchange-field select:focus {
+  border-color: #2d4d3b;
+  box-shadow: 0 0 0 2px rgb(27 63 33 / 0.18);
+}
+
 .calendar-legend {
   display: flex;
   flex-wrap: wrap;
