@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00027-qft` |
+| Latest ready revision | `china-a-share-lab-00028-l6k` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `79f4c6efec959e20b81c2edc6279a73ee992afa1` |
+| Deployed Git commit | `a1dbfbd60a62eab9e45da9d870851f5721f6713d` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -234,18 +234,19 @@ inspect, and cancel builds across the project.
 
 | Setting | Value |
 | --- | --- |
-| Trigger | `china-a-share-reconcile-main` |
-| Trigger ID | `9999fb69-2e0b-4446-9808-5b3b01774472` |
+| Trigger | `china-a-share-reconcile-main-v2` |
+| Trigger ID | `c3932b82-c9bb-4870-85af-c77eb2d24bbd` |
 | Region | `asia-east2` |
 | Source branch | `main` |
 | Build configuration | `cloudbuild.reconcile.yaml` |
 | Execution identity | `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` |
-| Current state | Provisioned but unable to read the private GitHub repository |
+| Current state | Verified by successful build and deployment |
 | Expected cost impact | Cloud Build usage only when invoked |
 
-The first-generation URI source configuration cannot read the private GitHub
-repository. Do not resume its Scheduler job until a verified second-generation
-GitHub connection replaces this source configuration.
+The obsolete first-generation trigger
+`china-a-share-reconcile-main` (`9999fb69-2e0b-4446-9808-5b3b01774472`)
+remains provisioned but cannot read the private repository. Delete it after
+the Scheduler invocation path is verified.
 
 ### GitHub connection
 
@@ -254,13 +255,14 @@ GitHub connection replaces this source configuration.
 | Connection | `china-a-share-github` |
 | Region | `asia-east2` |
 | Provider | GitHub through the Google-managed Cloud Build GitHub App |
-| Installation state | Pending user OAuth authorization |
+| Installation state | Complete |
+| Repository | `china-a-share`, linked to private GitHub repository `howardliuchenxi/china_a_share` |
 | Credential storage | Google-managed Secret Manager secrets created for the connection |
-| IAM boundary | Temporary project-level `roles/secretmanager.admin` is active for the Cloud Build service agent until OAuth and GitHub App installation complete |
+| IAM boundary | The temporary project-level `roles/secretmanager.admin` used during setup was removed |
 | Expected cost impact | Secret versions are expected to remain within the Secret Manager free allowance |
 
-No repository is linked to the connection yet. Complete user OAuth and GitHub
-App installation before registering the private repository.
+The GitHub App installation is limited by the repository selection made during
+GitHub authorization.
 
 ### Cloud Scheduler
 
@@ -269,9 +271,9 @@ App installation before registering the private repository.
 | Job | `china-a-share-reconcile-main` |
 | Region | `asia-east2` |
 | Schedule | Every 10 minutes (`*/10 * * * *`, UTC) |
-| Target | Cloud Build trigger `9999fb69-2e0b-4446-9808-5b3b01774472` |
+| Target | Cloud Build trigger `c3932b82-c9bb-4870-85af-c77eb2d24bbd` |
 | Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` |
-| State | Paused pending private GitHub repository authorization |
+| State | Paused pending approval for the invocation identity to act as the dedicated deployer |
 | Retry count | 1 |
 | Expected cost impact | Within the monthly free allowance for three Scheduler jobs |
 
