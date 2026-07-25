@@ -126,10 +126,10 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Check out deployed source
+      - name: Check out current main
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.client_payload.git_sha }}
+          ref: main
           fetch-depth: 0
 
       - name: Download generated patch
