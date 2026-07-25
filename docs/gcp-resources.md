@@ -209,6 +209,17 @@ account's monthly free allotment; expected low traffic should remain within the
 - Executes only `china-a-share-analysis-worker` with per-execution overrides.
 - Does not have a broad project-level role.
 
+### Planned deployment automation identities
+
+| Identity | Intended purpose | Current access |
+| --- | --- | --- |
+| `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build and deploy verified `main` commits | No IAM roles granted |
+| `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` | Invoke only the scheduled Cloud Build reconciliation workflow | No IAM roles granted |
+
+These identities exist, but the scheduled deployment workflow is not live.
+Grant their documented access only when the Cloud Build trigger and Cloud
+Scheduler job are provisioned.
+
 ### Source-build identity
 
 `1079739428171-compute@developer.gserviceaccount.com`
@@ -230,6 +241,8 @@ are not application runtime identities.
 - Cloud Storage APIs: `storage.googleapis.com`, `storage-api.googleapis.com`
 - IAM APIs: `iam.googleapis.com`, `iamcredentials.googleapis.com`
 - Cloud Resource Manager API: `cloudresourcemanager.googleapis.com`
+- Cloud Scheduler API: `cloudscheduler.googleapis.com` (enabled for the planned
+  deployment reconciliation workflow; no Scheduler job is provisioned)
 - Logging and Monitoring APIs: `logging.googleapis.com`,
   `monitoring.googleapis.com`
 
