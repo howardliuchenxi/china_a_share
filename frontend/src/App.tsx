@@ -854,7 +854,6 @@ export default function App() {
       <section className="request-panel" aria-labelledby="request-heading" data-feedback-id="request-panel">
         <div className="section-heading"><span>01</span><h2 id="request-heading">数据请求</h2></div>
         <form onSubmit={handleSubmit}>
-          <label htmlFor="analysis-prompt">描述你需要的数据</label>
           <div className="prompt-history">
             <label htmlFor="prompt-history">历史输入</label>
             <select
@@ -876,6 +875,7 @@ export default function App() {
               ))}
             </select>
           </div>
+          <label htmlFor="analysis-prompt">描述你需要的数据</label>
           <textarea
             id="analysis-prompt"
             rows={6}
