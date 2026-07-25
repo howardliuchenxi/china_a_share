@@ -531,7 +531,7 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
 function ReferenceDataPage() {
   const [activeView, setActiveView] = useState<ReferenceView>("stocks");
   const [stockSearch, setStockSearch] = useState("");
-  const [exchangeFilter, setExchangeFilter] = useState<StockExchange | "">("");
+  const [exchangeFilter, setExchangeFilter] = useState<StockExchange>("SSE");
   const [industryFilter, setIndustryFilter] = useState("");
   const [stockPage, setStockPage] = useState(1);
   const [calendarExchange, setCalendarExchange] = useState<StockExchange | "">("");
@@ -578,7 +578,7 @@ function ReferenceDataPage() {
     setStockPage(1);
   }
 
-  function updateExchangeFilter(value: StockExchange | "") {
+  function updateExchangeFilter(value: StockExchange) {
     setExchangeFilter(value);
     setStockPage(1);
   }
@@ -629,9 +629,8 @@ function ReferenceDataPage() {
               <span>市场</span>
               <select
                 value={exchangeFilter}
-                onChange={(event) => updateExchangeFilter(event.target.value as StockExchange | "")}
+                onChange={(event) => updateExchangeFilter(event.target.value as StockExchange)}
               >
-                <option value="">全部市场</option>
                 <option value="SSE">上海</option>
                 <option value="SZSE">深圳</option>
                 <option value="BSE">北京</option>
