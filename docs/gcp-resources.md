@@ -209,16 +209,16 @@ account's monthly free allotment; expected low traffic should remain within the
 - Executes only `china-a-share-analysis-worker` with per-execution overrides.
 - Does not have a broad project-level role.
 
-### Planned deployment automation identities
+### Deployment automation identities
 
-| Identity | Intended purpose | Current access |
+| Identity | Purpose | Access |
 | --- | --- | --- |
-| `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build and deploy verified `main` commits | No IAM roles granted |
-| `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` | Invoke only the scheduled Cloud Build reconciliation workflow | No IAM roles granted |
+| `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build and deploy verified `main` commits | Project-level `roles/run.admin` and `roles/logging.logWriter`; `roles/artifactregistry.writer` on `cloud-run-source-deploy`; `roles/storage.objectViewer` on the source bucket; `roles/iam.serviceAccountUser` on the runtime identity |
+| `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` | Invoke scheduled Cloud Build reconciliation | Project-level `roles/cloudbuild.builds.editor` |
 
-These identities exist, but the scheduled deployment workflow is not live.
-Grant their documented access only when the Cloud Build trigger and Cloud
-Scheduler job are provisioned.
+Neither identity has a user-managed key. The deployer can administer all Cloud
+Run services and jobs in this project. The Scheduler identity can create,
+inspect, and cancel builds across the project.
 
 ### Source-build identity
 
@@ -227,6 +227,38 @@ Scheduler job are provisioned.
 - Reads uploaded sources from the Cloud Run source bucket.
 - Writes container images to the source-deployment Artifact Registry repository.
 - Writes build logs through `roles/logging.logWriter` at project level.
+
+## Deployment reconciliation
+
+### Cloud Build trigger
+
+| Setting | Value |
+| --- | --- |
+| Trigger | `china-a-share-reconcile-main` |
+| Trigger ID | `9999fb69-2e0b-4446-9808-5b3b01774472` |
+| Region | `asia-east2` |
+| Source branch | `main` |
+| Build configuration | `cloudbuild.reconcile.yaml` |
+| Execution identity | `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` |
+| Current state | Provisioned but unable to read the private GitHub repository |
+| Expected cost impact | Cloud Build usage only when invoked |
+
+The first-generation URI source configuration cannot read the private GitHub
+repository. Do not resume its Scheduler job until a verified second-generation
+GitHub connection replaces this source configuration.
+
+### Cloud Scheduler
+
+| Setting | Value |
+| --- | --- |
+| Job | `china-a-share-reconcile-main` |
+| Region | `asia-east2` |
+| Schedule | Every 10 minutes (`*/10 * * * *`, UTC) |
+| Target | Cloud Build trigger `9999fb69-2e0b-4446-9808-5b3b01774472` |
+| Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` |
+| State | Paused pending private GitHub repository authorization |
+| Retry count | 1 |
+| Expected cost impact | Within the monthly free allowance for three Scheduler jobs |
 
 Google-managed Cloud Run, Cloud Build, Artifact Registry, Container Registry,
 and Pub/Sub service agents also exist. They are platform-managed identities and
@@ -241,8 +273,7 @@ are not application runtime identities.
 - Cloud Storage APIs: `storage.googleapis.com`, `storage-api.googleapis.com`
 - IAM APIs: `iam.googleapis.com`, `iamcredentials.googleapis.com`
 - Cloud Resource Manager API: `cloudresourcemanager.googleapis.com`
-- Cloud Scheduler API: `cloudscheduler.googleapis.com` (enabled for the planned
-  deployment reconciliation workflow; no Scheduler job is provisioned)
+- Cloud Scheduler API: `cloudscheduler.googleapis.com`
 - Logging and Monitoring APIs: `logging.googleapis.com`,
   `monitoring.googleapis.com`
 
@@ -259,7 +290,6 @@ The following services are not live resources for this project:
 - Serverless VPC Access connector
 - Compute Engine virtual machine
 - Load balancer, static IP address, or custom domain
-- Cloud Scheduler job
 
 ## Cost posture
 
