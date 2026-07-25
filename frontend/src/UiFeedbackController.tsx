@@ -221,14 +221,17 @@ export function UiFeedbackController() {
             <div ref={loginButtonRef} />
           </>
         ) : (
-          <button
-            type="button"
-            className="ui-feedback-area-button"
-            title="点击后再点击需要改进的页面区域"
-            onClick={() => setIsSelectingArea(true)}
-          >
-            {isSelectingArea ? "请点击页面区域" : "选择区域"}
-          </button>
+          <>
+            <button
+              type="button"
+              className="ui-feedback-area-button"
+              title="点击后再点击需要改进的页面区域"
+              onClick={() => setIsSelectingArea(true)}
+            >
+              {isSelectingArea ? "请点击页面区域" : "选择区域"}
+            </button>
+            <span>右键页面区域也可改进</span>
+          </>
         )}
       </aside>
       {idToken && draft && !isDialogOpen && (
