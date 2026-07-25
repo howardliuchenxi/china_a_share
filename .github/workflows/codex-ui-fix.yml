@@ -29,6 +29,9 @@ jobs:
       - name: Install the pinned PI coding agent
         run: npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.82.0
 
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend
+
       - name: Build the bounded PI prompt
         env:
           FEEDBACK_ID: ${{ github.event.client_payload.feedback_id }}
