@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-07-24**
+Last verified: **2026-07-25**
 
 ## Project boundary
 
@@ -160,10 +160,13 @@ size exceeds the 0.5 GiB monthly Artifact Registry free allowance by roughly
 | `deepseek-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `zai-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `github-fix-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
+| `feishu-bot-webhook` | Version 1, enabled | Automatic | Deployment automation identity only |
 
-All four secrets grant `roles/secretmanager.secretAccessor` directly to
-`china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`. Secret values
-must never be added to this document.
+The four application secrets grant `roles/secretmanager.secretAccessor`
+directly to `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`.
+The Feishu webhook grants the same role only to the deployment automation
+identity so verified production deployments can notify the administrator group.
+Secret values must never be added to this document.
 
 ## Logging and Monitoring
 
@@ -213,7 +216,7 @@ account's monthly free allotment; expected low traffic should remain within the
 
 | Identity | Purpose | Access |
 | --- | --- | --- |
-| `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build and deploy verified `main` commits | Project-level `roles/run.admin` and `roles/logging.logWriter`; `roles/artifactregistry.writer` on `cloud-run-source-deploy`; `roles/storage.objectViewer` on the source bucket; `roles/iam.serviceAccountUser` on the runtime identity |
+| `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build, deploy verified `main` commits, and notify the administrator group | Project-level `roles/run.admin` and `roles/logging.logWriter`; `roles/artifactregistry.writer` on `cloud-run-source-deploy`; `roles/storage.objectViewer` on the source bucket; `roles/secretmanager.secretAccessor` on `feishu-bot-webhook`; `roles/iam.serviceAccountUser` on the runtime identity |
 | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` | Invoke scheduled Cloud Build reconciliation | Project-level `roles/cloudbuild.builds.editor`; `roles/iam.serviceAccountUser` on the dedicated deployer identity only |
 
 Neither identity has a user-managed key. The deployer can administer all Cloud
@@ -317,6 +320,8 @@ The following services are not live resources for this project:
 - Artifact Registry is approximately 0.5 GiB above its monthly free storage
   allowance, with a low single-digit-cent expected monthly charge.
 - Four active secret versions are within the Secret Manager free allowance.
+- The Feishu deployment webhook adds one low-volume secret access and one
+  outbound request after each real deployment, with no material expected cost.
 - The persistent cache has a 90-day deletion lifecycle to prevent unbounded
   object accumulation, while asynchronous task records expire after 7 days and
   private UI feedback records expire after 30 days.
@@ -370,3 +375,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-07-24 | Deployed revision `china-a-share-lab-00025-ddv` through `make deploy`; recorded source `main@6479d9c61ca9cf804d9e688ef55906350de1f101`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00026-jx2` through `make deploy`; recorded source `main@44ab319a33233b300df90992f338e0f7a18d129b`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00027-qft` through `make deploy`; recorded source `main@79f4c6efec959e20b81c2edc6279a73ee992afa1`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
+| 2026-07-25 | Created `feishu-bot-webhook` with automatic replication for successful deployment notifications and granted secret-level access only to the deployment automation identity; expected cost remains negligible. |

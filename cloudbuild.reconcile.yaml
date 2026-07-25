@@ -146,6 +146,52 @@ steps:
         printf '\nVerified revision %s at commit %s.\n' \
           "$${ready_revision}" "$${deployed_sha}"
 
+  - id: notify-feishu
+    name: python:3.12-slim
+    entrypoint: python
+    secretEnv:
+      - FEISHU_WEBHOOK
+    env:
+      - SERVICE_NAME=${_SERVICE}
+      - SERVICE_REGION=${_REGION}
+      - SERVICE_URL=${_SERVICE_URL}
+      - DEPLOYED_COMMIT=$COMMIT_SHA
+    args:
+      - -c
+      - |
+        import json
+        import os
+        import urllib.request
+
+        with open("/workspace/deployment-action", encoding="utf-8") as handle:
+            if handle.read().strip() != "deploy":
+                raise SystemExit(0)
+
+        message = "\n".join(
+            (
+                "✅ A-Share Laboratory deployment succeeded",
+                f"Service: {os.environ['SERVICE_NAME']}",
+                f"Region: {os.environ['SERVICE_REGION']}",
+                f"Commit: {os.environ['DEPLOYED_COMMIT'][:12]}",
+                f"URL: {os.environ['SERVICE_URL']}",
+            )
+        )
+        request = urllib.request.Request(
+            os.environ["FEISHU_WEBHOOK"],
+            data=json.dumps(
+                {
+                    "msg_type": "text",
+                    "content": {"text": message},
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+        if payload.get("code", payload.get("StatusCode", 0)) != 0:
+            raise RuntimeError(f"Feishu notification was rejected: {payload}")
+        print("Feishu deployment notification sent.")
+
 substitutions:
   _REGION: asia-east2
   _SERVICE: china-a-share-lab
@@ -160,5 +206,10 @@ substitutions:
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/feishu-bot-webhook/versions/latest
+      env: FEISHU_WEBHOOK
 
 timeout: 1800s
