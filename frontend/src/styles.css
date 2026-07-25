@@ -244,8 +244,8 @@ select:focus {
   display: grid;
   grid-template-columns: auto minmax(0, 480px);
   align-items: center;
-  gap: 10px;
-  margin: -2px 0 12px;
+  gap: 6px;
+  margin: 0 0 14px;
 }
 
 .prompt-history label {
