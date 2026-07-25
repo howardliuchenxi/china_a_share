@@ -1,4 +1,5 @@
 name: PI UI feedback
+run-name: ${{ github.event.client_payload.suggestion || format('Improve {0}', github.event.client_payload.component_id) }}
 
 on:
   repository_dispatch:
