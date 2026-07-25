@@ -130,6 +130,55 @@ test("custom prompt input enables submit button", async ({ page }) => {
   await expect(submitButton).toBeEnabled();
 });
 
+test("administrator feedback dialog stays open while entering a suggestion", async ({
+  page,
+}) => {
+  await mockApiRoutes(page, successWithMultiRowFixture);
+  await page.route("**/api/ui-feedback/config", (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        enabled: true,
+        google_client_id: "test-client-id",
+        git_branch: "main",
+        git_sha: "test-sha",
+      }),
+    });
+  });
+  await page.route("https://accounts.google.com/gsi/client", (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: "",
+    });
+  });
+  await page.addInitScript(() => {
+    window.google = {
+      accounts: {
+        id: {
+          initialize: ({ callback }) => callback({ credential: "test-id-token" }),
+          renderButton: () => undefined,
+        },
+      },
+    };
+  });
+
+  await page.goto("/analysis");
+  await expect(page.locator(".ui-feedback-area-button")).toBeVisible();
+  await page.locator(".hero").click({ button: "right" });
+
+  const dialog = page.getByRole("dialog", { name: "改进这个页面区域" });
+  const suggestion = page.locator("#ui-feedback-suggestion");
+  await expect(dialog).toBeVisible();
+  await expect(suggestion).toBeFocused();
+
+  await suggestion.fill("标题可以再简洁一些");
+
+  await expect(dialog).toBeVisible();
+  await expect(suggestion).toHaveValue("标题可以再简洁一些");
+});
+
 test("unsupported analysis displays its limitation instead of a blank result", async ({
   page,
 }) => {

@@ -117,7 +117,13 @@ export function UiFeedbackController() {
 
   useEffect(() => {
     if (!idToken) return;
-    const captureSelection = () => {
+    const captureSelection = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      // Keep the captured page context stable while the administrator works
+      // inside the feedback controls. A textarea mouseup has no page selection.
+      if (target?.closest(".ui-feedback-admin, .ui-feedback-floating-button, .ui-feedback-backdrop")) {
+        return;
+      }
       const selection = window.getSelection();
       const selectedText = boundedText(selection?.toString() ?? "");
       if (!selection || selection.rangeCount === 0 || !selectedText) {
@@ -259,6 +265,7 @@ export function UiFeedbackController() {
               value={suggestion}
               onChange={(event) => setSuggestion(event.target.value)}
               placeholder="不填写时，Codex 会根据选中内容判断问题。"
+              autoFocus
             />
             {error && <p className="ui-feedback-error" role="alert">{error}</p>}
             {submission && (
