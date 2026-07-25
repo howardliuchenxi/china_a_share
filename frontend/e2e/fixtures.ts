@@ -565,6 +565,86 @@ export const emptyResultFixture: AnalysisResponse = {
 /*  Synthetic stock-list fixture used by /api/stocks mock               */
 /* ------------------------------------------------------------------ */
 
+/** Single-stock multi-row fixture (e.g. trade_cal results all for one stock). */
+export const successWithSingleStockManyRowsFixture: AnalysisResponse = {
+  request_id: nextRequestId(),
+  planner: "deepseek",
+  data_provider: "tushare",
+  status: "success",
+  plan: {
+    market: "A_SHARE",
+    interpretation: "查询平安银行2026年7月的交易日期。",
+    feasibility: "supported",
+    requirements: [
+      {
+        requirement: "获取平安银行2026年7月交易日历",
+        status: "covered",
+        implementation: "trade_cal",
+        evidence: "trade_cal 接口支持 exchange 和 cal_date 过滤。",
+      },
+    ],
+    limitations: [],
+    queries: [
+      {
+        query_id: "e2e-q6",
+        operation: "trade_cal",
+        params: { exchange: "SZSE", start_date: "20260701", end_date: "20260731" },
+        fields: ["exchange", "cal_date", "is_open", "pretrade_date"],
+        purpose: "获取深圳市场2026年7月交易日历",
+        transform: null,
+        filters: [],
+        aggregations: [],
+      },
+    ],
+  },
+  results: [
+    {
+      query_id: "e2e-q6",
+      provider: "tushare",
+      operation: "trade_cal",
+      status: "success",
+      columns: ["exchange", "cal_date", "is_open", "pretrade_date"],
+      rows: [
+        { exchange: "SZSE", cal_date: "20260701", is_open: 1, pretrade_date: "20260630" },
+        { exchange: "SZSE", cal_date: "20260702", is_open: 1, pretrade_date: "20260701" },
+        { exchange: "SZSE", cal_date: "20260703", is_open: 1, pretrade_date: "20260702" },
+        { exchange: "SZSE", cal_date: "20260706", is_open: 1, pretrade_date: "20260703" },
+        { exchange: "SZSE", cal_date: "20260707", is_open: 1, pretrade_date: "20260706" },
+        { exchange: "SZSE", cal_date: "20260708", is_open: 1, pretrade_date: "20260707" },
+        { exchange: "SZSE", cal_date: "20260709", is_open: 1, pretrade_date: "20260708" },
+        { exchange: "SZSE", cal_date: "20260710", is_open: 1, pretrade_date: "20260709" },
+        { exchange: "SZSE", cal_date: "20260713", is_open: 1, pretrade_date: "20260710" },
+        { exchange: "SZSE", cal_date: "20260714", is_open: 1, pretrade_date: "20260713" },
+        { exchange: "SZSE", cal_date: "20260715", is_open: 1, pretrade_date: "20260714" },
+        { exchange: "SZSE", cal_date: "20260716", is_open: 1, pretrade_date: "20260715" },
+        { exchange: "SZSE", cal_date: "20260717", is_open: 1, pretrade_date: "20260716" },
+      ],
+      row_count: 13,
+      summary: {},
+      error: null,
+    } satisfies QueryResult,
+  ],
+  decision_trace: [
+    {
+      stage: "requirements",
+      status: "success",
+      title: "识别用户需求",
+      detail: "已将自然语言转换为 1 项结构化数据请求。",
+      evidence: ["需求：交易日历"],
+      external_call: false,
+    },
+    {
+      stage: "execution",
+      status: "success",
+      title: "执行数据查询",
+      detail: "已从 Tushare 获取 13 行结果。",
+      evidence: ["数据源：tushare", "返回 13 行"],
+      external_call: true,
+    },
+  ],
+  error: null,
+};
+
 export const stockListFixture: StockListResponse = {
   request_id: nextRequestId(),
   page: 1,

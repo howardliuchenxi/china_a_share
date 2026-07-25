@@ -14,6 +14,7 @@ import {
   stockListFixture,
   successWithMultiRowFixture,
   successWithSingleRowFixture,
+  successWithSingleStockManyRowsFixture,
   unsupportedAnalysisFixture,
 } from "./fixtures";
 
@@ -399,6 +400,48 @@ test("empty result displays user guidance", async ({ page }) => {
 /* ------------------------------------------------------------------ */
 /*  Scenario: reference-data page renders stock list                    */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/*  Scenario: single stock with many rows — no search filter            */
+/* ------------------------------------------------------------------ */
+
+test("single-stock multi-row result hides search filter", async ({
+  page,
+}) => {
+  await mockApiRoutes(page, successWithSingleStockManyRowsFixture);
+
+  await page.goto("/analysis");
+
+  await page.locator("#analysis-prompt").fill("查询A股列表");
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.locator(".result-block")).toBeVisible({ timeout: 5000 });
+
+  // Table should render (13 rows > 1)
+  await expect(page.locator(".table-scroll")).toBeVisible();
+
+  // Search filter should NOT be shown because all rows belong to
+  // one exchange scope (no ts_code column, so uniqueStockCount === 0)
+  await expect(page.locator(".result-tools")).not.toBeVisible();
+});
+
+test("multi-stock multi-row result shows search filter", async ({
+  page,
+}) => {
+  await mockApiRoutes(page, successWithMultiRowFixture);
+
+  await page.goto("/analysis");
+
+  await page.locator("#analysis-prompt").fill(
+    "查询2026年7月17日A股涨跌分布",
+  );
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.locator(".result-block")).toBeVisible({ timeout: 5000 });
+
+  // Search filter should be shown because there are multiple stocks
+  await expect(page.locator(".result-tools")).toBeVisible();
+});
 
 test("basic info page shows stock list with mocked data", async ({ page }) => {
   await mockApiRoutes(page, successWithMultiRowFixture);

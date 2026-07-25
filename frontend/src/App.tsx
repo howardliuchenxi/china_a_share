@@ -368,6 +368,14 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("default");
   const [resultPage, setResultPage] = useState(1);
+  const uniqueStockCount = useMemo(() => {
+    const codes = new Set<string>();
+    for (const row of result.rows) {
+      const code = String(row.ts_code ?? "");
+      if (code) codes.add(code);
+    }
+    return codes.size;
+  }, [result.rows]);
   const processedRows = useMemo(() => {
     const normalizedSearch = searchText.trim().toLocaleLowerCase();
     const filteredRows = normalizedSearch
@@ -418,7 +426,7 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
           ))}
         </dl>
       )}
-      {result.row_count > 1 && (
+      {result.row_count > 1 && uniqueStockCount > 1 && (
         <div className="result-tools">
           <label>
             <span>搜索结果</span>
