@@ -250,6 +250,14 @@ The command stops on test failures, merge conflicts, remote divergence,
 deployment failures, or unexpected files created during deployment. It never
 force-pushes or resolves conflicts automatically.
 
+Production also has a scheduled reconciliation workflow declared in
+`cloudbuild.reconcile.yaml`. Cloud Scheduler invokes its manual Cloud Build
+trigger every ten minutes. The build compares the deployed `APP_GIT_SHA` with
+the latest `main` commit and deploys only when `main` is strictly ahead.
+Identical commits are a no-op; behind or diverged histories fail visibly.
+Unlike `make deploy`, scheduled reconciliation never writes deployment state
+back to Git.
+
 After authenticating the Google Cloud CLI and selecting the project, a source
 deployment can be created manually for recovery with:
 

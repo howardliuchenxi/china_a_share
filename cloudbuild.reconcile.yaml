@@ -1,0 +1,164 @@
+# Reconcile production with main without writing deployment state back to Git.
+steps:
+  - id: determine-action
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        deployed_sha="$$(gcloud run services describe "$${_SERVICE}" \
+          --project "$PROJECT_ID" \
+          --region "$${_REGION}" \
+          --flatten="spec.template.spec.containers[0].env[]" \
+          --format="csv[no-heading](spec.template.spec.containers[0].env.name,spec.template.spec.containers[0].env.value)" \
+          | awk -F, '$$1 == "APP_GIT_SHA" { print $$2 }')"
+        test -n "$${deployed_sha}" || {
+          echo "Production does not expose APP_GIT_SHA." >&2
+          exit 1
+        }
+        python3 scripts/reconcile_deployment.py \
+          --repository "$${_GITHUB_REPOSITORY}" \
+          --deployed-sha "$${deployed_sha}" \
+          --target-sha "$COMMIT_SHA" \
+          > /workspace/deployment-action
+        printf 'Deployment reconciliation action: %s\n' \
+          "$$(cat /workspace/deployment-action)"
+
+  - id: frontend-check
+    name: node:22-alpine
+    entrypoint: sh
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        corepack enable
+        cd frontend
+        pnpm install --frozen-lockfile
+        pnpm run build
+
+  - id: backend-check
+    name: python:3.12-slim
+    entrypoint: sh
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        python -m pip install --disable-pip-version-check ".[dev]"
+        python -m pytest
+
+  - id: build-image
+    name: gcr.io/cloud-builders/docker
+    entrypoint: sh
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        docker build \
+          --tag "$${_IMAGE_REPOSITORY}/$${_SERVICE}:$COMMIT_SHA" \
+          .
+
+  - id: push-image
+    name: gcr.io/cloud-builders/docker
+    entrypoint: sh
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        docker push "$${_IMAGE_REPOSITORY}/$${_SERVICE}:$COMMIT_SHA"
+
+  - id: deploy-service
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        gcloud run deploy "$${_SERVICE}" \
+          --image "$${_IMAGE_REPOSITORY}/$${_SERVICE}:$COMMIT_SHA" \
+          --project "$PROJECT_ID" \
+          --region "$${_REGION}" \
+          --allow-unauthenticated \
+          --cpu 1 \
+          --memory 1Gi \
+          --min 0 \
+          --max 1 \
+          --concurrency 4 \
+          --timeout 300 \
+          --service-account "$${_RUNTIME_SERVICE_ACCOUNT}" \
+          --set-env-vars "TUSHARE_CACHE_BUCKET=$${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=$${_REGION},ANALYSIS_JOB_NAME=$${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA,ADMIN_EMAIL=$${_ADMIN_EMAIL},GOOGLE_OAUTH_CLIENT_ID=$${_GOOGLE_OAUTH_CLIENT_ID},GITHUB_FIX_REPO=$${_GITHUB_REPOSITORY}" \
+          --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest" \
+          --quiet
+
+  - id: deploy-worker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        gcloud run jobs deploy "$${_ANALYSIS_JOB}" \
+          --image "$${_IMAGE_REPOSITORY}/$${_SERVICE}:$COMMIT_SHA" \
+          --project "$PROJECT_ID" \
+          --region "$${_REGION}" \
+          --command python \
+          --args=-m,china_a_share.worker \
+          --tasks 1 \
+          --parallelism 1 \
+          --max-retries 1 \
+          --task-timeout 2h \
+          --cpu 1 \
+          --memory 1Gi \
+          --service-account "$${_RUNTIME_SERVICE_ACCOUNT}" \
+          --set-env-vars "TUSHARE_CACHE_BUCKET=$${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=$${_REGION},ANALYSIS_JOB_NAME=$${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA" \
+          --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest" \
+          --quiet
+
+  - id: verify-deployment
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        ready_revision="$$(gcloud run services describe "$${_SERVICE}" \
+          --project "$PROJECT_ID" \
+          --region "$${_REGION}" \
+          --format="value(status.latestReadyRevisionName)")"
+        deployed_sha="$$(gcloud run services describe "$${_SERVICE}" \
+          --project "$PROJECT_ID" \
+          --region "$${_REGION}" \
+          --flatten="spec.template.spec.containers[0].env[]" \
+          --format="csv[no-heading](spec.template.spec.containers[0].env.name,spec.template.spec.containers[0].env.value)" \
+          | awk -F, '$$1 == "APP_GIT_SHA" { print $$2 }')"
+        traffic="$$(gcloud run services describe "$${_SERVICE}" \
+          --project "$PROJECT_ID" \
+          --region "$${_REGION}" \
+          --format="value(status.traffic.percent)")"
+        test "$${deployed_sha}" = "$COMMIT_SHA" || {
+          echo "Production SHA $${deployed_sha} does not match $COMMIT_SHA." >&2
+          exit 1
+        }
+        test "$${traffic}" = 100 || {
+          echo "Latest revision traffic is $${traffic}%, expected 100%." >&2
+          exit 1
+        }
+        curl --fail --silent --show-error "$${_SERVICE_URL}/api/health"
+        printf '\nVerified revision %s at commit %s.\n' \
+          "$${ready_revision}" "$${deployed_sha}"
+
+substitutions:
+  _REGION: asia-east2
+  _SERVICE: china-a-share-lab
+  _ANALYSIS_JOB: china-a-share-analysis-worker
+  _RUNTIME_SERVICE_ACCOUNT: china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com
+  _IMAGE_REPOSITORY: asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy
+  _CACHE_BUCKET: china-a-share-lab-cache-asia-east2
+  _SERVICE_URL: https://china-a-share-lab-1079739428171.asia-east2.run.app
+  _GITHUB_REPOSITORY: howardliuchenxi/china_a_share
+  _ADMIN_EMAIL: howardliuchenxi1@gmail.com
+  _GOOGLE_OAUTH_CLIENT_ID: 1079739428171-f572obvnhd989gh04onlpp5fmai9cf5q.apps.googleusercontent.com
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
