@@ -54,12 +54,16 @@ one instance across traffic-serving revisions.
 | `TUSHARE_TOKEN` | Secret Manager secret `tushare-token`, version `latest` |
 | `DEEPSEEK_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest` |
 | `ZAI_API_KEY` | Secret Manager secret `zai-api-key`, version `latest` |
+| `GITHUB_FIX_TOKEN` | Secret Manager secret `github-fix-token`, version `latest` |
 | `TUSHARE_CACHE_BUCKET` | Plain value `china-a-share-lab-cache-asia-east2` |
 | `GOOGLE_CLOUD_PROJECT` | Plain value `china-a-share-lab` |
 | `CLOUD_RUN_REGION` | Plain value `asia-east2` |
 | `ANALYSIS_JOB_NAME` | Plain value `china-a-share-analysis-worker` |
 | `APP_GIT_BRANCH` | Plain Git branch recorded by the deployment workflow |
 | `APP_GIT_SHA` | Plain full Git commit recorded by the deployment workflow |
+| `ADMIN_EMAIL` | Plain administrator allowlist email for UI feedback |
+| `GOOGLE_OAUTH_CLIENT_ID` | Public Google Web OAuth client identifier |
+| `GITHUB_FIX_REPO` | Plain GitHub owner/repository used for UI feedback dispatch |
 
 ### Public invocation access
 
@@ -111,7 +115,7 @@ project-wide Cloud Run administration.
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
 | Object versioning | Disabled |
-| Lifecycle | Delete `cache/` objects after 90 days and `analysis-jobs/` objects after 7 days |
+| Lifecycle | Delete `cache/` objects after 90 days, `analysis-jobs/` after 7 days, and `fix-requests/` after 30 days |
 | Runtime access | `roles/storage.objectUser` for the Cloud Run runtime identity |
 
 This bucket is the persistent L2 cache for successful Tushare responses and the
@@ -155,8 +159,9 @@ size exceeds the 0.5 GiB monthly Artifact Registry free allowance by roughly
 | `tushare-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `deepseek-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `zai-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
+| `github-fix-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 
-All three secrets grant `roles/secretmanager.secretAccessor` directly to
+All four secrets grant `roles/secretmanager.secretAccessor` directly to
 `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`. Secret values
 must never be added to this document.
 
@@ -199,7 +204,7 @@ account's monthly free allotment; expected low traffic should remain within the
 
 `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`
 
-- Reads the three application secrets through secret-level IAM grants.
+- Reads the four application secrets through secret-level IAM grants.
 - Creates, reads, updates, and deletes objects in the private cache bucket.
 - Executes only `china-a-share-analysis-worker` with per-execution overrides.
 - Does not have a broad project-level role.
@@ -252,9 +257,10 @@ The following services are not live resources for this project:
   to applicable free allowances.
 - Artifact Registry is approximately 0.5 GiB above its monthly free storage
   allowance, with a low single-digit-cent expected monthly charge.
-- Three active secret versions are within the Secret Manager free allowance.
+- Four active secret versions are within the Secret Manager free allowance.
 - The persistent cache has a 90-day deletion lifecycle to prevent unbounded
-  object accumulation, while asynchronous task records expire after 7 days.
+  object accumulation, while asynchronous task records expire after 7 days and
+  private UI feedback records expire after 30 days.
 - Four low-cardinality log-based metrics are expected to remain within the
   billing account's 150 MiB monthly user-defined metric allowance at low
   traffic.

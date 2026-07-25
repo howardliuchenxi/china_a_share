@@ -139,6 +139,33 @@ export function UiFeedbackController() {
   }, [idToken]);
 
   useEffect(() => {
+    if (!idToken) return;
+    const openFeedbackFromContextMenu = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const element = target?.closest<HTMLElement>("[data-feedback-id]");
+      if (!element || target?.closest(".ui-feedback-dialog")) return;
+      event.preventDefault();
+      const selection = window.getSelection();
+      const selectedText = boundedText(selection?.toString() ?? "");
+      const rangeRect = selection?.rangeCount
+        ? selection.getRangeAt(0).getBoundingClientRect()
+        : null;
+      const rect = selectedText && rangeRect?.width
+        ? rangeRect
+        : element.getBoundingClientRect();
+      setDraft(createRequest(element, rect, selectedText || element.innerText));
+      setSuggestion("");
+      setSubmission(null);
+      setError("");
+      setIsDialogOpen(true);
+    };
+    document.addEventListener("contextmenu", openFeedbackFromContextMenu);
+    return () => {
+      document.removeEventListener("contextmenu", openFeedbackFromContextMenu);
+    };
+  }, [idToken]);
+
+  useEffect(() => {
     if (!isSelectingArea) return;
     const captureArea = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
@@ -255,7 +282,7 @@ export function UiFeedbackController() {
               </button>
               {!submission && (
                 <button type="button" disabled={isSubmitting} onClick={sendFeedback}>
-                  {isSubmitting ? "正在提交…" : "提交给 Codex"}
+                  {isSubmitting ? "正在提交…" : "提交改进任务"}
                 </button>
               )}
             </div>

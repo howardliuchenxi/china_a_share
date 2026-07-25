@@ -11,6 +11,9 @@ RUNTIME_SERVICE_ACCOUNT := china-a-share-runner@china-a-share-lab.iam.gserviceac
 CACHE_BUCKET := china-a-share-lab-cache-asia-east2
 SOURCE_BUCKET := run-sources-china-a-share-lab-asia-east2
 TARGET_BRANCH := main
+ADMIN_EMAIL := howardliuchenxi1@gmail.com
+GOOGLE_OAUTH_CLIENT_ID := 1079739428171-f572obvnhd989gh04onlpp5fmai9cf5q.apps.googleusercontent.com
+GITHUB_FIX_REPO := howardliuchenxi/china_a_share
 RELEASE_MESSAGE ?= Release application changes
 DEPLOYMENT_INVENTORY_MESSAGE := Record production deployment
 DEPLOY_VERIFY_ATTEMPTS := 6
@@ -60,8 +63,8 @@ deploy: check
 		--concurrency 4 \
 		--timeout 300 \
 		--service-account "$(RUNTIME_SERVICE_ACCOUNT)" \
-		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)" \
-		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest \
+		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)",ADMIN_EMAIL="$(ADMIN_EMAIL)",GOOGLE_OAUTH_CLIENT_ID="$(GOOGLE_OAUTH_CLIENT_ID)",GITHUB_FIX_REPO="$(GITHUB_FIX_REPO)" \
+		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest \
 		--quiet
 	image="$$(CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run services describe "$(SERVICE)" \
 		--project "$(PROJECT_ID)" \
