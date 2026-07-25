@@ -16,6 +16,7 @@ dist/
 build/
 *.egg-info/
 .aider*
+.coverage
 
 # Loop engineering artifacts
 .loop/screenshots/*.png
