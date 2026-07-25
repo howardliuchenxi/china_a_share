@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00023-w94` |
-| Deployed Git branch | `unrecorded` |
-| Deployed Git commit | `unrecorded` |
+| Latest ready revision | `china-a-share-lab-00024-trh` |
+| Deployed Git branch | `main` |
+| Deployed Git commit | `81905284404ffe8de2eb5c2caf9461c0d30f4d7a` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -106,7 +106,7 @@ project-wide Cloud Run administration.
 | Bucket | `gs://china-a-share-lab-cache-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 6,339,058 bytes at last verification |
+| Current logical size | 6,495,533 bytes at last verification |
 | Public access prevention | Enforced |
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
@@ -125,7 +125,7 @@ Run scale-to-zero events and deployments. It is not a general query database.
 | Bucket | `gs://run-sources-china-a-share-lab-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 35,566,054 bytes at last verification |
+| Current logical size | 36,231,809 bytes at last verification |
 | Uniform bucket-level access | Enabled |
 | Soft-delete retention | 7 days |
 | Build access | `roles/storage.objectViewer` for the default compute service account |
@@ -301,3 +301,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-07-24 | Deployed revision `china-a-share-lab-00021-kzp` with public task-response redaction and the corrected deployment workflow; synchronized the asynchronous job to the immutable service image, then verified 100% traffic, public health status, the original 517-security analysis result, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00022-8dt` with deterministic power-industry filtering, generalized industry retail-proxy cohort analysis, asynchronous routing for equivalent industry prompts, and bounded deployment-state verification retries; synchronized the worker image and verified the original 85-security power-industry request through a successful execution with no new resource types or IAM changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00023-w94` with deterministic phone-theme resolution through the `AI手机` and `华为手机` THS concept constituents, operation-aware THS index validation, normalized concept security universes, and GNU Make 3.81-compatible deployment and merge recipes; synchronized the worker image and verified the original 80-security phone-stock request through a successful execution with no new resource types or IAM changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00024-trh` through `make deploy`; recorded source `main@81905284404ffe8de2eb5c2caf9461c0d30f4d7a`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
