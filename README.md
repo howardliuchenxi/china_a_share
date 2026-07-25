@@ -128,10 +128,19 @@ normalized parameters, ordered fields, and cache schema version. Including the
 provider prevents collisions when another data source is added. The
 process-local L1 cache is bounded to 256 records and 128 MiB. The persistent L2
 cache stores gzip-compressed JSON objects and survives Cloud Run scale-to-zero
-events and deployments. The Tushare adapter calculates expiration in
-`Asia/Shanghai` from conservative Tushare publication windows. Each future
-provider can supply its own expiration policy. Upstream and cache errors are
-never stored as successful responses.
+events and deployments. Persistent Tushare caching is explicitly profiled for
+every allowlisted operation:
+
+- real-time and current intraday operations bypass both cache layers;
+- reference data and unbounded latest disclosures refresh every 24 hours;
+- the trading calendar refreshes every 30 days;
+- fixed historical daily, intraday, and disclosure windows persist for 90 days;
+- current end-of-day data refreshes around its documented publication window.
+
+The Tushare adapter calculates expiration in `Asia/Shanghai`. Adding an
+allowlisted Tushare operation without a cache profile fails fast at startup and
+in tests, so future interfaces cannot silently inherit an unsafe default.
+Upstream and cache errors are never stored as successful responses.
 
 ## Installation
 
@@ -203,8 +212,46 @@ identifier, not a secret.
 Do not upload `.env`; it is excluded from Git, the Docker build context, and the
 `gcloud` source upload.
 
+### Routine delivery commands
+
+Use the repository Makefile for validated delivery:
+
+```bash
+make check
+make deploy
+make merge
+make release
+```
+
+`make deploy` accepts only a clean local `main` whose commit exactly matches
+`origin/main`. It builds the frontend, runs the backend test suite, deploys that
+commit to the existing Cloud Run service, records the full Git commit in the
+service and worker environments, updates the asynchronous analysis Cloud Run
+Job to the same immutable image, reapplies its job-scoped IAM and task lifecycle
+policy, verifies 100% traffic and the public health endpoint, and updates
+`docs/gcp-resources.md` with the live revision, Git source, and storage usage.
+
+`make merge` must be run from a clean feature branch. It runs the same checks,
+updates the local `main` branch from `origin/main` with fast-forward-only
+semantics, creates a non-fast-forward merge commit, and pushes `main`. It stops
+instead of committing untracked changes, resolving conflicts, or force-pushing.
+
+`make release` is the one-command production path. It validates the current
+workspace, rejects sensitive-looking or oversized files, stages and commits
+the release changes, merges and pushes the feature branch into `main` when
+needed, deploys that exact `main` commit, and commits the verified deployment
+inventory update. Override the default commit subject when useful:
+
+```bash
+make release RELEASE_MESSAGE="Fix industry cohort analysis"
+```
+
+The command stops on test failures, merge conflicts, remote divergence,
+deployment failures, or unexpected files created during deployment. It never
+force-pushes or resolves conflicts automatically.
+
 After authenticating the Google Cloud CLI and selecting the project, a source
-deployment can be created with:
+deployment can be created manually for recovery with:
 
 ```bash
 gcloud run deploy china-a-share-lab \

@@ -1,0 +1,214 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      react-intl:
+        specifier: ^10.1.18
+        version: 10.1.18(@types/react@19.2.17)(react@19.2.8)
+    devDependencies:
+      '@formatjs/cli':
+        specifier: ^6.16.14
+        version: 6.16.14
+      '@playwright/test':
+        specifier: ^1.61.1
+        version: 1.61.1
+
+packages:
+
+  '@formatjs/cli-native-darwin-arm64@1.1.8':
+    resolution: {integrity: sha512-uIHA6JFbG5vE3GlQodIrbYMmQc50mhBBVJ++ze99Tetfj4eFmIOtVKz2UMt8P8QmvCUZQMyEH95Jm+FbBDY46A==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@formatjs/cli-native-linux-arm64-musl@1.0.6':
+    resolution: {integrity: sha512-ZiM2H4w61rrvkAwhDFWjFEhW43/AphNNHa3lTdZvNOttst1mQ2gUS4+bLGBOfMqKG8+AU+6B9PCF67AbDOlwPg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@formatjs/cli-native-linux-arm64@1.2.8':
+    resolution: {integrity: sha512-EfrurpWY66hjWvtlO9BjWMDze0SBw4dMMZkUnAZYNdBmOTTRJC+CLi62nRxiSoSVV7QzP8BN6W/zZ5qLySYl0w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@formatjs/cli-native-linux-x64-musl@1.0.6':
+    resolution: {integrity: sha512-Va4rt4gL5p02gixW73VFLCvhgvXhsaT9dMdGfQE32/dqn4NYxg/8gquhauIBvTCkKPYgOhtXRcMWKQINxMB8oA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@formatjs/cli-native-linux-x64@1.1.8':
+    resolution: {integrity: sha512-J3aInCY7VKSyBrjpXedz/AYNbr+X82zLpSwfeO3obnOqUxn6dko9tnHlaQxuSnZHMx4sAOjJyTzUqDHD6Ft2GA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@formatjs/cli-native-win32-x64@1.1.9':
+    resolution: {integrity: sha512-EUH4z1WhKmjJ4FIn+dvzmgbtJRZ4YHCP3kbHiZv0tgmrQiQ5Q4Flv0Smt66kwYMEnyEf9/mY1JmKdBIjPaQM6A==}
+    cpu: [x64]
+    os: [win32]
+
+  '@formatjs/cli@6.16.14':
+    resolution: {integrity: sha512-aortaTMdCWuGtHnksxpznioudRVvSVkY2/6AQrpUR3tpATGl8sWCuhU9XUEG4ba7UWbFGMv7XLME93rCPfIrJw==}
+    engines: {node: '>= 20.12.0'}
+    hasBin: true
+    peerDependencies:
+      '@glimmer/env': '*'
+      '@glimmer/reference': '*'
+      '@glimmer/syntax': ^0.84.3 || ^0.95.0
+      '@glimmer/validator': '*'
+      '@vue/compiler-core': '3'
+      content-tag: '4'
+      vue: '3'
+    peerDependenciesMeta:
+      '@glimmer/env':
+        optional: true
+      '@glimmer/reference':
+        optional: true
+      '@glimmer/syntax':
+        optional: true
+      '@glimmer/validator':
+        optional: true
+      '@vue/compiler-core':
+        optional: true
+      content-tag:
+        optional: true
+      vue:
+        optional: true
+
+  '@formatjs/fast-memoize@3.1.7':
+    resolution: {integrity: sha512-zXfhLpvA6T7+efdt9JLbBwZ00tT7NsBMDVnDu8rpHeNNv8KfRZAMo2gkG0k9lK/Nzc//3kJ9pImsfuJxk3KhUA==}
+
+  '@formatjs/icu-messageformat-parser@3.5.15':
+    resolution: {integrity: sha512-5o4grXKotAB3JqQuisLApHG43g17N+paoRTa92Jiz35Zvfemq0cVf4EDvuxyHAzmsJji7igaEowicLO/VmfJ8Q==}
+
+  '@formatjs/icu-skeleton-parser@2.1.11':
+    resolution: {integrity: sha512-j8cUmOJzVgkHuS0QiQ6ga76UIoLOFSAMWhs7aZJztH3aAdCOAE6vpC8KVvFB4cU10ON0y2/5oOVmPJ43s2lTwA==}
+
+  '@formatjs/intl@4.1.17':
+    resolution: {integrity: sha512-IxluRkzOZH8ahaDip5g8YH9kJi1munUZi9i1BJs1wVFQIY2pROoCSiOlybZegyiPsZlMaYfADkD99zP2xmBfjQ==}
+
+  '@playwright/test@1.61.1':
+    resolution: {integrity: sha512-8nKv6+0RJSL9FE4jYOEGXnPeM/Hg12qZpmqzZjRh3qM0Y7c3z1mrOTfFLids72RDQYVh9WpLEfR5WdpNX4fkig==}
+    engines: {node: '>=18'}
+    hasBin: true
+
+  '@types/react@19.2.17':
+    resolution: {integrity: sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw==}
+
+  csstype@3.2.3:
+    resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  fsevents@2.3.2:
+    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
+    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
+    os: [darwin]
+
+  intl-messageformat@11.2.12:
+    resolution: {integrity: sha512-KW70Xxfcvy7vV3qODfvShWkFDPMqKDAa4N+hSyVBWGNtVhTUFYaqlD/l88DaYPKiVcPP4rPQ3qnH7i5K82Mg7g==}
+
+  playwright-core@1.61.1:
+    resolution: {integrity: sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg==}
+    engines: {node: '>=18'}
+    hasBin: true
+
+  playwright@1.61.1:
+    resolution: {integrity: sha512-DWnY5o3YbLWK4GovuAVwpqL+1VwGNdUGrRr++8j8PtQQzvAVZUIMjKQ90fY689sEJZJBbZVw1rXaOKSTitkzPQ==}
+    engines: {node: '>=18'}
+    hasBin: true
+
+  react-intl@10.1.18:
+    resolution: {integrity: sha512-4JMOYakqVn/IajJt8Ad341Iwd6RDtiP1WQZiHRcFpHDBhVW4E9T0vkypSOk69Adg3dEbIYOE4HKTehH/1sSwnw==}
+    peerDependencies:
+      '@types/react': '>=18.0.0'
+      react: '>=18.0.0'
+
+  react@19.2.8:
+    resolution: {integrity: sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==}
+    engines: {node: '>=0.10.0'}
+
+snapshots:
+
+  '@formatjs/cli-native-darwin-arm64@1.1.8':
+    optional: true
+
+  '@formatjs/cli-native-linux-arm64-musl@1.0.6':
+    optional: true
+
+  '@formatjs/cli-native-linux-arm64@1.2.8':
+    optional: true
+
+  '@formatjs/cli-native-linux-x64-musl@1.0.6':
+    optional: true
+
+  '@formatjs/cli-native-linux-x64@1.1.8':
+    optional: true
+
+  '@formatjs/cli-native-win32-x64@1.1.9':
+    optional: true
+
+  '@formatjs/cli@6.16.14':
+    optionalDependencies:
+      '@formatjs/cli-native-darwin-arm64': 1.1.8
+      '@formatjs/cli-native-linux-arm64': 1.2.8
+      '@formatjs/cli-native-linux-arm64-musl': 1.0.6
+      '@formatjs/cli-native-linux-x64': 1.1.8
+      '@formatjs/cli-native-linux-x64-musl': 1.0.6
+      '@formatjs/cli-native-win32-x64': 1.1.9
+
+  '@formatjs/fast-memoize@3.1.7': {}
+
+  '@formatjs/icu-messageformat-parser@3.5.15':
+    dependencies:
+      '@formatjs/icu-skeleton-parser': 2.1.11
+
+  '@formatjs/icu-skeleton-parser@2.1.11': {}
+
+  '@formatjs/intl@4.1.17':
+    dependencies:
+      '@formatjs/fast-memoize': 3.1.7
+      '@formatjs/icu-messageformat-parser': 3.5.15
+      intl-messageformat: 11.2.12
+
+  '@playwright/test@1.61.1':
+    dependencies:
+      playwright: 1.61.1
+
+  '@types/react@19.2.17':
+    dependencies:
+      csstype: 3.2.3
+
+  csstype@3.2.3: {}
+
+  fsevents@2.3.2:
+    optional: true
+
+  intl-messageformat@11.2.12:
+    dependencies:
+      '@formatjs/fast-memoize': 3.1.7
+      '@formatjs/icu-messageformat-parser': 3.5.15
+
+  playwright-core@1.61.1: {}
+
+  playwright@1.61.1:
+    dependencies:
+      playwright-core: 1.61.1
+    optionalDependencies:
+      fsevents: 2.3.2
+
+  react-intl@10.1.18(@types/react@19.2.17)(react@19.2.8):
+    dependencies:
+      '@formatjs/icu-messageformat-parser': 3.5.15
+      '@formatjs/intl': 4.1.17
+      '@types/react': 19.2.17
+      intl-messageformat: 11.2.12
+      react: 19.2.8
+
+  react@19.2.8: {}

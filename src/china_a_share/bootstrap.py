@@ -15,6 +15,11 @@ from china_a_share.cache import (
     NoopDataCacheStore,
 )
 from china_a_share.config import ConfigurationError, Settings
+from china_a_share.tasks import (
+    AnalysisTaskCoordinator,
+    CloudRunJobDispatcher,
+    CloudStorageAnalysisTaskStore,
+)
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
@@ -46,6 +51,28 @@ def create_analysis_service(settings: Settings) -> AnalysisService:
 def create_stock_catalog_service(settings: Settings) -> StockCatalogService:
     """Assemble deterministic stock catalog access through the shared cache design."""
     return StockCatalogService(_create_data_provider(settings))
+
+
+def create_analysis_task_coordinator(
+    settings: Settings,
+) -> AnalysisTaskCoordinator:
+    """Assemble persistent task storage and Cloud Run Job dispatch."""
+    if not settings.google_cloud_project:
+        raise ConfigurationError(
+            "GOOGLE_CLOUD_PROJECT is required for asynchronous analysis."
+        )
+    if not settings.tushare_cache_bucket:
+        raise ConfigurationError(
+            "TUSHARE_CACHE_BUCKET is required for asynchronous analysis."
+        )
+    return AnalysisTaskCoordinator(
+        CloudStorageAnalysisTaskStore(settings.tushare_cache_bucket),
+        CloudRunJobDispatcher(
+            settings.google_cloud_project,
+            settings.cloud_run_region,
+            settings.analysis_job_name,
+        ),
+    )
 
 
 def _create_data_provider(settings: Settings) -> TushareDataProvider:

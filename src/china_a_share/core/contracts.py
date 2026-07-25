@@ -2,7 +2,7 @@
 
 import base64
 import binascii
-from datetime import date as CalendarDate
+from datetime import date as CalendarDate, datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -30,6 +30,15 @@ class AnalysisStatus(str, Enum):
     SUCCESS = "success"
     PARTIAL_SUCCESS = "partial_success"
     ERROR = "error"
+
+
+class AnalysisTaskStatus(str, Enum):
+    """Persisted lifecycle state for one asynchronous analysis."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
 
 
 class QueryStatus(str, Enum):
@@ -133,20 +142,27 @@ class DataFilter(BaseModel):
         min_length=1,
         description="Numeric result column evaluated by the filter.",
     )
-    operator: Literal["gt", "ge", "eq", "le", "lt"] = Field(
+    operator: Literal["gt", "ge", "eq", "le", "lt", "in"] = Field(
         description="Comparison operator applied to the numeric result column.",
     )
-    value: Union[float, str] = Field(
+    value: Union[float, str, List[str]] = Field(
         description=(
-            "Numeric threshold, or a string value when the operator is equality."
+            "Numeric threshold, exact string, or string set for membership filtering."
         ),
     )
 
     @model_validator(mode="after")
     def validate_string_operator(self) -> "DataFilter":
-        """Allow string values only for exact equality filters."""
+        """Keep text and membership predicates explicit and type-safe."""
         if isinstance(self.value, str) and self.operator != "eq":
             raise ValueError("string filter values require the eq operator")
+        if isinstance(self.value, list):
+            if self.operator != "in":
+                raise ValueError("list filter values require the in operator")
+            if not self.value:
+                raise ValueError("membership filter values must not be empty")
+        if self.operator == "in" and not isinstance(self.value, list):
+            raise ValueError("the in operator requires a list value")
         return self
 
 
@@ -259,7 +275,12 @@ class QueryPlan(BaseModel):
         description="Concrete missing capabilities that prevent faithful execution.",
     )
     result_transform: Optional[
-        Literal["two_limit_up_next_day_probability"]
+        Literal[
+            "two_limit_up_next_day_probability",
+            "dimension_monthly_turnover_decline",
+            "healthcare_retail_cohort_return",
+            "industry_retail_cohort_return",
+        ]
     ] = Field(
         default=None,
         description=(
@@ -428,6 +449,65 @@ class AnalysisResponse(BaseModel):
     error: Optional[ServiceError] = Field(
         default=None,
         description="Planning or system error when no query-level result applies.",
+    )
+
+
+class AnalysisTask(BaseModel):
+    """Persisted request, progress, and terminal result for one analysis task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(description="Stable identifier used to poll task state.")
+    status: AnalysisTaskStatus = Field(description="Current asynchronous task state.")
+    request: AnalysisRequest = Field(description="Original validated analysis request.")
+    created_at: datetime = Field(description="UTC task creation timestamp.")
+    updated_at: datetime = Field(description="UTC timestamp of the latest state change.")
+    completed_items: int = Field(
+        default=0,
+        ge=0,
+        description="Number of security-specific work items completed.",
+    )
+    total_items: int = Field(
+        default=0,
+        ge=0,
+        description="Total security-specific work items discovered.",
+    )
+    response: Optional[AnalysisResponse] = Field(
+        default=None,
+        description="Terminal analysis response when execution finishes.",
+    )
+    error: Optional[ServiceError] = Field(
+        default=None,
+        description="Terminal worker error when no analysis response could be produced.",
+    )
+
+
+class AnalysisTaskSubmission(BaseModel):
+    """Immediate response returned after an asynchronous task is accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(description="Identifier used by the polling endpoint.")
+    status: AnalysisTaskStatus = Field(description="Initial or reused task state.")
+    status_url: str = Field(description="Relative endpoint used to poll task state.")
+
+
+class AnalysisTaskStatusResponse(BaseModel):
+    """Public task state that excludes the persisted input and screenshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(description="Stable task identifier.")
+    status: AnalysisTaskStatus = Field(description="Current task lifecycle state.")
+    completed_items: int = Field(description="Completed work-item count.")
+    total_items: int = Field(description="Total discovered work-item count.")
+    response: Optional[AnalysisResponse] = Field(
+        default=None,
+        description="Terminal analysis response when available.",
+    )
+    error: Optional[ServiceError] = Field(
+        default=None,
+        description="Terminal worker error when available.",
     )
 
 

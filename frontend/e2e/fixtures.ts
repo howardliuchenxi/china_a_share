@@ -475,6 +475,34 @@ export const planningErrorFixture: AnalysisResponse = {
   },
 };
 
+export const unsupportedAnalysisFixture: AnalysisResponse = {
+  request_id: nextRequestId(),
+  planner: "deepseek",
+  data_provider: "tushare",
+  status: "error",
+  plan: {
+    market: "A_SHARE",
+    interpretation: "Compare healthcare stocks by the approved retail-ratio proxy.",
+    feasibility: "unsupported",
+    requirements: [
+      {
+        requirement: "Build and compare the two healthcare cohorts.",
+        status: "unsupported",
+        implementation: null,
+        evidence: "The current executor cannot dynamically fan out the industry universe.",
+      },
+    ],
+    limitations: [
+      "The current executor cannot dynamically fan out the full healthcare universe.",
+    ],
+    result_transform: null,
+    queries: [],
+  },
+  results: [],
+  decision_trace: [],
+  error: null,
+};
+
 /** Empty result fixture (API returned successfully but no rows). */
 export const emptyResultFixture: AnalysisResponse = {
   request_id: nextRequestId(),

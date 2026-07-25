@@ -27,7 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00014-8xb` |
+| Latest ready revision | `china-a-share-lab-00023-w94` |
+| Deployed Git branch | `unrecorded` |
+| Deployed Git commit | `unrecorded` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -53,6 +55,11 @@ one instance across traffic-serving revisions.
 | `DEEPSEEK_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest` |
 | `ZAI_API_KEY` | Secret Manager secret `zai-api-key`, version `latest` |
 | `TUSHARE_CACHE_BUCKET` | Plain value `china-a-share-lab-cache-asia-east2` |
+| `GOOGLE_CLOUD_PROJECT` | Plain value `china-a-share-lab` |
+| `CLOUD_RUN_REGION` | Plain value `asia-east2` |
+| `ANALYSIS_JOB_NAME` | Plain value `china-a-share-analysis-worker` |
+| `APP_GIT_BRANCH` | Plain Git branch recorded by the deployment workflow |
+| `APP_GIT_SHA` | Plain full Git commit recorded by the deployment workflow |
 
 ### Public invocation access
 
@@ -68,26 +75,48 @@ Requests reach the application without Google login. Anyone with the service URL
 can invoke model and market-data operations, so third-party API usage is not
 protected from anonymous consumption.
 
+### Asynchronous analysis job
+
+| Setting | Value |
+| --- | --- |
+| Job | `china-a-share-analysis-worker` |
+| Region | `asia-east2` |
+| Purpose | Execute durable long-running analysis tasks submitted by the web service |
+| Image | Immutable digest copied from the latest ready web-service revision during deployment |
+| Command | `python -m china_a_share.worker` |
+| Tasks and parallelism | 1 task; parallelism 1 |
+| CPU and memory | 1 vCPU, 1 GiB |
+| Task timeout | 7,200 seconds |
+| Maximum retries | 1 |
+| Runtime identity | `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com` |
+| Invocation | No public endpoint; executions are started through the Cloud Run API |
+| Expected cost impact | Usage-based CPU and memory only while an analysis execution runs |
+
+The web service runtime identity has
+`roles/run.jobsExecutorWithOverrides` on this job only. This permits the
+service to supply one private task identifier per execution without granting
+project-wide Cloud Run administration.
+
 ## Cloud Storage
 
-### Persistent Tushare cache
+### Persistent Tushare cache and analysis tasks
 
 | Setting | Value |
 | --- | --- |
 | Bucket | `gs://china-a-share-lab-cache-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 3,437,647 bytes at last verification |
+| Current logical size | 6,339,058 bytes at last verification |
 | Public access prevention | Enforced |
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
 | Object versioning | Disabled |
-| Lifecycle | Delete objects under `cache/` after 90 days |
+| Lifecycle | Delete `cache/` objects after 90 days and `analysis-jobs/` objects after 7 days |
 | Runtime access | `roles/storage.objectUser` for the Cloud Run runtime identity |
 
-This bucket is the persistent L2 cache for successful Tushare responses. It
-survives Cloud Run scale-to-zero events and deployments. It is not a general
-query database.
+This bucket is the persistent L2 cache for successful Tushare responses and the
+private status/result store for asynchronous analysis tasks. It survives Cloud
+Run scale-to-zero events and deployments. It is not a general query database.
 
 ### Cloud Run source uploads
 
@@ -96,7 +125,7 @@ query database.
 | Bucket | `gs://run-sources-china-a-share-lab-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 34,096,836 bytes at last verification |
+| Current logical size | 35,566,054 bytes at last verification |
 | Uniform bucket-level access | Enabled |
 | Soft-delete retention | 7 days |
 | Build access | `roles/storage.objectViewer` for the default compute service account |
@@ -111,12 +140,13 @@ This bucket is managed by the Cloud Run source-deployment workflow.
 | Region | `asia-east2` |
 | Format | Docker |
 | Mode | Standard repository |
-| Current size | 522.727 MB as reported by Artifact Registry at last verification |
+| Current size | 1068.462 MB as reported by Artifact Registry at last verification |
 | Vulnerability scanning | Disabled because the Container Scanning API is not enabled |
 | Build access | `roles/artifactregistry.writer` for the default compute service account |
 
 The repository is created and used by Cloud Run source deployments. Its current
-size remains below the 0.5 GiB monthly Artifact Registry free allowance.
+size exceeds the 0.5 GiB monthly Artifact Registry free allowance by roughly
+0.5 GiB, with an expected low single-digit-cent monthly storage charge.
 
 ## Secret Manager
 
@@ -171,6 +201,7 @@ account's monthly free allotment; expected low traffic should remain within the
 
 - Reads the three application secrets through secret-level IAM grants.
 - Creates, reads, updates, and deletes objects in the private cache bucket.
+- Executes only `china-a-share-analysis-worker` with per-execution overrides.
 - Does not have a broad project-level role.
 
 ### Source-build identity
@@ -210,16 +241,20 @@ The following services are not live resources for this project:
 - Serverless VPC Access connector
 - Compute Engine virtual machine
 - Load balancer, static IP address, or custom domain
-- Cloud Scheduler job or Cloud Run job
+- Cloud Scheduler job
 
 ## Cost posture
 
 - Cloud Run scales to zero and is capped at one instance.
+- The asynchronous Cloud Run Job has no idle instance cost and uses one task
+  with bounded CPU, memory, timeout, and retries per execution.
 - Current storage volumes are small and are expected to remain within or close
   to applicable free allowances.
+- Artifact Registry is approximately 0.5 GiB above its monthly free storage
+  allowance, with a low single-digit-cent expected monthly charge.
 - Three active secret versions are within the Secret Manager free allowance.
 - The persistent cache has a 90-day deletion lifecycle to prevent unbounded
-  object accumulation.
+  object accumulation, while asynchronous task records expire after 7 days.
 - Four low-cardinality log-based metrics are expected to remain within the
   billing account's 150 MiB monthly user-defined metric allowance at low
   traffic.
@@ -259,3 +294,10 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-07-22 | Deployed revision `china-a-share-lab-00012-tcc` with deterministic latest-snapshot selection when the planner omits a date; verified the original three-security production query, 100% traffic, public invocation, health status, runtime limits, runtime identity, and secret bindings with no new resource types or material cost changes. |
 | 2026-07-23 | Deployed revision `china-a-share-lab-00013-d96` from the authorized current workspace, including native `limit_list_d` limit-up planning and deterministic correction of invalid limit-up filters and code-count aggregations; verified 100% traffic, public health status, runtime limits, runtime identity, cache configuration, and secret bindings with no new resource types or material cost changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00014-8xb` with deterministic multi-day analysis transforms, bounded pagination, completed-trading-day normalization, planner contract retries, and fail-closed handling for unsupported joins and derived calculations; verified 100% traffic, public health status, runtime limits, runtime identity, cache configuration, secret bindings, and storage usage with no new resource types, IAM changes, or material cost changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00016-tbg` with explicit unsupported-result presentation, the approved non-top-ten float-holder retail-ratio proxy, categorical security-universe filtering, and deterministic cross-month average-turnover comparison; superseded revision `00015-fbj` after production verification exposed Tushare's rejection of full-market date ranges, then verified the replacement's 100% traffic, public health status, runtime limits, runtime identity, secret bindings, storage usage, and successful 254-row production analysis with no new resource types or IAM changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00017-bgk` with explicit persistent-cache profiles for all 108 allowlisted Tushare operations, Cloud Storage bypass for real-time and current intraday data, 90-day retention for fixed historical and disclosure queries, fail-fast coverage for future operations, and reader-friendly numeric units; verified 100% traffic, public health status, the new frontend asset, runtime limits, runtime identity, secret bindings, and storage usage with no new resource types or IAM changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00018-bfh` with browser-local prompt history, removal of the experiment-template panel, consolidated query and execution details, and the current backend fixes; verified 100% traffic, public health status, the deployed frontend asset, runtime limits, runtime identity, secret bindings, and storage usage with no new resource types, IAM changes, or material cost changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00019-rtk` with durable asynchronous analysis submission, Cloud Storage task polling, frontend progress reporting, and supported healthcare retail-proxy cohort analysis; created private job `china-a-share-analysis-worker`, granted the service identity job-scoped `roles/run.jobsExecutorWithOverrides`, added 7-day task-record deletion, and verified the original 517-security production request through a successful job execution. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00021-kzp` with public task-response redaction and the corrected deployment workflow; synchronized the asynchronous job to the immutable service image, then verified 100% traffic, public health status, the original 517-security analysis result, runtime configuration, and storage usage with no new resource types or IAM changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00022-8dt` with deterministic power-industry filtering, generalized industry retail-proxy cohort analysis, asynchronous routing for equivalent industry prompts, and bounded deployment-state verification retries; synchronized the worker image and verified the original 85-security power-industry request through a successful execution with no new resource types or IAM changes. |
+| 2026-07-24 | Deployed revision `china-a-share-lab-00023-w94` with deterministic phone-theme resolution through the `AI手机` and `华为手机` THS concept constituents, operation-aware THS index validation, normalized concept security universes, and GNU Make 3.81-compatible deployment and merge recipes; synchronized the worker image and verified the original 80-security phone-stock request through a successful execution with no new resource types or IAM changes. |

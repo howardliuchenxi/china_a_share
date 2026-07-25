@@ -9,18 +9,16 @@ import pandas as pd
 from china_a_share.client import TushareTransport
 from china_a_share.core.contracts import DataOperation
 from china_a_share.core.ports import DataResponseCache
-from china_a_share.registry import TushareOperationCatalog
+from china_a_share.registry import STOCK_API_NAMES, TushareOperationCatalog
 
 
 TUSHARE_PROVIDER_NAME = "tushare"
 BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
-DEFAULT_CACHE_TTL = timedelta(minutes=15)
 SHORT_CACHE_TTL = timedelta(minutes=5)
-REALTIME_CACHE_TTL = timedelta(seconds=15)
 REFERENCE_CACHE_TTL = timedelta(hours=24)
 TRADE_CALENDAR_CACHE_TTL = timedelta(days=30)
-HISTORICAL_CACHE_TTL = timedelta(days=30)
-FINANCIAL_CACHE_TTL = timedelta(hours=1)
+HISTORICAL_CACHE_TTL = timedelta(days=90)
+DISCLOSURE_CACHE_TTL = timedelta(days=90)
 MAX_PAGINATION_PAGES = 20
 PAGINATED_OPERATION_LIMITS = {
     "daily": 6_000,
@@ -30,31 +28,138 @@ PAGINATED_OPERATION_LIMITS = {
     "stock_st": 1_000,
 }
 
-REALTIME_OPERATIONS = {"rt_k", "rt_min", "rt_min_daily"}
+NO_PERSISTENCE_OPERATIONS = {
+    "dc_hot",
+    "rt_k",
+    "rt_min",
+    "rt_min_daily",
+    "ths_hot",
+}
+INTRADAY_OPERATIONS = {
+    "stk_auction",
+    "stk_auction_c",
+    "stk_auction_o",
+    "stk_mins",
+    "stk_premarket",
+}
 REFERENCE_OPERATIONS = {
-    "stock_basic",
-    "stock_company",
+    "bak_basic",
     "bse_mapping",
-    "namechange",
-    "ths_index",
-    "ths_member",
     "dc_concept",
     "dc_concept_cons",
     "dc_index",
     "dc_member",
+    "hm_list",
+    "kpl_concept_cons",
+    "kpl_list",
+    "margin_secs",
+    "stock_basic",
+    "stock_company",
+    "tdx_index",
+    "tdx_member",
+    "ths_index",
+    "ths_member",
 }
-FINANCIAL_OPERATIONS = {
-    "income",
+DISCLOSURE_OPERATIONS = {
     "balancesheet",
+    "broker_recommend",
     "cashflow",
-    "fina_indicator",
-    "fina_audit",
-    "fina_mainbz",
-    "forecast",
-    "express",
-    "dividend",
+    "ccass_hold",
+    "ccass_hold_detail",
     "disclosure_date",
+    "dividend",
+    "express",
+    "fina_audit",
+    "forecast",
+    "fina_indicator",
+    "fina_mainbz",
+    "income",
+    "namechange",
+    "new_share",
+    "pledge_detail",
+    "pledge_stat",
+    "repurchase",
+    "share_float",
+    "stk_holdernumber",
+    "stk_holdertrade",
+    "stk_managers",
+    "stk_rewards",
+    "top10_floatholders",
+    "top10_holders",
 }
+DAILY_OPERATIONS = {
+    "adj_factor",
+    "bak_daily",
+    "block_trade",
+    "cyq_chips",
+    "cyq_perf",
+    "daily",
+    "daily_basic",
+    "dc_daily",
+    "ggt_daily",
+    "ggt_top10",
+    "hk_hold",
+    "hm_detail",
+    "hsgt_top10",
+    "limit_cpt_list",
+    "limit_list_d",
+    "limit_list_ths",
+    "limit_step",
+    "margin",
+    "margin_detail",
+    "moneyflow",
+    "moneyflow_cnt_ths",
+    "moneyflow_dc",
+    "moneyflow_hsgt",
+    "moneyflow_ind_dc",
+    "moneyflow_ind_ths",
+    "moneyflow_mkt_dc",
+    "moneyflow_ths",
+    "monthly",
+    "pro_bar",
+    "report_rc",
+    "slb_len",
+    "slb_len_mm",
+    "slb_sec",
+    "slb_sec_detail",
+    "st",
+    "stk_account",
+    "stk_account_old",
+    "stk_ah_comparison",
+    "stk_alert",
+    "stk_factor",
+    "stk_factor_pro",
+    "stk_high_shock",
+    "stk_limit",
+    "stk_nineturn",
+    "stk_shock",
+    "stk_surv",
+    "stk_week_month_adj",
+    "stk_weekly_monthly",
+    "stock_hsgt",
+    "stock_st",
+    "suspend_d",
+    "tdx_daily",
+    "ths_daily",
+    "top_inst",
+    "top_list",
+    "weekly",
+}
+PROFILED_OPERATIONS = (
+    NO_PERSISTENCE_OPERATIONS
+    | INTRADAY_OPERATIONS
+    | REFERENCE_OPERATIONS
+    | DISCLOSURE_OPERATIONS
+    | DAILY_OPERATIONS
+    | {"trade_cal"}
+)
+if PROFILED_OPERATIONS != set(STOCK_API_NAMES):
+    missing = sorted(set(STOCK_API_NAMES).difference(PROFILED_OPERATIONS))
+    extra = sorted(PROFILED_OPERATIONS.difference(STOCK_API_NAMES))
+    raise RuntimeError(
+        f"Tushare cache profiles must cover the operation catalog; "
+        f"missing={missing}, extra={extra}"
+    )
 PUBLICATION_TIMES = {
     "daily": time(17, 10),
     "daily_basic": time(17, 10),
@@ -171,26 +276,40 @@ class TushareCacheExpirationPolicy:
         operation: str,
         params: Dict[str, Any],
         fetched_at: datetime,
-    ) -> datetime:
-        """Return the expiration instant for one successful Tushare response."""
+    ) -> Optional[datetime]:
+        """Return persistent-cache expiration for one explicitly profiled operation."""
         if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
             raise ValueError("fetched_at must be timezone-aware")
+        if operation not in PROFILED_OPERATIONS:
+            raise ValueError(f"Tushare operation has no cache profile: {operation}")
         beijing_now = fetched_at.astimezone(BEIJING_TIMEZONE)
 
-        if operation in REALTIME_OPERATIONS:
-            return beijing_now + REALTIME_CACHE_TTL
+        if operation in NO_PERSISTENCE_OPERATIONS:
+            return None
         if operation == "trade_cal":
             return beijing_now + TRADE_CALENDAR_CACHE_TTL
         if operation in REFERENCE_OPERATIONS:
             return beijing_now + REFERENCE_CACHE_TTL
-        if operation in FINANCIAL_OPERATIONS:
-            return beijing_now + FINANCIAL_CACHE_TTL
+        requested_date = self._requested_end_date(params)
+        if operation in INTRADAY_OPERATIONS:
+            if requested_date is None or requested_date >= beijing_now.date():
+                return None
+            return beijing_now + HISTORICAL_CACHE_TTL
+        if (
+            operation == "pro_bar"
+            and str(params.get("freq", "")).lower().endswith("min")
+            and (requested_date is None or requested_date >= beijing_now.date())
+        ):
+            return None
+        if operation in DISCLOSURE_OPERATIONS:
+            if self._has_fixed_disclosure_window(params):
+                return beijing_now + DISCLOSURE_CACHE_TTL
+            return beijing_now + REFERENCE_CACHE_TTL
 
         publication_time = self._publication_time(operation, params)
         if publication_time is None:
-            return beijing_now + DEFAULT_CACHE_TTL
+            publication_time = time(21, 10)
 
-        requested_date = self._requested_end_date(params)
         if requested_date is not None and requested_date < beijing_now.date():
             return beijing_now + HISTORICAL_CACHE_TTL
 
@@ -203,10 +322,24 @@ class TushareCacheExpirationPolicy:
         if requested_date is not None and beijing_now >= completion:
             return beijing_now + HISTORICAL_CACHE_TTL
         if requested_date is None and beijing_now >= completion:
-            completion += timedelta(days=1)
+            return completion + timedelta(days=1)
 
         # Partial or empty responses must expire quickly during publication windows.
         return min(beijing_now + SHORT_CACHE_TTL, completion)
+
+    @staticmethod
+    def _has_fixed_disclosure_window(params: Dict[str, Any]) -> bool:
+        """Return whether a disclosure query is pinned to a fixed source cutoff."""
+        return any(
+            isinstance(params.get(name), str) and bool(params[name].strip())
+            for name in (
+                "period",
+                "ann_date",
+                "start_date",
+                "end_date",
+                "float_date",
+            )
+        )
 
     @staticmethod
     def _publication_time(

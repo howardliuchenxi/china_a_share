@@ -4,27 +4,31 @@ import logging
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 from uuid import uuid4
 
-from fastapi import FastAPI, Query, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .application.workflow import AnalysisService
 from .application.stock_catalog import StockCatalogService
 from .bootstrap import create_analysis_service as build_analysis_service
+from .bootstrap import create_analysis_task_coordinator
 from .bootstrap import create_stock_catalog_service as build_stock_catalog_service
 from .config import Settings
 from .core.contracts import (
     AnalysisRequest,
     AnalysisResponse,
+    AnalysisTaskStatusResponse,
+    AnalysisTaskSubmission,
     ServiceError,
     StockListErrorResponse,
     StockListResponse,
 )
 from .core.errors import DataProviderError
 from .observability import log_event
+from .tasks import AnalysisTaskCoordinator, requires_async_analysis
 
 
 FRONTEND_DIST = Path(
@@ -34,6 +38,7 @@ FRONTEND_DIST = Path(
     )
 )
 ANALYSIS_API_ROUTE = "/api/analysis"
+ANALYSIS_TASK_API_ROUTE = "/api/analysis/tasks"
 HEALTH_API_ROUTE = "/api/health"
 STOCKS_API_ROUTE = "/api/stocks"
 ANALYSIS_PAGE_ROUTE = "/analysis"
@@ -61,6 +66,7 @@ def create_stock_catalog_service() -> StockCatalogService:
 def create_app(
     service: Optional[AnalysisService] = None,
     stock_catalog_service: Optional[StockCatalogService] = None,
+    task_coordinator: Optional[AnalysisTaskCoordinator] = None,
 ) -> FastAPI:
     """Create the local HTTP application."""
     application = FastAPI(
@@ -81,7 +87,10 @@ def create_app(
             return response
         finally:
             api_route = http_request.url.path
-            if api_route in MONITORED_API_ROUTES:
+            if (
+                api_route in MONITORED_API_ROUTES
+                or api_route.startswith(f"{ANALYSIS_TASK_API_ROUTE}/")
+            ):
                 # Route allowlisting prevents user-controlled paths from becoming labels.
                 log_event(
                     logger,
@@ -104,20 +113,57 @@ def create_app(
 
     active_service = service
     active_stock_catalog_service = stock_catalog_service
+    active_task_coordinator = task_coordinator
 
-    @application.post(ANALYSIS_API_ROUTE, response_model=AnalysisResponse)
+    @application.post(
+        ANALYSIS_API_ROUTE,
+        response_model=Union[AnalysisResponse, AnalysisTaskSubmission],
+    )
     def analyze(
         request: AnalysisRequest,
         http_request: Request,
-    ) -> AnalysisResponse:
+    ):
         """Accept a natural-language request for A-share data."""
-        nonlocal active_service
+        nonlocal active_service, active_task_coordinator
+        if requires_async_analysis(request):
+            if active_task_coordinator is None:
+                active_task_coordinator = create_analysis_task_coordinator(
+                    Settings.from_env()
+                )
+            submission = active_task_coordinator.submit(request)
+            return JSONResponse(
+                status_code=status.HTTP_202_ACCEPTED,
+                content=submission.model_dump(mode="json"),
+            )
         if active_service is None:
             active_service = create_analysis_service()
         return active_service.analyze(
             http_request.state.request_id,
             request,
             api_route=ANALYSIS_API_ROUTE,
+        )
+
+    @application.get(
+        f"{ANALYSIS_TASK_API_ROUTE}/{{task_id}}",
+        response_model=AnalysisTaskStatusResponse,
+    )
+    def get_analysis_task(task_id: str) -> AnalysisTaskStatusResponse:
+        """Return current progress or the terminal result for one task."""
+        nonlocal active_task_coordinator
+        if active_task_coordinator is None:
+            active_task_coordinator = create_analysis_task_coordinator(
+                Settings.from_env()
+            )
+        task = active_task_coordinator.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Analysis task was not found.")
+        return AnalysisTaskStatusResponse(
+            task_id=task.task_id,
+            status=task.status,
+            completed_items=task.completed_items,
+            total_items=task.total_items,
+            response=task.response,
+            error=task.error,
         )
 
     @application.get(STOCKS_API_ROUTE, response_model=StockListResponse)

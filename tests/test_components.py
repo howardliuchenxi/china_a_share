@@ -74,7 +74,12 @@ class FakeMarketDataProvider:
         return [DataOperation(name="daily", description="Daily prices.")]
 
     def supports(self, operation):
-        return operation in {"daily", "top10_floatholders"} or (
+        return operation in {
+            "daily",
+            "daily_basic",
+            "ths_member",
+            "top10_floatholders",
+        } or (
             operation == "stock_basic" and self.stock_frame is not None
         )
 
@@ -443,6 +448,224 @@ def test_planner_downgrades_known_unexecutable_or_proxy_plan(
     assert result.limitations
 
 
+def test_planner_accepts_fixed_non_top10_float_retail_proxy():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "top10_floatholders"
+    plan.queries[0].params = {
+        "ts_code": "300308.SZ",
+        "period": "20260331",
+    }
+    plan.queries[0].fields = [
+        "ts_code",
+        "ann_date",
+        "end_date",
+        "holder_name",
+        "hold_float_ratio",
+    ]
+    plan.queries[0].transform = "cr10_float_trend"
+    plan.requirements[0].implementation = (
+        "Use non_top10_float_ratio as the approved retail-ratio proxy."
+    )
+    plan.requirements[0].evidence = (
+        "The proxy equals 100% minus the top-ten unrestricted float-holder ratios."
+    )
+    session = FakeSession(
+        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="分析这只股票的散户比例。"),
+        [
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            )
+        ],
+    )
+
+    assert result.feasibility == "supported"
+    assert result.queries[0].transform == "cr10_float_trend"
+    assert result.limitations == []
+
+
+def test_planner_builds_original_healthcare_retail_cohort_request():
+    plan = QueryPlan(
+        interpretation="Compare healthcare cohorts by retail-ratio proxy.",
+        feasibility="unsupported",
+        requirements=[
+            {
+                "requirement": "Calculate the retail-ratio proxy.",
+                "status": "unsupported",
+                "implementation": "Use top10_floatholders for every security.",
+                "evidence": (
+                    "Use cr10_float_trend to calculate the 非前十大流通股东 "
+                    "holding ratio."
+                ),
+            },
+            {
+                "requirement": "Split the universe and compare returns.",
+                "status": "unsupported",
+                "evidence": "This requires security-specific fan-out and grouping.",
+            },
+        ],
+        limitations=[
+            "The requested metric cannot be replaced by an unverified proxy."
+        ],
+    )
+    session = FakeSession(
+        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(
+            prompt=(
+                "过去一个月，医疗行业，按照散户比例区分分两半，"
+                "是散户比例高的那一半公司上涨的多还是低的一半上涨的多？"
+            )
+        ),
+        [
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            )
+        ],
+    )
+
+    assert result.feasibility == "supported"
+    assert result.result_transform == "industry_retail_cohort_return"
+    assert result.limitations == []
+    assert [query.operation for query in result.queries] == [
+        "stock_basic",
+        "top10_floatholders",
+        "daily",
+    ]
+    assert result.queries[1].transform == "cr10_float_trend"
+    assert "ts_code" not in result.queries[1].params
+    assert result.queries[2].params["start_date"] < result.queries[2].params["end_date"]
+
+
+def test_planner_builds_power_industry_retail_cohort_request():
+    plan = QueryPlan(
+        interpretation="Compare power-industry retail-ratio cohorts.",
+        feasibility="unsupported",
+        limitations=["Dynamic holder fan-out is unsupported."],
+    )
+    session = FakeSession(
+        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(
+            prompt=(
+                "过去一个月，电力行业，按照散户比例区分分两半，"
+                "是散户比例高的那一半公司上涨的多还是低的一半上涨的多？"
+            )
+        ),
+        [
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            )
+        ],
+    )
+
+    assert result.feasibility == "supported"
+    assert result.result_transform == "industry_retail_cohort_return"
+    assert result.limitations == []
+    assert result.queries[0].filters[0].value == [
+        "新型电力",
+        "水力发电",
+        "火力发电",
+    ]
+    assert [query.operation for query in result.queries] == [
+        "stock_basic",
+        "top10_floatholders",
+        "daily",
+    ]
+
+
+def test_planner_builds_phone_theme_retail_cohort_request():
+    plan = QueryPlan(
+        interpretation="Compare phone-stock retail-ratio cohorts.",
+        feasibility="unsupported",
+        limitations=["The plan contains an unresolved provider parameter."],
+    )
+    session = FakeSession(
+        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(
+            prompt=(
+                "过去一个月，手机股票，按照散户比例区分分两半，"
+                "是散户比例高的那一半公司上涨的多还是低的一半上涨的多？"
+            )
+        ),
+        [
+            DataOperation(name="ths_member", description="THS constituents."),
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            ),
+        ],
+    )
+
+    assert result.feasibility == "supported"
+    assert result.result_transform == "industry_retail_cohort_return"
+    assert result.limitations == []
+    assert [query.operation for query in result.queries] == [
+        "ths_member",
+        "ths_member",
+        "top10_floatholders",
+        "daily",
+    ]
+    assert [query.params["ts_code"] for query in result.queries[:2]] == [
+        "886070.TI",
+        "886091.TI",
+    ]
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
+def test_planner_builds_full_market_retail_cohort_request():
+    plan = QueryPlan(
+        interpretation="Compare all listed stocks by retail-ratio cohort.",
+        feasibility="unsupported",
+        limitations=[
+            "The requested derived calculation has no deterministic local transform."
+        ],
+    )
+    session = FakeSession(
+        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(
+            prompt=(
+                "过去一个月的股票，按照散户比例区分分两半，"
+                "是散户比例高的那一半公司上涨的多还是低的一半上涨的多？"
+            )
+        ),
+        [
+            DataOperation(name="stock_basic", description="Listed A-shares."),
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            ),
+        ],
+    )
+
+    assert result.feasibility == "supported"
+    assert result.result_transform == "industry_retail_cohort_return"
+    assert result.limitations == []
+    assert [query.operation for query in result.queries] == [
+        "stock_basic",
+        "top10_floatholders",
+        "daily",
+    ]
+    assert result.queries[0].params == {"list_status": "L"}
+    assert result.queries[0].filters == []
+
+
 def test_planner_merges_duplicate_valuation_queries_before_dividend_ranking():
     plan = make_daily_plan()
     plan.queries = [
@@ -567,6 +790,59 @@ def test_planner_rejects_unimplemented_cross_operation_intersection():
     assert "cross-operation join" in result.limitations[0]
 
 
+def test_planner_builds_healthcare_monthly_turnover_comparison():
+    unsupported_plan = QueryPlan(
+        interpretation="The comparison is not yet supported.",
+        feasibility="unsupported",
+        requirements=[
+            {
+                "requirement": "Compare monthly turnover rates.",
+                "status": "unsupported",
+                "evidence": "No transform was selected.",
+            }
+        ],
+        limitations=["No monthly comparison transform."],
+    )
+    session = FakeSession(
+        FakeResponse(
+            {
+                "choices": [
+                    {"message": {"content": unsupported_plan.model_dump_json()}}
+                ]
+            }
+        )
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(
+            prompt=(
+                "过去一个月，医疗行业，有没有股票是成交率今年6月平均"
+                "相对于今年1月平均下降了30%以上？"
+            )
+        ),
+        [
+            DataOperation(name="stock_basic", description="Security master."),
+            DataOperation(name="daily_basic", description="Daily turnover rates."),
+        ],
+    )
+
+    assert result.feasibility == "supported"
+    assert result.result_transform == "dimension_monthly_turnover_decline"
+    assert [query.operation for query in result.queries] == [
+        "stock_basic",
+        "daily_basic",
+        "daily_basic",
+    ]
+    assert result.queries[1].params == {
+        "start_date": "20260101",
+        "end_date": "20260131",
+    }
+    assert result.queries[2].params == {
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+
+
 def test_planner_uses_completed_trade_date_for_current_stock_st_query():
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     completed_date = now.date()
@@ -653,6 +929,206 @@ def test_two_limit_up_probability_uses_consecutive_trading_days():
     assert result.rows[1]["third_day_up"] is False
 
 
+def test_healthcare_monthly_turnover_comparison_filters_thirty_percent_declines():
+    provider = FakeMarketDataProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=None,
+        executor=None,
+    )
+    source_results = [
+        QueryResult(
+            query_id="stocks",
+            provider="tushare",
+            operation="stock_basic",
+            status="success",
+            columns=["ts_code", "name", "industry"],
+            rows=[
+                {
+                    "ts_code": "000001.SZ",
+                    "name": "Healthcare A",
+                    "industry": "医疗保健",
+                },
+                {
+                    "ts_code": "000002.SZ",
+                    "name": "Pharma B",
+                    "industry": "化学制药",
+                },
+            ],
+            row_count=2,
+        ),
+        QueryResult(
+            query_id="january",
+            provider="tushare",
+            operation="daily_basic",
+            status="success",
+            columns=["ts_code", "trade_date", "turnover_rate"],
+            rows=[
+                {"ts_code": "000001.SZ", "trade_date": "20260105", "turnover_rate": 10},
+                {"ts_code": "000001.SZ", "trade_date": "20260106", "turnover_rate": 10},
+                {"ts_code": "000002.SZ", "trade_date": "20260105", "turnover_rate": 5},
+                {"ts_code": "600000.SH", "trade_date": "20260105", "turnover_rate": 20},
+            ],
+            row_count=4,
+        ),
+        QueryResult(
+            query_id="june",
+            provider="tushare",
+            operation="daily_basic",
+            status="success",
+            columns=["ts_code", "trade_date", "turnover_rate"],
+            rows=[
+                {"ts_code": "000001.SZ", "trade_date": "20260601", "turnover_rate": 6},
+                {"ts_code": "000001.SZ", "trade_date": "20260602", "turnover_rate": 6},
+                {"ts_code": "000002.SZ", "trade_date": "20260601", "turnover_rate": 4},
+                {"ts_code": "600000.SH", "trade_date": "20260601", "turnover_rate": 1},
+            ],
+            row_count=4,
+        ),
+    ]
+
+    result = service._build_dimension_monthly_turnover_result(source_results)
+
+    assert result.row_count == 1
+    assert result.rows[0]["ts_code"] == "000001.SZ"
+    assert result.rows[0]["turnover_change_pct"] == -40.0
+    assert result.rows[0]["first_trading_day_count"] == 2
+    assert result.rows[0]["second_trading_day_count"] == 2
+    assert result.summary == {
+        "证券集合股票数": 2,
+        "两期均有有效数据": 2,
+        "平均换手率下降30%以上": 1,
+    }
+
+
+def test_healthcare_retail_cohorts_compare_rising_company_counts():
+    provider = FakeMarketDataProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=None,
+        executor=None,
+    )
+    stock_result = QueryResult(
+        query_id="stocks",
+        provider="tushare",
+        operation="stock_basic",
+        status="success",
+        columns=["ts_code", "name", "industry"],
+        rows=[
+            {
+                "ts_code": f"00000{index}.SZ",
+                "name": f"Healthcare {index}",
+                "industry": "Healthcare",
+            }
+            for index in range(1, 5)
+        ],
+        row_count=4,
+    )
+    proxy_values = [20.0, 30.0, 70.0, 80.0]
+    holder_results = [
+        QueryResult(
+            query_id=f"holder-{index}",
+            provider="tushare",
+            operation="top10_floatholders",
+            status="success",
+            columns=[
+                "ts_code",
+                "end_date",
+                "ann_date",
+                "non_top10_float_ratio",
+                "calculation_status",
+            ],
+            rows=[
+                {
+                    "ts_code": f"00000{index}.SZ",
+                    "end_date": "20260331",
+                    "ann_date": "20260420",
+                    "non_top10_float_ratio": proxy_value,
+                    "calculation_status": "complete",
+                }
+            ],
+            row_count=1,
+        )
+        for index, proxy_value in enumerate(proxy_values, start=1)
+    ]
+    ending_closes = [11.0, 12.0, 11.0, 9.0]
+    price_rows = [
+        row
+        for index, ending_close in enumerate(ending_closes, start=1)
+        for row in (
+            {
+                "ts_code": f"00000{index}.SZ",
+                "trade_date": "20260624",
+                "close": 10.0,
+            },
+            {
+                "ts_code": f"00000{index}.SZ",
+                "trade_date": "20260723",
+                "close": ending_close,
+            },
+        )
+    ]
+    price_result = QueryResult(
+        query_id="prices",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        columns=["ts_code", "trade_date", "close"],
+        rows=price_rows,
+        row_count=len(price_rows),
+    )
+
+    result = service._build_industry_retail_cohort_result(
+        stock_result,
+        holder_results,
+        price_result,
+    )
+
+    assert result.status == "success"
+    assert result.rows[0]["retail_proxy_cohort"] == "high"
+    assert result.rows[0]["rising_company_count"] == 1
+    assert result.rows[1]["retail_proxy_cohort"] == "low"
+    assert result.rows[1]["rising_company_count"] == 2
+    assert result.summary["high_minus_low_rising_count"] == -1
+    assert result.summary["industry_universe_count"] == 4
+    assert result.summary["valid_cohort_security_count"] == 4
+
+
+def test_monthly_turnover_source_expands_range_into_weekday_reads():
+    frame = pd.DataFrame(
+        [{"ts_code": "000001.SZ", "trade_date": "20260101", "turnover_rate": 1.0}]
+    )
+    stock_frame = pd.DataFrame(
+        [{"ts_code": "000001.SZ", "name": "Alpha"}]
+    )
+    provider = FakeMarketDataProvider(frame=frame, stock_frame=stock_frame)
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=None,
+        executor=DataQueryExecutor(provider),
+    )
+    query = DataQuery(
+        query_id="turnover-month",
+        operation="daily_basic",
+        params={"start_date": "20260101", "end_date": "20260104"},
+        fields=["ts_code", "trade_date", "turnover_rate"],
+        purpose="Retrieve one monthly turnover source.",
+    )
+
+    result = service._execute_daily_basic_range_by_date(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.row_count == 2
+    assert provider.calls.count("daily_basic") == 2
+
+
 def test_executor_applies_exact_string_filter():
     frame = pd.DataFrame(
         [
@@ -683,6 +1159,42 @@ def test_executor_applies_exact_string_filter():
     assert result.status == "success"
     assert result.row_count == 1
     assert result.rows == [{"ts_code": "000001.SZ", "limit_type": "U"}]
+
+
+def test_executor_applies_string_membership_filter():
+    frame = pd.DataFrame(
+        [
+            {"ts_code": "000001.SZ", "industry": "医疗保健"},
+            {"ts_code": "000002.SZ", "industry": "化学制药"},
+            {"ts_code": "600000.SH", "industry": "银行"},
+        ]
+    )
+    query = DataQuery(
+        query_id="healthcare-universe",
+        operation="daily",
+        fields=["ts_code", "industry"],
+        purpose="Build a categorical security universe.",
+        filters=[
+            {
+                "field": "industry",
+                "operator": "in",
+                "value": ["医疗保健", "化学制药"],
+            }
+        ],
+    )
+
+    result = DataQueryExecutor(FakeMarketDataProvider(frame=frame)).execute(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.row_count == 2
+    assert [row["ts_code"] for row in result.rows] == [
+        "000001.SZ",
+        "000002.SZ",
+    ]
 
 
 def test_executor_groups_and_limits_security_counts():

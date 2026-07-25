@@ -8,6 +8,7 @@ import pandas as pd
 from .contracts import (
     AnalysisImage,
     AnalysisRequest,
+    AnalysisTask,
     DataCacheRecord,
     DataOperation,
     QueryPlan,
@@ -82,8 +83,8 @@ class CacheExpirationPolicy(Protocol):
         operation: str,
         params: Dict[str, Any],
         fetched_at: datetime,
-    ) -> datetime:
-        """Return the timezone-aware expiration instant for one response."""
+    ) -> Optional[datetime]:
+        """Return the expiration instant, or None when persistence is forbidden."""
         ...
 
 
@@ -115,4 +116,24 @@ class DataResponseCache(Protocol):
         query_id: str,
     ) -> pd.DataFrame:
         """Return cached data or execute one deduplicated upstream fetch."""
+        ...
+
+
+class AnalysisTaskStore(Protocol):
+    """Persist asynchronous analysis task state."""
+
+    def get(self, task_id: str) -> Optional[AnalysisTask]:
+        """Return one task when it exists."""
+        ...
+
+    def put(self, task: AnalysisTask) -> None:
+        """Create or replace one complete task record."""
+        ...
+
+
+class AnalysisTaskDispatcher(Protocol):
+    """Start one durable background execution for a queued task."""
+
+    def dispatch(self, task_id: str) -> None:
+        """Request background execution without waiting for completion."""
         ...

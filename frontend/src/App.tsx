@@ -12,13 +12,13 @@ import { fetchStocks, StockListRequestError, submitAnalysis } from "./api";
 import type {
   AnalysisImage,
   AnalysisResponse,
+  AnalysisTaskProgress,
   DataQuery,
   QueryResult,
   ServiceError,
   StockExchange,
   StockListResponse,
 } from "./contracts";
-import { experimentGroups } from "./experimentTemplates";
 
 type ReferenceView = "stocks" | "calendar";
 type PageView = "analysis" | "reference";
@@ -43,6 +43,8 @@ const SUPPORTED_ANALYSIS_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 const MAX_VISIBLE_ROWS = 100;
+const MAX_PROMPT_HISTORY_ITEMS = 20;
+const PROMPT_HISTORY_STORAGE_KEY = "china-a-share.prompt-history";
 const STOCK_PAGE_SIZE = 20;
 const exchangeLabels: Record<StockExchange, string> = {
   SSE: "上海",
@@ -99,6 +101,78 @@ const resultColumnMetadata: Record<string, { label: string; description: string 
   missing_ratio_holders: { label: "比例缺失股东", description: "源数据未提供流通股持股比例、因而未纳入已知比例合计的股东。" },
   calculation_status: { label: "计算完整性", description: "complete表示完整计算；partial_missing_ratio表示源比例缺失，仅能给出部分统计。" },
 };
+const FINANCIAL_STATEMENT_OPERATIONS = new Set([
+  "income",
+  "balancesheet",
+  "cashflow",
+]);
+const NON_MONETARY_FINANCIAL_FIELDS = new Set([
+  "ts_code",
+  "ann_date",
+  "f_ann_date",
+  "end_date",
+  "report_type",
+  "comp_type",
+  "end_type",
+  "update_flag",
+  "basic_eps",
+  "diluted_eps",
+  "diluted2_eps",
+  "total_share",
+]);
+const IDENTIFIER_COLUMN_PATTERN = /(^|_)(code|date|year|month|type|status|flag|count|num)$/;
+const PERCENT_COLUMN_PATTERN = /(^pct_|_pct$|_pct_|_ratio$|_rate$|_yield$)/;
+
+function formatAdaptiveNumber(value: number, unit = ""): string {
+  const absoluteValue = Math.abs(value);
+  if (absoluteValue >= 100_000_000) {
+    return `${(value / 100_000_000).toFixed(2)}亿${unit}`;
+  }
+  if (absoluteValue >= 10_000) {
+    return `${(value / 10_000).toFixed(2)}万${unit}`;
+  }
+  return `${value.toLocaleString("zh-CN", {
+    maximumFractionDigits: 2,
+  })}${unit}`;
+}
+
+function isPercentageColumn(column: string): boolean {
+  return PERCENT_COLUMN_PATTERN.test(column)
+    || [
+      "pct_chg",
+      "period_return_pct",
+      "turnover_change_pct",
+      "cr10_float_registered",
+      "non_top10_float_ratio",
+      "known_top_holder_float_ratio",
+      "uncovered_float_ratio_upper_bound",
+      "omnibus_float_ratio",
+    ].includes(column);
+}
+
+function isFinancialStatementAmount(operation: string, column: string): boolean {
+  return FINANCIAL_STATEMENT_OPERATIONS.has(operation)
+    && !NON_MONETARY_FINANCIAL_FIELDS.has(column)
+    && !isPercentageColumn(column);
+}
+
+function normalizeKnownCurrencyUnit(
+  operation: string,
+  column: string,
+  value: number,
+): number | null {
+  if (isFinancialStatementAmount(operation, column)) return value;
+  if (column === "amount" && ["daily", "weekly", "monthly"].includes(operation)) {
+    return value * 1_000;
+  }
+  if (
+    (column === "amount" && operation === "block_trade")
+    || (["total_mv", "circ_mv"].includes(column) && operation === "daily_basic")
+  ) {
+    return value * 10_000;
+  }
+  return null;
+}
 
 function TermHelp({ label, description }: { label: string; description: string }) {
   return (
@@ -136,6 +210,7 @@ function compareResultValues(left: unknown, right: unknown): number {
 }
 
 function formatResultValue(
+  operation: string,
   column: string,
   value: unknown,
   row?: Record<string, unknown>,
@@ -161,6 +236,13 @@ function formatResultValue(
   if (column === "calculation_status") {
     if (value === "complete") return "完整计算";
     if (value === "partial_missing_ratio") return "部分数据（比例缺失）";
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (IDENTIFIER_COLUMN_PATTERN.test(column)) return String(value);
+    if (isPercentageColumn(column)) return `${value.toFixed(2)}%`;
+    const currencyValue = normalizeKnownCurrencyUnit(operation, column, value);
+    if (currencyValue != null) return formatAdaptiveNumber(currencyValue, "元");
+    return formatAdaptiveNumber(value);
   }
   return String(value);
 }
@@ -349,7 +431,7 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
                 <span>{resultColumnMetadata[column]?.label ?? column}</span>
                 <ColumnHelp column={column} />
               </dt>
-              <dd>{formatResultValue(column, result.rows[0][column], result.rows[0])}</dd>
+              <dd>{formatResultValue(result.operation, column, result.rows[0][column], result.rows[0])}</dd>
               {resultColumnMetadata[column] && <small>{column}</small>}
             </div>
           ))}
@@ -385,7 +467,7 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
                 {visibleRows.map((row, index) => (
                   <tr key={`${result.query_id}-${index}`}>
                     {result.columns.map((column) => (
-                      <td key={column}>{formatResultValue(column, row[column], row)}</td>
+                      <td key={column}>{formatResultValue(result.operation, column, row[column], row)}</td>
                     ))}
                   </tr>
                 ))}
@@ -635,27 +717,32 @@ function ReferenceDataPage() {
 export default function App() {
   const [activePage, setActivePage] = useState<PageView>("analysis");
   const [prompt, setPrompt] = useState("");
+  const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [response, setResponse] = useState<AnalysisResponse | null>(null);
   const [localError, setLocalError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [taskProgress, setTaskProgress] = useState<AnalysisTaskProgress | null>(null);
   const [isImageReading, setIsImageReading] = useState(false);
   const [analysisImage, setAnalysisImage] = useState<AnalysisImage | null>(null);
   const [analysisImageName, setAnalysisImageName] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const [selectedGroupId, setSelectedGroupId] = useState(experimentGroups[0].id);
-  const selectedGroup = experimentGroups.find((group) => group.id === selectedGroupId)
-    ?? experimentGroups[0];
-  const selectedTemplateApi = selectedGroup.templates.find(
-    (template) => template.prompt === prompt,
-  )?.apiName ?? "";
 
-  function selectTemplate(apiName: string) {
-    const template = selectedGroup.templates.find((item) => item.apiName === apiName);
-    if (!template) return;
-    setPrompt(template.prompt);
-    setResponse(null);
-    setLocalError("");
-  }
+  useEffect(() => {
+    try {
+      const storedHistory: unknown = JSON.parse(
+        window.localStorage.getItem(PROMPT_HISTORY_STORAGE_KEY) ?? "[]",
+      );
+      if (!Array.isArray(storedHistory)) return;
+      setPromptHistory(
+        storedHistory
+          .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          .map((item) => item.trim())
+          .slice(0, MAX_PROMPT_HISTORY_ITEMS),
+      );
+    } catch (error) {
+      console.warn("Unable to read prompt history from local storage.", error);
+    }
+  }, []);
 
   async function loadAnalysisImage(file: File) {
     setIsImageReading(true);
@@ -699,15 +786,35 @@ export default function App() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!prompt.trim() || isLoading || isImageReading) return;
+    const submittedPrompt = prompt.trim();
+    if (!submittedPrompt || isLoading || isImageReading) return;
+    const nextPromptHistory = [
+      submittedPrompt,
+      ...promptHistory.filter((item) => item !== submittedPrompt),
+    ].slice(0, MAX_PROMPT_HISTORY_ITEMS);
+    setPromptHistory(nextPromptHistory);
+    try {
+      window.localStorage.setItem(
+        PROMPT_HISTORY_STORAGE_KEY,
+        JSON.stringify(nextPromptHistory),
+      );
+    } catch (error) {
+      console.warn("Unable to save prompt history to local storage.", error);
+    }
     setIsLoading(true);
+    setTaskProgress(null);
     setLocalError("");
     setResponse(null);
     try {
-      setResponse(await submitAnalysis({
-        prompt: prompt.trim(),
-        ...(analysisImage ? { image: analysisImage } : {}),
-      }));
+      setResponse(
+        await submitAnalysis(
+          {
+            prompt: submittedPrompt,
+            ...(analysisImage ? { image: analysisImage } : {}),
+          },
+          setTaskProgress,
+        ),
+      );
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "本地请求失败。");
     } finally {
@@ -745,43 +852,28 @@ export default function App() {
       <section className="request-panel" aria-labelledby="request-heading">
         <div className="section-heading"><span>01</span><h2 id="request-heading">数据请求</h2></div>
         <form onSubmit={handleSubmit}>
-          <div className="experiment-library">
-            <div className="library-title">
-              <p className="panel-label">实验模板</p>
-              <h3>从测试问题开始</h3>
-            </div>
-            <div className="experiment-selectors">
-              <div className="group-control">
-                <label htmlFor="experiment-group">选择测试分组</label>
-                <select
-                  id="experiment-group"
-                  value={selectedGroupId}
-                  onChange={(event) => setSelectedGroupId(event.target.value)}
-                >
-                  {experimentGroups.map((group) => (
-                    <option value={group.id} key={group.id}>{group.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="question-control">
-                <label htmlFor="experiment-question">选择测试问题</label>
-                <select
-                  id="experiment-question"
-                  value={selectedTemplateApi}
-                  onChange={(event) => selectTemplate(event.target.value)}
-                >
-                  <option value="">展开并选择一个问题</option>
-                  {selectedGroup.templates.map((template) => (
-                    <option value={template.apiName} key={template.apiName}>
-                      {template.apiName} · {template.prompt}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <p className="library-description">{selectedGroup.description}</p>
-          </div>
           <label htmlFor="analysis-prompt">描述你需要的数据</label>
+          <div className="prompt-history">
+            <label htmlFor="prompt-history">历史输入</label>
+            <select
+              id="prompt-history"
+              value=""
+              disabled={promptHistory.length === 0}
+              onChange={(event) => {
+                if (!event.target.value) return;
+                setPrompt(event.target.value);
+                setResponse(null);
+                setLocalError("");
+              }}
+            >
+              <option value="">
+                {promptHistory.length === 0 ? "暂无历史输入" : "选择之前输入的问题"}
+              </option>
+              {promptHistory.map((item, index) => (
+                <option value={item} key={`${index}-${item}`}>{item}</option>
+              ))}
+            </select>
+          </div>
           <textarea
             id="analysis-prompt"
             rows={6}
@@ -833,8 +925,19 @@ export default function App() {
             type="submit"
             disabled={!prompt.trim() || isLoading || isImageReading}
           >
-            {isLoading ? "正在分析…" : "开始分析"}
+            {isLoading
+              ? taskProgress?.totalItems
+                ? `\u6b63\u5728\u5206\u6790 ${taskProgress.completedItems}/${taskProgress.totalItems}\u2026`
+                : "\u6b63\u5728\u521b\u5efa\u5206\u6790\u4efb\u52a1\u2026"
+              : "\u5f00\u59cb\u5206\u6790"}
           </button>
+          {isLoading && taskProgress && (
+            <p className="task-progress" role="status">
+              {taskProgress.totalItems > 0
+                ? `\u5df2\u5904\u7406 ${taskProgress.completedItems} / ${taskProgress.totalItems} \u652f\u80a1\u7968\uff0c\u53ef\u4ee5\u7ee7\u7eed\u7b49\u5f85\u3002`
+                : "\u4efb\u52a1\u5df2\u5165\u961f\uff0c\u6b63\u5728\u7b49\u5f85\u540e\u53f0\u6267\u884c\u3002"}
+            </p>
+          )}
         </form>
       </section>
 
@@ -842,6 +945,20 @@ export default function App() {
         <div className="section-heading"><span>02</span><h2 id="results-heading">数据与错误</h2></div>
         {localError && <div className="error-card" role="alert"><strong>本地错误</strong><p>{localError}</p></div>}
         {response?.error && <ErrorCard error={response.error} />}
+        {response?.plan?.feasibility === "unsupported"
+          && !response.error
+          && response.results.length === 0 && (
+            <div className="error-card" role="alert">
+              <strong>当前请求无法完整处理</strong>
+              {response.plan.limitations.length > 0 ? (
+                response.plan.limitations.map((limitation) => (
+                  <p key={limitation}>{limitation}</p>
+                ))
+              ) : (
+                <p>当前数据源或分析能力无法完整满足这项请求。</p>
+              )}
+            </div>
+          )}
         {response?.results.map((result) => (
           <ResultTable
             result={result}
@@ -854,11 +971,12 @@ export default function App() {
         {!localError && !response && <p className="empty-output">数据源查询结果将在这里显示。</p>}
       </section>
 
-      <section className="details-stack" aria-label="查询详情">
+      <section className="details-stack" aria-label="查询与执行详情">
         <details className="collapsible-panel">
-          <summary><span>03</span><strong>查询详情</strong></summary>
-          {response?.plan ? (
-            <div className="plan-content">
+          <summary><span>03</span><strong>查询与执行详情</strong></summary>
+          <div className="plan-content">
+            {response?.plan ? (
+              <>
               <h2>{response.plan.interpretation}</h2>
               <p>规划器：{response.planner} · 数据源：{response.data_provider}</p>
               <RequirementCoverage response={response} />
@@ -869,10 +987,10 @@ export default function App() {
                   <code>{JSON.stringify({ fields: query.fields, filters: query.filters, aggregations: query.aggregations })}</code>
                 </div>
               ))}
-            </div>
-          ) : <p className="empty-output">完成分析后，可在这里查看经过校验的接口和参数。</p>}
-          <div className="execution-trace">
-            <h3>执行流程</h3>
+              </>
+            ) : (
+              <p className="empty-output">完成分析后，可在这里查看经过校验的接口、参数和执行记录。</p>
+            )}
             <DecisionTrace response={response} />
           </div>
         </details>
