@@ -817,6 +817,11 @@ class UiFeedbackRequest(BaseModel):
         max_length=4_000,
         description="Optional administrator instruction describing the desired change.",
     )
+    conversation: List["UiFeedbackConversationMessage"] = Field(
+        default_factory=list,
+        max_length=12,
+        description="Bounded administrator and assistant discussion supporting the change.",
+    )
     rect: UiFeedbackRect = Field(
         description="Viewport-relative selection or component rectangle.",
     )
@@ -830,6 +835,66 @@ class UiFeedbackRequest(BaseModel):
         if not self.selected_text.strip() and not self.suggestion.strip():
             raise ValueError("selected_text or suggestion is required")
         return self
+
+
+class UiFeedbackConversationMessage(BaseModel):
+    """One bounded message in an administrator UI feedback discussion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"] = Field(
+        description="Participant that authored the feedback discussion message.",
+    )
+    content: str = Field(
+        min_length=1,
+        max_length=2_000,
+        description="Plain-text discussion content used to refine an improvement.",
+    )
+
+
+class UiFeedbackChatRequest(BaseModel):
+    """Authenticated question about one selected production UI region."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_path: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Application path containing the selected content.",
+    )
+    feedback_id: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+        description="Stable frontend component identifier nearest the selection.",
+    )
+    selected_text: str = Field(
+        min_length=1,
+        max_length=2_000,
+        description="Bounded visible text captured from the selected region.",
+    )
+    conversation: List[UiFeedbackConversationMessage] = Field(
+        min_length=1,
+        max_length=12,
+        description="Discussion ending with the administrator question to answer.",
+    )
+
+    @model_validator(mode="after")
+    def validate_last_chat_message(self) -> "UiFeedbackChatRequest":
+        """Require each chat turn to end with a new administrator question."""
+        if self.conversation[-1].role != "user":
+            raise ValueError("conversation must end with a user message")
+        return self
+
+
+class UiFeedbackChatResponse(BaseModel):
+    """Assistant response that helps refine one UI improvement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: UiFeedbackConversationMessage = Field(
+        description="Assistant reply to append to the feedback discussion.",
+    )
 
 
 class UiFeedbackConfig(BaseModel):

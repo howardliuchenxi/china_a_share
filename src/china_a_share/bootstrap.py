@@ -17,6 +17,7 @@ from china_a_share.cache import (
 from china_a_share.config import ConfigurationError, Settings
 from china_a_share.feedback import (
     CloudStorageUiFeedbackStore,
+    DeepSeekUiFeedbackAssistant,
     GitHubUiFeedbackDispatcher,
     GoogleAdminVerifier,
     UiFeedbackService,
@@ -108,6 +109,7 @@ def create_ui_feedback_service(settings: Settings) -> UiFeedbackService:
             settings.github_fix_repo,
             settings.github_fix_token,
         ),
+        DeepSeekUiFeedbackAssistant(settings.deepseek_api_key),
         google_client_id=settings.google_oauth_client_id,
         git_branch=settings.app_git_branch,
         git_sha=settings.app_git_sha,

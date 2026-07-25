@@ -27,6 +27,8 @@ from .core.contracts import (
     StockListErrorResponse,
     StockListResponse,
     UiFeedbackConfig,
+    UiFeedbackChatRequest,
+    UiFeedbackChatResponse,
     UiFeedbackRequest,
     UiFeedbackSubmission,
 )
@@ -48,6 +50,7 @@ HEALTH_API_ROUTE = "/api/health"
 STOCKS_API_ROUTE = "/api/stocks"
 UI_FEEDBACK_API_ROUTE = "/api/ui-feedback"
 UI_FEEDBACK_CONFIG_API_ROUTE = "/api/ui-feedback/config"
+UI_FEEDBACK_CHAT_API_ROUTE = "/api/ui-feedback/chat"
 ANALYSIS_PAGE_ROUTE = "/analysis"
 BASIC_PAGE_ROUTE = "/basic"
 MONITORED_API_ROUTES = {
@@ -56,6 +59,7 @@ MONITORED_API_ROUTES = {
     STOCKS_API_ROUTE,
     UI_FEEDBACK_API_ROUTE,
     UI_FEEDBACK_CONFIG_API_ROUTE,
+    UI_FEEDBACK_CHAT_API_ROUTE,
 }
 MILLISECONDS_PER_SECOND = 1_000
 DEFAULT_STOCK_PAGE_SIZE = 20
@@ -155,6 +159,44 @@ def create_app(
                 reason=str(exc),
             )
             return UiFeedbackConfig(enabled=False)
+
+    @application.post(
+        UI_FEEDBACK_CHAT_API_ROUTE,
+        response_model=UiFeedbackChatResponse,
+    )
+    def chat_about_ui_feedback(
+        request: UiFeedbackChatRequest,
+        authorization: str = Header(default=""),
+    ) -> UiFeedbackChatResponse:
+        """Answer one authenticated question about selected production UI."""
+        if not authorization.startswith("Bearer ") or not authorization[7:].strip():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Administrator authentication is required.",
+            )
+        try:
+            return get_ui_feedback_service().chat(
+                authorization[7:].strip(),
+                request,
+            )
+        except UiFeedbackAuthenticationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "ui_feedback_chat_failed",
+                api_route=UI_FEEDBACK_CHAT_API_ROUTE,
+                source="system",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="UI feedback discussion is temporarily unavailable.",
+            ) from exc
 
     @application.post(
         UI_FEEDBACK_API_ROUTE,

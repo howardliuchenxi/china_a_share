@@ -334,6 +334,8 @@ export interface UiFeedbackRequest {
   selected_text: string;
   /** Optional administrator instruction for the requested improvement. */
   suggestion: string;
+  /** Bounded discussion that supports the final improvement instruction. */
+  conversation: UiFeedbackConversationMessage[];
   /** Viewport-relative selected area coordinates in CSS pixels. */
   rect: { x: number; y: number; width: number; height: number };
   /** Viewport and scroll state used to understand the selected area. */
@@ -343,6 +345,29 @@ export interface UiFeedbackRequest {
     scroll_x: number;
     scroll_y: number;
   };
+}
+
+export interface UiFeedbackConversationMessage {
+  /** Participant that authored this discussion message. */
+  role: "user" | "assistant";
+  /** Plain-text question, reasoning, or conclusion. */
+  content: string;
+}
+
+export interface UiFeedbackChatRequest {
+  /** Browser path where the administrator selected the content. */
+  page_path: string;
+  /** Stable application component identifier nearest the selection. */
+  feedback_id: string;
+  /** Visible text captured from the selected region. */
+  selected_text: string;
+  /** Discussion ending with the newest administrator question. */
+  conversation: UiFeedbackConversationMessage[];
+}
+
+export interface UiFeedbackChatResponse {
+  /** Assistant reply to append to the discussion. */
+  message: UiFeedbackConversationMessage;
 }
 
 export interface UiFeedbackSubmission {

@@ -12,6 +12,8 @@ from china_a_share.core.contracts import (
     StockListItem,
     StockListResponse,
     UiFeedbackConfig,
+    UiFeedbackChatResponse,
+    UiFeedbackConversationMessage,
     UiFeedbackStatus,
     UiFeedbackSubmission,
 )
@@ -78,6 +80,15 @@ class FakeUiFeedbackService:
             feedback_id="feedback-1",
             status=UiFeedbackStatus.SUBMITTED,
             actions_url="https://github.com/example/repository/actions",
+        )
+
+    def chat(self, token, request):
+        self.calls.append((token, request))
+        return UiFeedbackChatResponse(
+            message=UiFeedbackConversationMessage(
+                role="assistant",
+                content="Explain the empty state and offer a next step.",
+            )
         )
 
 
@@ -200,6 +211,31 @@ def test_ui_feedback_dispatches_authenticated_request():
     assert response.json()["feedback_id"] == "feedback-1"
     assert service.calls[0][0] == "google-token"
     assert service.calls[0][1].feedback_id == "results-panel"
+
+
+def test_ui_feedback_chat_returns_authenticated_assistant_reply():
+    service = FakeUiFeedbackService()
+    client = TestClient(
+        create_app(FakeAnalysisService(), ui_feedback_service=service)
+    )
+
+    response = client.post(
+        "/api/ui-feedback/chat",
+        headers={"Authorization": "Bearer google-token"},
+        json={
+            "page_path": "/analysis",
+            "feedback_id": "results-panel",
+            "selected_text": "No data found",
+            "conversation": [
+                {"role": "user", "content": "How can this be more useful?"}
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"]["role"] == "assistant"
+    assert "next step" in response.json()["message"]["content"]
+    assert service.calls[0][0] == "google-token"
 
 
 def test_analysis_endpoint_runs_the_injected_service(caplog):

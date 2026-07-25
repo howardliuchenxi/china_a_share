@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
-import { fetchUiFeedbackConfig, submitUiFeedback } from "./api";
+import {
+  chatAboutUiFeedback,
+  fetchUiFeedbackConfig,
+  submitUiFeedback,
+} from "./api";
 import type {
+  UiFeedbackConversationMessage,
   UiFeedbackConfig,
   UiFeedbackRequest,
   UiFeedbackSubmission,
@@ -51,6 +56,7 @@ function createRequest(
     feedback_id: element.dataset.feedbackId ?? "app-shell",
     selected_text: boundedText(selectedText || element.innerText),
     suggestion: "",
+    conversation: [],
     rect: {
       x: Math.max(0, rect.x),
       y: Math.max(0, rect.y),
@@ -73,9 +79,12 @@ export function UiFeedbackController() {
   const [buttonPosition, setButtonPosition] = useState({ left: 0, top: 0 });
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [suggestion, setSuggestion] = useState("");
+  const [conversation, setConversation] = useState<UiFeedbackConversationMessage[]>([]);
+  const [question, setQuestion] = useState("");
   const [submission, setSubmission] = useState<UiFeedbackSubmission | null>(null);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAnswering, setIsAnswering] = useState(false);
   const [isSelectingArea, setIsSelectingArea] = useState(false);
   const loginButtonRef = useRef<HTMLDivElement>(null);
 
@@ -161,6 +170,8 @@ export function UiFeedbackController() {
         : element.getBoundingClientRect();
       setDraft(createRequest(element, rect, selectedText || element.innerText));
       setSuggestion("");
+      setConversation([]);
+      setQuestion("");
       setSubmission(null);
       setError("");
       setIsDialogOpen(true);
@@ -196,6 +207,8 @@ export function UiFeedbackController() {
 
   const openDialog = () => {
     setSuggestion("");
+    setConversation([]);
+    setQuestion("");
     setSubmission(null);
     setError("");
     setIsDialogOpen(true);
@@ -207,7 +220,11 @@ export function UiFeedbackController() {
     setError("");
     try {
       const result = await submitUiFeedback(
-        { ...draft, suggestion: suggestion.trim() },
+        {
+          ...draft,
+          suggestion: suggestion.trim(),
+          conversation,
+        },
         idToken,
       );
       setSubmission(result);
@@ -215,6 +232,34 @@ export function UiFeedbackController() {
       setError(requestError instanceof Error ? requestError.message : "页面改进请求失败。");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const sendQuestion = async () => {
+    if (!draft || !question.trim() || isAnswering) return;
+    const nextConversation: UiFeedbackConversationMessage[] = [
+      ...conversation,
+      { role: "user", content: question.trim() },
+    ];
+    setConversation(nextConversation);
+    setQuestion("");
+    setIsAnswering(true);
+    setError("");
+    try {
+      const result = await chatAboutUiFeedback(
+        {
+          page_path: draft.page_path,
+          feedback_id: draft.feedback_id,
+          selected_text: draft.selected_text,
+          conversation: nextConversation,
+        },
+        idToken,
+      );
+      setConversation([...nextConversation, result.message]);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "页面讨论失败。");
+    } finally {
+      setIsAnswering(false);
     }
   };
 
@@ -259,16 +304,51 @@ export function UiFeedbackController() {
             aria-labelledby="ui-feedback-title"
           >
             <span className="eyebrow">管理员工具</span>
-            <h2 id="ui-feedback-title">改进这个页面区域</h2>
+            <h2 id="ui-feedback-title">讨论并改进这个页面区域</h2>
             <p className="ui-feedback-context">{draft.selected_text}</p>
-            <label htmlFor="ui-feedback-suggestion">改进意见（可选）</label>
+            <section className="ui-feedback-conversation" aria-label="改进讨论">
+              {conversation.length === 0 ? (
+                <p className="ui-feedback-empty">
+                  可以先询问原因、方案或影响；形成结论后再提交改进。
+                </p>
+              ) : (
+                conversation.map((message, index) => (
+                  <div
+                    className={`ui-feedback-message ui-feedback-message-${message.role}`}
+                    key={`${message.role}-${index}`}
+                  >
+                    <strong>{message.role === "user" ? "你" : "助手"}</strong>
+                    <p>{message.content}</p>
+                  </div>
+                ))
+              )}
+              {isAnswering && <p className="ui-feedback-thinking">助手正在思考…</p>}
+            </section>
+            <label htmlFor="ui-feedback-question">继续讨论</label>
+            <div className="ui-feedback-question-row">
+              <textarea
+                id="ui-feedback-question"
+                rows={2}
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                placeholder="例如：为什么这里会返回空数据？怎样呈现更清楚？"
+                autoFocus
+              />
+              <button
+                type="button"
+                disabled={!question.trim() || isAnswering}
+                onClick={sendQuestion}
+              >
+                发送
+              </button>
+            </div>
+            <label htmlFor="ui-feedback-suggestion">最终改进意见（可选）</label>
             <textarea
               id="ui-feedback-suggestion"
               rows={4}
               value={suggestion}
               onChange={(event) => setSuggestion(event.target.value)}
-              placeholder="不填写时，Codex 会根据选中内容判断问题。"
-              autoFocus
+              placeholder="写下讨论结论；不填写时，Codex 会结合选中内容和完整对话判断。"
             />
             {error && <p className="ui-feedback-error" role="alert">{error}</p>}
             {submission && (
@@ -291,7 +371,11 @@ export function UiFeedbackController() {
                 关闭
               </button>
               {!submission && (
-                <button type="button" disabled={isSubmitting} onClick={sendFeedback}>
+                <button
+                  type="button"
+                  disabled={isSubmitting || isAnswering}
+                  onClick={sendFeedback}
+                >
                   {isSubmitting ? "正在提交…" : "提交改进任务"}
                 </button>
               )}

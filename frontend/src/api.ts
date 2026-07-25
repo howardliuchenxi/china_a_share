@@ -9,6 +9,8 @@ import type {
   StockListQuery,
   StockListResponse,
   UiFeedbackConfig,
+  UiFeedbackChatRequest,
+  UiFeedbackChatResponse,
   UiFeedbackRequest,
   UiFeedbackSubmission,
 } from "./contracts";
@@ -148,4 +150,30 @@ export async function submitUiFeedback(
     );
   }
   return payload as UiFeedbackSubmission;
+}
+
+export async function chatAboutUiFeedback(
+  request: UiFeedbackChatRequest,
+  googleIdToken: string,
+): Promise<UiFeedbackChatResponse> {
+  const response = await fetch("/api/ui-feedback/chat", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${googleIdToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+  const payload = (await response.json()) as
+    | UiFeedbackChatResponse
+    | { detail?: unknown };
+  if (!response.ok) {
+    const detail = "detail" in payload ? payload.detail : null;
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : `页面讨论返回 HTTP ${response.status}。`,
+    );
+  }
+  return payload as UiFeedbackChatResponse;
 }

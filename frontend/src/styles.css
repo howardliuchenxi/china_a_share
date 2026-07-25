@@ -80,7 +80,9 @@ select {
 }
 
 .ui-feedback-dialog {
-  width: min(560px, 100%);
+  width: min(680px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
   padding: 28px;
   border: 1px solid #aeb7ad;
   background: #f8f9f5;
@@ -110,6 +112,49 @@ select {
   padding: 12px;
   background: #e9ece5;
   color: #465149;
+}
+
+.ui-feedback-conversation {
+  display: grid;
+  gap: 10px;
+  max-height: 260px;
+  margin: 16px 0;
+  overflow: auto;
+}
+
+.ui-feedback-empty,
+.ui-feedback-thinking {
+  margin: 0;
+  color: #68736c;
+}
+
+.ui-feedback-message {
+  max-width: 88%;
+  padding: 10px 12px;
+  border: 1px solid #c7cec4;
+  background: #fff;
+}
+
+.ui-feedback-message-user {
+  justify-self: end;
+  background: #f4e8df;
+}
+
+.ui-feedback-message p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.ui-feedback-question-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.ui-feedback-question-row textarea {
+  margin-top: 7px;
 }
 
 .ui-feedback-actions {

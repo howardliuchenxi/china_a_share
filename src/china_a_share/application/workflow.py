@@ -28,6 +28,15 @@ MAX_DYNAMIC_HOLDER_QUERIES = 6_000
 HOLDER_FANOUT_LOG_INTERVAL = 50
 HOLDER_PROGRESS_UPDATE_INTERVAL = 25
 VALID_SECURITY_SUFFIXES = (".SH", ".SZ", ".BJ")
+FANOUT_OPERATIONS = {
+    "top10_floatholders",
+    "top10_holders",
+    "income",
+    "balancesheet",
+    "cashflow",
+    "fina_indicator",
+}
+UNIVERSE_OPERATIONS = {"stock_basic", "ths_member"}
 VALID_THS_INDEX_SUFFIX = ".TI"
 VALID_EXCHANGES = {"", "SSE", "SZSE", "BSE"}
 FIELD_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -798,20 +807,8 @@ class AnalysisService:
                 api_route=api_route,
                 request_id=request_id,
             )
-        elif (
-            validated_plan.result_transform
-            == "dimension_monthly_turnover_decline"
-        ):
-            results = self._execute_dimension_monthly_turnover_analysis(
-                validated_plan,
-                api_route=api_route,
-                request_id=request_id,
-            )
-        elif validated_plan.result_transform in {
-            "healthcare_retail_cohort_return",
-            "industry_retail_cohort_return",
-        }:
-            results = self._execute_industry_retail_cohort_analysis(
+        elif self._needs_fanout(validated_plan):
+            results = self._execute_with_fanout(
                 validated_plan,
                 api_route=api_route,
                 request_id=request_id,
@@ -881,54 +878,219 @@ class AnalysisService:
             decision_trace=decision_trace,
         )
 
-    def _execute_dimension_monthly_turnover_analysis(
+    @staticmethod
+    def _needs_fanout(plan: QueryPlan) -> bool:
+        """Detect plans that require dynamic per-security or per-date fan-out."""
+        has_universe = any(
+            q.operation in UNIVERSE_OPERATIONS for q in plan.queries
+        )
+        has_security_template = any(
+            q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
+            for q in plan.queries
+        )
+        has_daily_range = any(
+            q.operation in {"daily", "daily_basic"}
+            and not q.params.get("ts_code")
+            and q.params.get("start_date")
+            and q.params.get("end_date")
+            for q in plan.queries
+        )
+        return (has_universe and has_security_template) or has_daily_range
+
+    def _execute_with_fanout(
         self,
         plan: QueryPlan,
         *,
         api_route: str,
         request_id: str,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[QueryResult]:
-        """Execute bounded full-market sources and return only the compact analysis."""
-        source_results = []
-        for query in plan.queries:
-            if query.operation == "daily_basic":
-                source_results.append(
-                    self._execute_full_market_range_by_date(
-                        query,
-                        api_route=api_route,
-                        request_id=request_id,
-                    )
-                )
+        """Execute a plan that fans out template queries across a security universe."""
+        universe_queries = [
+            q for q in plan.queries if q.operation in UNIVERSE_OPERATIONS
+        ]
+        fanout_templates = [
+            q for q in plan.queries
+            if q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
+        ]
+        daily_range_queries = [
+            q for q in plan.queries
+            if q.operation in {"daily", "daily_basic"}
+            and not q.params.get("ts_code")
+            and q.params.get("start_date")
+            and q.params.get("end_date")
+        ]
+        standalone_queries = [
+            q for q in plan.queries
+            if q not in set(universe_queries + fanout_templates + daily_range_queries)
+        ]
+
+        # 1. Execute universe queries and build the security list
+        universe_rows: List[Dict[str, Any]] = []
+        for universe_query in universe_queries:
+            universe_result = self._executor.execute(
+                universe_query,
+                api_route=api_route,
+                request_id=request_id,
+            )
+            if universe_result.status != QueryStatus.SUCCESS:
+                return [universe_result]
+            if universe_query.operation == "stock_basic":
+                universe_rows.extend(universe_result.rows)
                 continue
-            source_results.append(
+            for row in universe_result.rows:
+                security_code = str(row.get("con_code") or "")
+                if not security_code.endswith(VALID_SECURITY_SUFFIXES):
+                    continue
+                universe_rows.append(
+                    {"ts_code": security_code, "name": row.get("con_name")}
+                )
+
+        deduped_universe = {
+            str(row.get("ts_code")): row
+            for row in universe_rows
+            if row.get("ts_code")
+        }
+        stock_codes = sorted(deduped_universe.keys())
+        universe_count = len(stock_codes)
+
+        results: List[QueryResult] = []
+
+        # 2. Execute standalone queries
+        for query in standalone_queries:
+            results.append(
                 self._executor.execute(
                     query,
                     api_route=api_route,
                     request_id=request_id,
                 )
             )
-        failed_results = [
-            result
-            for result in source_results
-            if result.status != QueryStatus.SUCCESS
-        ]
-        if failed_results:
-            return failed_results
-        return [self._build_dimension_monthly_turnover_result(source_results)]
 
-    def _execute_daily_basic_range_by_date(
-        self,
-        query: DataQuery,
-        *,
-        api_route: str,
-        request_id: str,
-    ) -> QueryResult:
-        """Retain the established monthly-turnover range helper."""
-        return self._execute_full_market_range_by_date(
-            query,
-            api_route=api_route,
-            request_id=request_id,
-        )
+        # 3. Handle full-market daily range queries by date fan-out
+        for query in daily_range_queries:
+            results.append(
+                self._execute_full_market_range_by_date(
+                    query,
+                    api_route=api_route,
+                    request_id=request_id,
+                )
+            )
+
+        # 4. Fan out security-specific template queries
+        for template in fanout_templates:
+            if universe_count > MAX_DYNAMIC_HOLDER_QUERIES:
+                results.append(
+                    QueryResult(
+                        query_id=template.query_id,
+                        provider=self._provider.name,
+                        operation=template.operation,
+                        status=QueryStatus.ERROR,
+                        error=ServiceError(
+                            source="system",
+                            message=(
+                                f"Security universe ({universe_count}) exceeds the "
+                                f"dynamic fan-out limit ({MAX_DYNAMIC_HOLDER_QUERIES})."
+                            ),
+                        ),
+                    )
+                )
+                continue
+
+            logger.info(
+                "fanout_started request_id=%s operation=%s universe_count=%s",
+                request_id,
+                template.operation,
+                universe_count,
+            )
+            if progress_callback:
+                progress_callback(0, universe_count)
+
+            fanout_rows: List[Dict[str, Any]] = []
+            missing_count = 0
+            for index, ts_code in enumerate(stock_codes, start=1):
+                security_query = template.model_copy(deep=True)
+                security_query.query_id = f"{template.query_id}-{ts_code}"
+                security_query.params["ts_code"] = ts_code
+                security_result = self._executor.execute(
+                    security_query,
+                    api_route=api_route,
+                    request_id=request_id,
+                )
+                if security_result.status == QueryStatus.SUCCESS:
+                    for row in security_result.rows:
+                        row["ts_code"] = ts_code
+                    fanout_rows.extend(security_result.rows)
+                else:
+                    error_message = (
+                        security_result.error.message
+                        if security_result.error
+                        else ""
+                    )
+                    tolerable = any(
+                        marker in error_message
+                        for marker in (
+                            "No float-holder snapshots",
+                            "CR10 float requires 10 unique holders",
+                            "暂无数据",
+                        )
+                    )
+                    if tolerable:
+                        missing_count += 1
+                    else:
+                        results.append(security_result)
+
+                if index % HOLDER_FANOUT_LOG_INTERVAL == 0:
+                    logger.info(
+                        "fanout_progress request_id=%s operation=%s "
+                        "completed=%s total=%s",
+                        request_id,
+                        template.operation,
+                        index,
+                        universe_count,
+                    )
+                if progress_callback and (
+                    index % HOLDER_PROGRESS_UPDATE_INTERVAL == 0
+                    or index == universe_count
+                ):
+                    progress_callback(index, universe_count)
+
+            logger.info(
+                "fanout_completed request_id=%s operation=%s "
+                "rows=%s missing=%s total=%s",
+                request_id,
+                template.operation,
+                len(fanout_rows),
+                missing_count,
+                universe_count,
+            )
+
+            combined_columns = list(template.fields)
+            if fanout_rows:
+                combined_columns = list(fanout_rows[0].keys())
+            results.append(
+                QueryResult(
+                    query_id=template.query_id,
+                    provider=self._provider.name,
+                    operation=template.operation,
+                    status=QueryStatus.SUCCESS,
+                    columns=combined_columns,
+                    rows=fanout_rows,
+                    row_count=len(fanout_rows),
+                    summary={
+                        "universe_count": universe_count,
+                        "successful_count": len(
+                            {
+                                row.get("ts_code")
+                                for row in fanout_rows
+                                if row.get("ts_code")
+                            }
+                        ),
+                        "missing_count": missing_count,
+                    },
+                )
+            )
+
+        return results
 
     def _execute_full_market_range_by_date(
         self,
@@ -967,408 +1129,6 @@ class AnalysisService:
             row_count=len(rows),
         )
 
-    def _execute_industry_retail_cohort_analysis(
-        self,
-        plan: QueryPlan,
-        *,
-        api_route: str,
-        request_id: str,
-        progress_callback: Optional[Callable[[int, int], None]] = None,
-    ) -> List[QueryResult]:
-        """Fan out cached holder reads only after filtering the industry universe."""
-        universe_queries = [
-            query
-            for query in plan.queries
-            if query.operation in {"stock_basic", "ths_member"}
-        ]
-        holder_template = next(
-            query for query in plan.queries if query.operation == "top10_floatholders"
-        )
-        price_query = next(
-            query for query in plan.queries if query.operation == "daily"
-        )
-        universe_rows: List[Dict[str, Any]] = []
-        for universe_query in universe_queries:
-            universe_result = self._executor.execute(
-                universe_query,
-                api_route=api_route,
-                request_id=request_id,
-            )
-            if universe_result.status != QueryStatus.SUCCESS:
-                return [universe_result]
-            if universe_query.operation == "stock_basic":
-                universe_rows.extend(universe_result.rows)
-                continue
-            for row in universe_result.rows:
-                security_code = str(row.get("con_code") or "")
-                if not security_code.endswith(VALID_SECURITY_SUFFIXES):
-                    continue
-                universe_rows.append(
-                    {
-                        "ts_code": security_code,
-                        "name": row.get("con_name"),
-                        "industry": row.get("name") or universe_query.purpose,
-                    }
-                )
-        deduplicated_universe = {
-            str(row.get("ts_code")): row
-            for row in universe_rows
-            if row.get("ts_code")
-        }
-        stock_result = QueryResult(
-            query_id="industry-universe",
-            provider=self._provider.name,
-            operation="security_universe",
-            status=QueryStatus.SUCCESS,
-            columns=["ts_code", "name", "industry"],
-            rows=list(deduplicated_universe.values()),
-            row_count=len(deduplicated_universe),
-        )
-
-        universe_count = len(stock_result.rows)
-        if universe_count > MAX_DYNAMIC_HOLDER_QUERIES:
-            return [
-                QueryResult(
-                    query_id="industry-retail-cohort-return",
-                    provider=self._provider.name,
-                    operation="industry_retail_cohort_return",
-                    status=QueryStatus.ERROR,
-                    error=ServiceError(
-                        source="system",
-                        message=(
-                            "The filtered security universe exceeds the safe dynamic "
-                            f"holder-query limit of {MAX_DYNAMIC_HOLDER_QUERIES}."
-                        ),
-                    ),
-                )
-            ]
-        logger.info(
-            "holder_fanout_started request_id=%s universe_count=%s",
-            request_id,
-            universe_count,
-        )
-        if progress_callback:
-            progress_callback(0, universe_count)
-        holder_results: List[QueryResult] = []
-        missing_holder_snapshots = 0
-        for index, row in enumerate(stock_result.rows, start=1):
-            ts_code = str(row.get("ts_code") or "")
-            if not ts_code:
-                continue
-            holder_query = holder_template.model_copy(deep=True)
-            holder_query.query_id = f"retail-proxy-{ts_code}"
-            holder_query.params["ts_code"] = ts_code
-            holder_result = self._executor.execute(
-                holder_query,
-                api_route=api_route,
-                request_id=request_id,
-            )
-            if holder_result.status == QueryStatus.SUCCESS:
-                holder_results.append(holder_result)
-            else:
-                error_message = (
-                    holder_result.error.message if holder_result.error else ""
-                )
-                if (
-                    "No float-holder snapshots are available" in error_message
-                    or "CR10 float requires 10 unique holders" in error_message
-                ):
-                    missing_holder_snapshots += 1
-                else:
-                    return [holder_result]
-            if index % HOLDER_FANOUT_LOG_INTERVAL == 0:
-                logger.info(
-                    "holder_fanout_progress request_id=%s completed=%s total=%s",
-                    request_id,
-                    index,
-                    universe_count,
-                )
-            if progress_callback and (
-                index % HOLDER_PROGRESS_UPDATE_INTERVAL == 0
-                or index == universe_count
-            ):
-                progress_callback(index, universe_count)
-
-        logger.info(
-            "holder_fanout_completed request_id=%s successful=%s missing=%s total=%s",
-            request_id,
-            len(holder_results),
-            missing_holder_snapshots,
-            universe_count,
-        )
-        price_result = self._execute_full_market_range_by_date(
-            price_query,
-            api_route=api_route,
-            request_id=request_id,
-        )
-        if price_result.status != QueryStatus.SUCCESS:
-            return [price_result]
-        try:
-            return [
-                self._build_industry_retail_cohort_result(
-                    stock_result,
-                    holder_results,
-                    price_result,
-                    missing_holder_snapshots=missing_holder_snapshots,
-                )
-            ]
-        except ValueError as exc:
-            logger.warning(
-                "retail_cohort_transform_failed request_id=%s error=%s",
-                request_id,
-                str(exc),
-            )
-            return [
-                QueryResult(
-                    query_id="industry-retail-cohort-return",
-                    provider=self._provider.name,
-                    operation="industry_retail_cohort_return",
-                    status=QueryStatus.ERROR,
-                    error=ServiceError(source="system", message=str(exc)),
-                )
-            ]
-
-    def _build_industry_retail_cohort_result(
-        self,
-        stock_result: QueryResult,
-        holder_results: List[QueryResult],
-        price_result: QueryResult,
-        *,
-        missing_holder_snapshots: int = 0,
-    ) -> QueryResult:
-        """Compare positive past-month returns across equal retail-proxy cohorts."""
-        universe = pd.DataFrame(stock_result.rows)
-        required_stock_fields = {"ts_code", "name", "industry"}
-        if not required_stock_fields.issubset(universe.columns):
-            raise ValueError("The industry universe is missing required fields.")
-        universe = universe[
-            ["ts_code", "name", "industry"]
-        ].drop_duplicates(subset=["ts_code"])
-
-        proxy_rows = [
-            row
-            for result in holder_results
-            for row in result.rows
-            if row.get("non_top10_float_ratio") is not None
-            and row.get("calculation_status") == "complete"
-        ]
-        proxies = pd.DataFrame(proxy_rows)
-        if proxies.empty:
-            raise ValueError("No complete retail-proxy snapshots are available.")
-        proxies["non_top10_float_ratio"] = pd.to_numeric(
-            proxies["non_top10_float_ratio"],
-            errors="coerce",
-        )
-        proxies = (
-            proxies.dropna(subset=["non_top10_float_ratio"])
-            .sort_values(["end_date", "ann_date"])
-            .drop_duplicates(subset=["ts_code"], keep="last")
-        )
-
-        prices = pd.DataFrame(price_result.rows)
-        required_price_fields = {"ts_code", "trade_date", "close"}
-        if not required_price_fields.issubset(prices.columns):
-            raise ValueError("Past-month prices are missing required fields.")
-        prices = prices.loc[
-            prices["ts_code"].astype(str).isin(set(universe["ts_code"].astype(str)))
-        ].copy()
-        prices["close"] = pd.to_numeric(prices["close"], errors="coerce")
-        prices = prices.dropna(subset=["close"]).sort_values("trade_date")
-        return_rows = []
-        for ts_code, security_prices in prices.groupby("ts_code"):
-            first = security_prices.iloc[0]
-            last = security_prices.iloc[-1]
-            first_close = float(first["close"])
-            if first_close <= 0:
-                continue
-            return_rows.append(
-                {
-                    "ts_code": ts_code,
-                    "start_trade_date": str(first["trade_date"]),
-                    "end_trade_date": str(last["trade_date"]),
-                    "period_return_pct": round(
-                        (float(last["close"]) / first_close - 1) * 100,
-                        4,
-                    ),
-                }
-            )
-        returns = pd.DataFrame(return_rows)
-        if returns.empty:
-            raise ValueError("No valid past-month returns are available.")
-
-        valid = (
-            universe.merge(
-                proxies[["ts_code", "end_date", "non_top10_float_ratio"]],
-                on="ts_code",
-            )
-            .merge(returns, on="ts_code")
-            .sort_values(["non_top10_float_ratio", "ts_code"])
-            .reset_index(drop=True)
-        )
-        if len(valid) < 2:
-            raise ValueError("At least two complete securities are required for cohorts.")
-        split_index = len(valid) // 2
-        valid["retail_proxy_cohort"] = "high"
-        valid.loc[: split_index - 1, "retail_proxy_cohort"] = "low"
-
-        rows: List[Dict[str, Any]] = []
-        for cohort_name in ("high", "low"):
-            cohort = valid.loc[valid["retail_proxy_cohort"] == cohort_name]
-            rising_count = int((cohort["period_return_pct"] > 0).sum())
-            rows.append(
-                {
-                    "retail_proxy_cohort": cohort_name,
-                    "company_count": len(cohort),
-                    "rising_company_count": rising_count,
-                    "rising_company_pct": round(rising_count / len(cohort) * 100, 2),
-                    "average_period_return_pct": round(
-                        float(cohort["period_return_pct"].mean()),
-                        4,
-                    ),
-                    "median_non_top10_float_ratio": round(
-                        float(cohort["non_top10_float_ratio"].median()),
-                        4,
-                    ),
-                    "holder_report_period": str(cohort["end_date"].mode().iloc[0]),
-                    "price_start_date": str(cohort["start_trade_date"].min()),
-                    "price_end_date": str(cohort["end_trade_date"].max()),
-                }
-            )
-
-        high_rising = rows[0]["rising_company_count"]
-        low_rising = rows[1]["rising_company_count"]
-        return QueryResult(
-            query_id="industry-retail-cohort-return",
-            provider=self._provider.name,
-            operation="industry_retail_cohort_return",
-            status=QueryStatus.SUCCESS,
-            columns=list(rows[0]),
-            rows=rows,
-            row_count=len(rows),
-            summary={
-                "industry_universe_count": len(universe),
-                "valid_cohort_security_count": len(valid),
-                "missing_holder_snapshot_count": missing_holder_snapshots,
-                "missing_valid_proxy_count": len(universe) - len(proxies),
-                "missing_complete_price_count": len(
-                    universe.merge(
-                        proxies[["ts_code"]],
-                        on="ts_code",
-                    )
-                )
-                - len(valid),
-                "high_proxy_rising_company_count": high_rising,
-                "low_proxy_rising_company_count": low_rising,
-                "high_minus_low_rising_count": high_rising - low_rising,
-            },
-        )
-
-    def _build_dimension_monthly_turnover_result(
-        self,
-        source_results: List[QueryResult],
-    ) -> QueryResult:
-        """Compare one filtered security universe's mean turnover across two months."""
-        stock_result = next(
-            result for result in source_results if result.operation == "stock_basic"
-        )
-        turnover_results = [
-            result for result in source_results if result.operation == "daily_basic"
-        ]
-        if len(turnover_results) != 2:
-            raise ValueError("Monthly turnover analysis requires exactly two periods.")
-
-        stock_frame = pd.DataFrame(stock_result.rows)
-        required_stock_fields = {"ts_code", "name", "industry"}
-        if not required_stock_fields.issubset(stock_frame.columns):
-            raise ValueError("The security master is missing healthcare universe fields.")
-        universe = stock_frame[
-            ["ts_code", "name", "industry"]
-        ].drop_duplicates(subset=["ts_code"])
-        universe_codes = set(universe["ts_code"].astype(str))
-
-        monthly_frames = []
-        for result in turnover_results:
-            frame = pd.DataFrame(result.rows)
-            required_fields = {"ts_code", "trade_date", "turnover_rate"}
-            if not required_fields.issubset(frame.columns):
-                raise ValueError(
-                    "Monthly turnover rows are missing required source fields."
-                )
-            frame = frame.loc[
-                frame["ts_code"].astype(str).isin(universe_codes)
-            ].copy()
-            frame["turnover_rate"] = pd.to_numeric(
-                frame["turnover_rate"],
-                errors="coerce",
-            )
-            frame = frame.dropna(subset=["turnover_rate"])
-            monthly_frames.append(
-                frame.groupby("ts_code", as_index=False)
-                .agg(
-                    average_turnover_rate=("turnover_rate", "mean"),
-                    trading_day_count=("trade_date", "nunique"),
-                )
-            )
-
-        first, second = monthly_frames
-        first_period = min(
-            str(row["trade_date"])
-            for row in turnover_results[0].rows
-        )[:6]
-        second_period = min(
-            str(row["trade_date"])
-            for row in turnover_results[1].rows
-        )[:6]
-        first = first.rename(
-            columns={
-                "average_turnover_rate": "first_average_turnover_rate",
-                "trading_day_count": "first_trading_day_count",
-            }
-        )
-        second = second.rename(
-            columns={
-                "average_turnover_rate": "second_average_turnover_rate",
-                "trading_day_count": "second_trading_day_count",
-            }
-        )
-        compared = universe.merge(first, on="ts_code").merge(second, on="ts_code")
-        compared = compared.loc[
-            compared["first_average_turnover_rate"] > 0
-        ].copy()
-        compared["turnover_change_pct"] = (
-            compared["second_average_turnover_rate"]
-            / compared["first_average_turnover_rate"]
-            - 1
-        ) * 100
-        compared = compared.loc[compared["turnover_change_pct"] <= -30].copy()
-        numeric_columns = [
-            "first_average_turnover_rate",
-            "second_average_turnover_rate",
-            "turnover_change_pct",
-        ]
-        compared[numeric_columns] = compared[numeric_columns].round(4)
-        compared = compared.sort_values(
-            ["turnover_change_pct", "ts_code"],
-            ascending=[True, True],
-        ).reset_index(drop=True)
-        compared.insert(3, "first_period", first_period)
-        compared.insert(4, "second_period", second_period)
-        return QueryResult(
-            query_id="industry-monthly-turnover-decline",
-            provider=self._provider.name,
-            operation="dimension_monthly_turnover_decline",
-            status=QueryStatus.SUCCESS,
-            columns=list(compared.columns),
-            rows=compared.to_dict(orient="records"),
-            row_count=len(compared),
-            summary={
-                "证券集合股票数": len(universe),
-                "两期均有有效数据": len(
-                    universe.merge(first, on="ts_code").merge(second, on="ts_code")
-                ),
-                "平均换手率下降30%以上": len(compared),
-            },
-        )
 
     def _execute_two_limit_up_sources(
         self,

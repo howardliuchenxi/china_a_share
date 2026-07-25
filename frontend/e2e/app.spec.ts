@@ -153,6 +153,22 @@ test("administrator feedback dialog stays open while entering a suggestion", asy
       body: "",
     });
   });
+  await page.route("**/api/ui-feedback/chat", async (route) => {
+    const request = route.request().postDataJSON() as {
+      conversation: Array<{ role: string; content: string }>;
+    };
+    const question = request.conversation.at(-1)?.content;
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        message: {
+          role: "assistant",
+          content: `建议先解释原因，再提供下一步。收到：${question}`,
+        },
+      }),
+    });
+  });
   await page.addInitScript(() => {
     window.google = {
       accounts: {
@@ -168,10 +184,14 @@ test("administrator feedback dialog stays open while entering a suggestion", asy
   await expect(page.locator(".ui-feedback-area-button")).toBeVisible();
   await page.locator(".hero").click({ button: "right" });
 
-  const dialog = page.getByRole("dialog", { name: "改进这个页面区域" });
+  const dialog = page.getByRole("dialog", { name: "讨论并改进这个页面区域" });
   const suggestion = page.locator("#ui-feedback-suggestion");
   await expect(dialog).toBeVisible();
-  await expect(suggestion).toBeFocused();
+  await expect(page.locator("#ui-feedback-question")).toBeFocused();
+
+  await page.locator("#ui-feedback-question").fill("这个空状态应该怎样解释？");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(dialog).toContainText("建议先解释原因，再提供下一步");
 
   await suggestion.fill("标题可以再简洁一些");
 
