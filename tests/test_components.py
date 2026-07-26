@@ -20,6 +20,7 @@ from china_a_share.core.contracts import (
     DataQuery,
     QueryPlan,
     QueryResult,
+    RequirementCoverage,
 )
 from china_a_share.core.errors import PlannerError
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
@@ -164,6 +165,47 @@ def test_validator_downgrades_undeclared_derived_calculation():
     assert result.queries == []
     assert result.requirements[0].status == "unsupported"
     assert "no deterministic local transform" in result.limitations[0]
+
+
+def test_validator_preserves_covered_requirements_when_ranking_is_unsupported():
+    plan = make_daily_plan()
+    plan.queries[0].aggregations = []
+    plan.requirements = [
+        RequirementCoverage.model_validate(
+            {
+                "requirement": "Retrieve the complete A-share security universe.",
+                "status": "covered",
+                "implementation": "Use stock_basic.",
+                "evidence": "stock_basic returns A-share security codes.",
+            }
+        ),
+        RequirementCoverage.model_validate(
+            {
+                "requirement": "Calculate the approved retail holding proxy.",
+                "status": "covered",
+                "implementation": "Use top10_floatholders with cr10_float_trend.",
+                "evidence": "The transform returns non_top10_float_ratio.",
+            }
+        ),
+        RequirementCoverage.model_validate(
+            {
+                "requirement": "Rank securities and return the top ten.",
+                "status": "covered",
+                "implementation": "Apply local aggregation and ranking.",
+                "evidence": "Sort the calculated ratios locally and take the top ten.",
+            }
+        ),
+    ]
+
+    result = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    assert result.feasibility == "unsupported"
+    assert [requirement.status for requirement in result.requirements] == [
+        "covered",
+        "covered",
+        "unsupported",
+    ]
+    assert result.queries == []
 
 
 def test_planner_parses_deepseek_json_plan():

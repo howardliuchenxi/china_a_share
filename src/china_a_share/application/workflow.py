@@ -96,19 +96,25 @@ class ASharePlanValidator:
             raise PlanValidationError(
                 f"A query plan may contain at most {MAX_QUERIES_PER_ANALYSIS} calls."
             )
-        claims_derived_calculation = any(
-            marker in " ".join(
-                filter(
-                    None,
-                    (
-                        requirement.implementation,
-                        requirement.evidence,
-                    ),
-                )
-            ).lower()
+        derived_requirements = [
+            requirement
             for requirement in plan.requirements
-            for marker in DERIVED_CALCULATION_MARKERS
-        )
+            if any(
+                marker
+                in " ".join(
+                    filter(
+                        None,
+                        (
+                            requirement.requirement,
+                            requirement.implementation,
+                            requirement.evidence,
+                        ),
+                    )
+                ).lower()
+                for marker in DERIVED_CALCULATION_MARKERS
+            )
+        ]
+        claims_derived_calculation = bool(derived_requirements)
         has_declared_calculation = bool(plan.result_transform) or any(
             query.transform or query.aggregations for query in plan.queries
         )
@@ -128,7 +134,9 @@ class ASharePlanValidator:
                 "transform or aggregation."
             ]
             plan.queries = []
-            for requirement in plan.requirements:
+            # Preserve independently verified capabilities. Only requirements
+            # that actually claim the missing derived calculation are unsupported.
+            for requirement in derived_requirements:
                 requirement.status = "unsupported"
             return plan
         query_ids = set()

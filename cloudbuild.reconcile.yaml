@@ -23,6 +23,74 @@ steps:
           > /workspace/deployment-action
         printf 'Deployment reconciliation action: %s\n' \
           "$$(cat /workspace/deployment-action)"
+        # Save deployed SHA for the diff step
+        printf '%s' "$${deployed_sha}" > /workspace/deployed-sha
+
+  - id: fetch-diff
+    name: python:3.12-slim
+    entrypoint: python
+    env:
+      - GITHUB_REPOSITORY=${_GITHUB_REPOSITORY}
+      - TARGET_SHA=$COMMIT_SHA
+    args:
+      - -c
+      - |
+        import json
+        import os
+        import urllib.request
+
+        with open("/workspace/deployment-action", encoding="utf-8") as handle:
+            if handle.read().strip() != "deploy":
+                raise SystemExit(0)
+
+        with open("/workspace/deployed-sha", encoding="utf-8") as handle:
+            deployed_sha = handle.read().strip()
+        if not deployed_sha:
+            print("No deployed SHA found, skipping diff.")
+            raise SystemExit(0)
+
+        repo = os.environ["GITHUB_REPOSITORY"]
+        target = os.environ["TARGET_SHA"]
+        url = f"https://api.github.com/repos/{repo}/compare/{deployed_sha}...{target}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "china-a-share-deploy-notifier",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.load(resp)
+
+        commits = data.get("commits", [])
+        files = data.get("files", [])
+        compare_url = data.get("html_url", "")
+
+        # Save commit messages (first line only, max 10)
+        commit_lines = []
+        for c in commits[:10]:
+            msg = c["commit"]["message"].split("\n")[0][:80]
+            author = c["commit"]["author"]["name"]
+            commit_lines.append(f"  • {msg} ({author})")
+        if len(commits) > 10:
+            commit_lines.append(f"  ... and {len(commits) - 10} more commits")
+
+        # Save changed files (max 15)
+        file_lines = []
+        for f in files[:15]:
+            file_lines.append(f"  {'+' if f['status'] == 'added' else '~' if f['status'] == 'modified' else '-'} {f['filename']}")
+        if len(files) > 15:
+            file_lines.append(f"  ... and {len(files) - 15} more files")
+
+        with open("/workspace/diff-commits", "w") as h:
+            h.write("\n".join(commit_lines))
+        with open("/workspace/diff-files", "w") as h:
+            h.write("\n".join(file_lines))
+        with open("/workspace/diff-url", "w") as h:
+            h.write(compare_url)
+        with open("/workspace/diff-count", "w") as h:
+            h.write(f"{len(commits)} commits · {len(files)} files")
+        print(f"Diff: {len(commits)} commits, {len(files)} files changed.")
 
   - id: notify-start
     name: python:3.12-slim
@@ -32,7 +100,6 @@ steps:
     env:
       - SERVICE_NAME=${_SERVICE}
       - SERVICE_REGION=${_REGION}
-      - DEPLOYED_COMMIT=$COMMIT_SHA
       - SOURCE_COMMIT_SHA=${COMMIT_SHA}
     args:
       - -c
@@ -45,14 +112,38 @@ steps:
             if handle.read().strip() != "deploy":
                 raise SystemExit(0)
 
-        message = "\n".join(
-            (
-                "🚀 A-Share Laboratory deployment started",
-                f"Service: {os.environ['SERVICE_NAME']}",
-                f"Region: {os.environ['SERVICE_REGION']}",
-                f"Commit: {os.environ['SOURCE_COMMIT_SHA'][:12]}",
-            )
-        )
+        diff_count = ""
+        diff_commits = ""
+        diff_files = ""
+        diff_url = ""
+        try:
+            with open("/workspace/diff-count", encoding="utf-8") as h:
+                diff_count = h.read().strip()
+            with open("/workspace/diff-commits", encoding="utf-8") as h:
+                diff_commits = h.read().strip()
+            with open("/workspace/diff-files", encoding="utf-8") as h:
+                diff_files = h.read().strip()
+            with open("/workspace/diff-url", encoding="utf-8") as h:
+                diff_url = h.read().strip()
+        except FileNotFoundError:
+            pass
+
+        sha = os.environ["SOURCE_COMMIT_SHA"][:12]
+        parts = [
+            "🚀 A-Share Laboratory 部署开始",
+            f"Service: {os.environ['SERVICE_NAME']} · {os.environ['SERVICE_REGION']}",
+            f"Commit: {sha}",
+        ]
+        if diff_count:
+            parts.append(f"变更: {diff_count}")
+        if diff_commits:
+            parts.append(f"Commits:\n{diff_commits}")
+        if diff_files:
+            parts.append(f"Files:\n{diff_files}")
+        if diff_url:
+            parts.append(f"详情: {diff_url}")
+
+        message = "\n".join(parts)
         request = urllib.request.Request(
             os.environ["FEISHU_WEBHOOK"],
             data=json.dumps(
@@ -212,15 +303,39 @@ steps:
             if handle.read().strip() != "deploy":
                 raise SystemExit(0)
 
-        message = "\n".join(
-            (
-                "✅ A-Share Laboratory deployment succeeded",
-                f"Service: {os.environ['SERVICE_NAME']}",
-                f"Region: {os.environ['SERVICE_REGION']}",
-                f"Commit: {os.environ['DEPLOYED_COMMIT'][:12]}",
-                f"URL: {os.environ['SERVICE_URL']}",
-            )
-        )
+        diff_count = ""
+        diff_commits = ""
+        diff_files = ""
+        diff_url = ""
+        try:
+            with open("/workspace/diff-count", encoding="utf-8") as h:
+                diff_count = h.read().strip()
+            with open("/workspace/diff-commits", encoding="utf-8") as h:
+                diff_commits = h.read().strip()
+            with open("/workspace/diff-files", encoding="utf-8") as h:
+                diff_files = h.read().strip()
+            with open("/workspace/diff-url", encoding="utf-8") as h:
+                diff_url = h.read().strip()
+        except FileNotFoundError:
+            pass
+
+        sha = os.environ["DEPLOYED_COMMIT"][:12]
+        parts = [
+            "✅ A-Share Laboratory 部署成功",
+            f"Service: {os.environ['SERVICE_NAME']} · {os.environ['SERVICE_REGION']}",
+            f"Commit: {sha}",
+            f"URL: {os.environ['SERVICE_URL']}",
+        ]
+        if diff_count:
+            parts.append(f"变更: {diff_count}")
+        if diff_commits:
+            parts.append(f"Commits:\n{diff_commits}")
+        if diff_files:
+            parts.append(f"Files:\n{diff_files}")
+        if diff_url:
+            parts.append(f"详情: {diff_url}")
+
+        message = "\n".join(parts)
         request = urllib.request.Request(
             os.environ["FEISHU_WEBHOOK"],
             data=json.dumps(
