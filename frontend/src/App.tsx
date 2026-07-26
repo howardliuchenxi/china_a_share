@@ -542,7 +542,7 @@ function ReferenceDataPage() {
   const [exchangeFilter, setExchangeFilter] = useState<StockExchange>("SSE");
   const [industryFilter, setIndustryFilter] = useState("");
   const [stockPage, setStockPage] = useState(1);
-  const [calendarExchange, setCalendarExchange] = useState<StockExchange | "">("");
+  const [calendarExchange, setCalendarExchange] = useState<StockExchange>("SSE");
   const [stockResponse, setStockResponse] = useState<StockListResponse | null>(null);
   const [availableIndustries, setAvailableIndustries] = useState<string[]>([]);
   const [stockServiceError, setStockServiceError] = useState<ServiceError | null>(null);
@@ -712,9 +712,8 @@ function ReferenceDataPage() {
                 <span>市场</span>
                 <select
                   value={calendarExchange}
-                  onChange={(event) => setCalendarExchange(event.target.value as StockExchange | "")}
+                  onChange={(event) => setCalendarExchange(event.target.value as StockExchange)}
                 >
-                  <option value="">上海 · 深圳 · 北京</option>
                   <option value="SSE">上海</option>
                   <option value="SZSE">深圳</option>
                   <option value="BSE">北京</option>
