@@ -112,7 +112,16 @@ class ASharePlanValidator:
         has_declared_calculation = bool(plan.result_transform) or any(
             query.transform or query.aggregations for query in plan.queries
         )
-        if claims_derived_calculation and not has_declared_calculation:
+        # Fan-out plans retrieve raw data for client-side processing; they do not
+        # need a declared transform for derived calculations like sorting or ranking.
+        needs_dynamic_fanout = (
+            any(q.operation in UNIVERSE_OPERATIONS for q in plan.queries)
+            and any(
+                q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
+                for q in plan.queries
+            )
+        )
+        if claims_derived_calculation and not has_declared_calculation and not needs_dynamic_fanout:
             plan.feasibility = "unsupported"
             plan.limitations = [
                 "The requested derived calculation has no deterministic local "
