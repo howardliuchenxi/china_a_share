@@ -22,6 +22,11 @@ COPY src/ ./src/
 RUN python -m pip install --no-cache-dir .
 
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+COPY src/ ./repository/src/
+COPY frontend/src/ ./repository/frontend/src/
+COPY tests/ ./repository/tests/
+COPY .github/workflows/ ./repository/.github/workflows/
+COPY Dockerfile pyproject.toml cloudbuild.reconcile.yaml ./repository/
 
 RUN adduser --disabled-password --gecos "" --uid 10001 appuser \
     && chown -R appuser:appuser /app

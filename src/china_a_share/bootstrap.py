@@ -109,7 +109,10 @@ def create_ui_feedback_service(settings: Settings) -> UiFeedbackService:
             settings.github_fix_repo,
             settings.github_fix_token,
         ),
-        DeepSeekUiFeedbackAssistant(settings.deepseek_api_key),
+        DeepSeekUiFeedbackAssistant(
+            settings.deepseek_api_key,
+            git_sha=settings.app_git_sha,
+        ),
         google_client_id=settings.google_oauth_client_id,
         git_branch=settings.app_git_branch,
         git_sha=settings.app_git_sha,

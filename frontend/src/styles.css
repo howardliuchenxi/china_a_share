@@ -62,9 +62,14 @@ select {
   cursor: pointer;
 }
 
-.ui-feedback-floating-button {
+.ui-feedback-floating-actions {
   position: fixed;
   z-index: 55;
+  display: flex;
+  gap: 8px;
+}
+
+.ui-feedback-floating-button {
   padding: 7px 14px;
   box-shadow: 0 5px 16px rgba(24, 36, 31, 0.24);
 }

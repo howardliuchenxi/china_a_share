@@ -66,6 +66,15 @@ class FakeSession:
         return FakeResponse()
 
 
+class FakeSourceSearch:
+    def __init__(self):
+        self.requests = []
+
+    def search(self, request):
+        self.requests.append(request)
+        return "SOURCE src/example.py\nLINES 10-11\n10: def explain():\n11:     return True"
+
+
 def feedback_request():
     return UiFeedbackRequest(
         page_path="/analysis",
@@ -149,7 +158,13 @@ def test_ui_feedback_chat_authenticates_and_returns_assistant_message():
 
 def test_deepseek_ui_feedback_assistant_sends_bounded_ui_context():
     session = FakeSession()
-    assistant = DeepSeekUiFeedbackAssistant("secret-key", session)
+    source_search = FakeSourceSearch()
+    assistant = DeepSeekUiFeedbackAssistant(
+        "secret-key",
+        session,
+        source_search,
+        git_sha="a" * 40,
+    )
     request = UiFeedbackChatRequest(
         page_path="/analysis",
         feedback_id="results-panel",
@@ -165,7 +180,10 @@ def test_deepseek_ui_feedback_assistant_sends_bounded_ui_context():
     sent = session.calls[0][1]
     assert sent["headers"]["Authorization"] == "Bearer secret-key"
     assert '"component_id": "results-panel"' in sent["json"]["messages"][0]["content"]
+    assert "SOURCE src/example.py" in sent["json"]["messages"][0]["content"]
+    assert f"DEPLOYED_GIT_SHA: {'a' * 40}" in sent["json"]["messages"][0]["content"]
     assert sent["json"]["messages"][-1] == {
         "role": "user",
         "content": "What should the empty state say?",
     }
+    assert source_search.requests == [request]

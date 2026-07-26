@@ -78,6 +78,7 @@ export function UiFeedbackController() {
   const [draft, setDraft] = useState<UiFeedbackRequest | null>(null);
   const [buttonPosition, setButtonPosition] = useState({ left: 0, top: 0 });
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [dialogFocus, setDialogFocus] = useState<"question" | "suggestion">("question");
   const [suggestion, setSuggestion] = useState("");
   const [conversation, setConversation] = useState<UiFeedbackConversationMessage[]>([]);
   const [question, setQuestion] = useState("");
@@ -174,6 +175,7 @@ export function UiFeedbackController() {
       setQuestion("");
       setSubmission(null);
       setError("");
+      setDialogFocus("question");
       setIsDialogOpen(true);
     };
     document.addEventListener("contextmenu", openFeedbackFromContextMenu);
@@ -205,12 +207,13 @@ export function UiFeedbackController() {
 
   if (!config?.enabled) return null;
 
-  const openDialog = () => {
+  const openDialog = (focus: "question" | "suggestion") => {
     setSuggestion("");
     setConversation([]);
     setQuestion("");
     setSubmission(null);
     setError("");
+    setDialogFocus(focus);
     setIsDialogOpen(true);
   };
 
@@ -286,14 +289,22 @@ export function UiFeedbackController() {
         )}
       </aside>
       {idToken && draft && !isDialogOpen && (
-        <button
-          type="button"
-          className="ui-feedback-floating-button"
-          style={buttonPosition}
-          onClick={openDialog}
-        >
-          改进
-        </button>
+        <div className="ui-feedback-floating-actions" style={buttonPosition}>
+          <button
+            type="button"
+            className="ui-feedback-floating-button"
+            onClick={() => openDialog("question")}
+          >
+            问答
+          </button>
+          <button
+            type="button"
+            className="ui-feedback-floating-button"
+            onClick={() => openDialog("suggestion")}
+          >
+            改进
+          </button>
+        </div>
       )}
       {isDialogOpen && draft && (
         <div className="ui-feedback-backdrop" role="presentation">
@@ -332,7 +343,7 @@ export function UiFeedbackController() {
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
                 placeholder="例如：为什么这里会返回空数据？怎样呈现更清楚？"
-                autoFocus
+                autoFocus={dialogFocus === "question"}
               />
               <button
                 type="button"
@@ -349,6 +360,7 @@ export function UiFeedbackController() {
               value={suggestion}
               onChange={(event) => setSuggestion(event.target.value)}
               placeholder="写下讨论结论；不填写时，Codex 会结合选中内容和完整对话判断。"
+              autoFocus={dialogFocus === "suggestion"}
             />
             {error && <p className="ui-feedback-error" role="alert">{error}</p>}
             {submission && (

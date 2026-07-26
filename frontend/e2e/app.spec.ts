@@ -200,6 +200,51 @@ test("administrator feedback dialog stays open while entering a suggestion", asy
   await expect(suggestion).toHaveValue("标题可以再简洁一些");
 });
 
+test("selected feedback context exposes separate discussion and improvement actions", async ({
+  page,
+}) => {
+  await mockApiRoutes(page, successWithMultiRowFixture);
+  await page.route("**/api/ui-feedback/config", (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        enabled: true,
+        google_client_id: "test-client-id",
+        git_branch: "main",
+        git_sha: "test-sha",
+      }),
+    });
+  });
+  await page.route("https://accounts.google.com/gsi/client", (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: "",
+    });
+  });
+  await page.addInitScript(() => {
+    window.google = {
+      accounts: {
+        id: {
+          initialize: ({ callback }) => callback({ credential: "test-id-token" }),
+          renderButton: () => undefined,
+        },
+      },
+    };
+  });
+
+  await page.goto("/analysis");
+  await page.locator(".ui-feedback-area-button").click();
+  await page.locator(".hero").click();
+
+  await expect(page.getByRole("button", { name: "问答", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "改进", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "改进", exact: true }).click();
+  await expect(page.locator("#ui-feedback-suggestion")).toBeFocused();
+});
+
 test("unsupported analysis displays its limitation instead of a blank result", async ({
   page,
 }) => {
