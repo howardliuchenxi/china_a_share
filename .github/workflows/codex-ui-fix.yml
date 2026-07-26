@@ -295,7 +295,7 @@ jobs:
                 echo "  Auto-resolving: $f"
                 git checkout --theirs "$f" && git add "$f"
               done < <(git diff --name-only --diff-filter=U)
-              git rebase --continue
+              GIT_EDITOR=true git rebase --continue
             done
           fi
 
