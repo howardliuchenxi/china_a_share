@@ -44,8 +44,6 @@ const SUPPORTED_ANALYSIS_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 const RESULT_PAGE_SIZE = 100;
-const MAX_PROMPT_HISTORY_ITEMS = 20;
-const PROMPT_HISTORY_STORAGE_KEY = "china-a-share.prompt-history";
 const STOCK_PAGE_SIZE = 20;
 const exchangeLabels: Record<StockExchange, string> = {
   SSE: "上海",
@@ -760,7 +758,6 @@ function ReferenceDataPage() {
 export default function App() {
   const [activePage, setActivePage] = useState<PageView>("analysis");
   const [prompt, setPrompt] = useState("");
-  const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [response, setResponse] = useState<AnalysisResponse | null>(null);
   const [localError, setLocalError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -769,23 +766,6 @@ export default function App() {
   const [analysisImage, setAnalysisImage] = useState<AnalysisImage | null>(null);
   const [analysisImageName, setAnalysisImageName] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    try {
-      const storedHistory: unknown = JSON.parse(
-        window.localStorage.getItem(PROMPT_HISTORY_STORAGE_KEY) ?? "[]",
-      );
-      if (!Array.isArray(storedHistory)) return;
-      setPromptHistory(
-        storedHistory
-          .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-          .map((item) => item.trim())
-          .slice(0, MAX_PROMPT_HISTORY_ITEMS),
-      );
-    } catch (error) {
-      console.warn("Unable to read prompt history from local storage.", error);
-    }
-  }, []);
 
   async function loadAnalysisImage(file: File) {
     setIsImageReading(true);
@@ -831,19 +811,6 @@ export default function App() {
     event.preventDefault();
     const submittedPrompt = prompt.trim();
     if (!submittedPrompt || isLoading || isImageReading) return;
-    const nextPromptHistory = [
-      submittedPrompt,
-      ...promptHistory.filter((item) => item !== submittedPrompt),
-    ].slice(0, MAX_PROMPT_HISTORY_ITEMS);
-    setPromptHistory(nextPromptHistory);
-    try {
-      window.localStorage.setItem(
-        PROMPT_HISTORY_STORAGE_KEY,
-        JSON.stringify(nextPromptHistory),
-      );
-    } catch (error) {
-      console.warn("Unable to save prompt history to local storage.", error);
-    }
     setIsLoading(true);
     setTaskProgress(null);
     setLocalError("");
