@@ -14,18 +14,16 @@
 - Keep intermediate updates concise and maintain momentum until the agreed
   outcome is implemented and validated.
 
-## CI and deployment failures
+## Self-resolution policy
 
-- When a GitHub Actions run or Cloud Build fails, investigate the logs directly
-  (use `gh run view` or the GitHub API).
-- If the failure is a code, configuration, or infrastructure bug that can be
-  resolved without human judgement (merge conflicts, missing dependencies,
-  syntax errors, editor prompts in non-interactive shells, etc.), fix it
-  immediately without asking.
-- Only escalate when the failure requires a human decision: secret rotation,
-  billing action, manual infrastructure change, or a trade-off that materially
-  changes the product.
-- After fixing, push and verify the next run passes.
+- When a failure, error, or problem arises (CI run, deployment, test, build,
+  runtime error, API issue, etc.), investigate and diagnose it directly.
+- If the root cause is a code, configuration, or infrastructure issue that can
+  be resolved without human judgement, fix it immediately without asking.
+- Only escalate when a human decision is required: secret rotation, billing
+  action, manual infrastructure change, a trade-off that materially changes the
+  product, or an ambiguous situation where you need the user's preference.
+- After fixing, push and verify the fix works.
 
 ## Local delivery workflow
 
