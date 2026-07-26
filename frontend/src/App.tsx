@@ -44,6 +44,8 @@ const SUPPORTED_ANALYSIS_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 const RESULT_PAGE_SIZE = 100;
+const MAX_PROMPT_HISTORY_ITEMS = 20;
+const PROMPT_HISTORY_STORAGE_KEY = "china-a-share.prompt-history";
 const STOCK_PAGE_SIZE = 20;
 const exchangeLabels: Record<StockExchange, string> = {
   SSE: "上海",
@@ -51,10 +53,35 @@ const exchangeLabels: Record<StockExchange, string> = {
   BSE: "北京",
 };
 const calendarWeekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-const calendarDays = Array.from({ length: 35 }, (_, index) => {
-  const day = index - 1;
-  return day >= 1 && day <= 31 ? day : null;
-});
+
+interface CalendarDay {
+  day: number;
+  isWeekend: boolean;
+  isToday: boolean;
+}
+
+function computeCalendarMonth(year: number, month: number): CalendarDay[] {
+  const firstDay = new Date(year, month - 1, 1);
+  const offset = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1; // Mon=0 … Sun=6
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const today = new Date();
+  const isCurrentMonth =
+    today.getFullYear() === year && today.getMonth() + 1 === month;
+  const todayDate = today.getDate();
+  const totalCells = Math.ceil((offset + daysInMonth) / 7) * 7;
+  return Array.from({ length: totalCells }, (_, index) => {
+    const day = index - offset + 1;
+    if (day < 1 || day > daysInMonth) {
+      return { day: 0, isWeekend: false, isToday: false };
+    }
+    const dayOfWeek = new Date(year, month - 1, day).getDay();
+    return {
+      day,
+      isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+      isToday: isCurrentMonth && day === todayDate,
+    };
+  });
+}
 
 const errorSourceLabels: Record<string, string> = {
   tushare: "Tushare",
@@ -540,7 +567,28 @@ function ReferenceDataPage() {
   const [exchangeFilter, setExchangeFilter] = useState<StockExchange>("SSE");
   const [industryFilter, setIndustryFilter] = useState("");
   const [stockPage, setStockPage] = useState(1);
-  const [calendarExchange, setCalendarExchange] = useState<StockExchange>("SSE");
+  const [calendarExchange, setCalendarExchange] = useState<StockExchange | "">("");
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  });
+  const calendarDays = useMemo(
+    () => computeCalendarMonth(calendarMonth.year, calendarMonth.month),
+    [calendarMonth],
+  );
+  const calendarHeading = `${calendarMonth.year}年${calendarMonth.month}月`;
+
+  function previousMonth() {
+    setCalendarMonth(({ year, month }) =>
+      month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 },
+    );
+  }
+
+  function nextMonth() {
+    setCalendarMonth(({ year, month }) =>
+      month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 },
+    );
+  }
   const [stockResponse, setStockResponse] = useState<StockListResponse | null>(null);
   const [availableIndustries, setAvailableIndustries] = useState<string[]>([]);
   const [stockServiceError, setStockServiceError] = useState<ServiceError | null>(null);
@@ -710,14 +758,33 @@ function ReferenceDataPage() {
                 <span>市场</span>
                 <select
                   value={calendarExchange}
-                  onChange={(event) => setCalendarExchange(event.target.value as StockExchange)}
+                  onChange={(event) => setCalendarExchange(event.target.value as StockExchange | "")}
                 >
+                  <option value="">上海 · 深圳 · 北京</option>
                   <option value="SSE">上海</option>
                   <option value="SZSE">深圳</option>
                   <option value="BSE">北京</option>
                 </select>
               </label>
-              <h2 id="calendar-heading">2026年7月</h2>
+              <div className="calendar-month-nav">
+                <button
+                  type="button"
+                  className="calendar-nav-button"
+                  onClick={previousMonth}
+                  aria-label="上一月"
+                >
+                  ‹
+                </button>
+                <h2 id="calendar-heading">{calendarHeading}</h2>
+                <button
+                  type="button"
+                  className="calendar-nav-button"
+                  onClick={nextMonth}
+                  aria-label="下一月"
+                >
+                  ›
+                </button>
+              </div>
             </div>
             <div className="calendar-legend" aria-label="日历图例">
               <span><i className="open-day-dot" />交易日</span>
@@ -725,25 +792,34 @@ function ReferenceDataPage() {
               <span><i className="today-dot" />今天</span>
             </div>
           </div>
-          <div className="market-calendar" aria-label="2026年7月 A股交易日历">
+          <div className="market-calendar" aria-label={`${calendarHeading} A股交易日历`}>
             {calendarWeekdays.map((weekday) => (
               <div className="calendar-weekday" key={weekday}>{weekday}</div>
             ))}
-            {calendarDays.map((day, index) => {
-              const isWeekend = index % 7 >= 5;
-              const isToday = day === 19;
+            {calendarDays.map((cell, index) => {
+              const isEmpty = cell.day === 0;
               const dayClassName = [
                 "calendar-day",
-                day == null ? "is-empty" : isWeekend ? "is-closed" : "is-open",
-                isToday ? "is-today" : "",
+                isEmpty ? "is-empty" : cell.isWeekend ? "is-closed" : "is-open",
+                cell.isToday ? "is-today" : "",
               ].filter(Boolean).join(" ");
+              const monthLabel = `${calendarMonth.month}月`;
               return (
                 <div
                   className={dayClassName}
-                  key={`${index}-${day ?? "empty"}`}
-                  aria-label={day == null ? undefined : `7月${day}日，${isWeekend ? "休市日" : "交易日"}${isToday ? "，今天" : ""}`}
+                  key={`${index}-${cell.day || "empty"}`}
+                  aria-label={
+                    isEmpty
+                      ? undefined
+                      : `${monthLabel}${cell.day}日，${cell.isWeekend ? "休市日" : "交易日"}${cell.isToday ? "，今天" : ""}`
+                  }
                 >
-                  {day != null && <><strong>{day}</strong><span>{isWeekend ? "休" : "开"}</span></>}
+                  {!isEmpty && (
+                    <>
+                      <strong>{cell.day}</strong>
+                      <span>{cell.isWeekend ? "休" : "开"}</span>
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -758,6 +834,7 @@ function ReferenceDataPage() {
 export default function App() {
   const [activePage, setActivePage] = useState<PageView>("analysis");
   const [prompt, setPrompt] = useState("");
+  const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [response, setResponse] = useState<AnalysisResponse | null>(null);
   const [localError, setLocalError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -766,6 +843,23 @@ export default function App() {
   const [analysisImage, setAnalysisImage] = useState<AnalysisImage | null>(null);
   const [analysisImageName, setAnalysisImageName] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    try {
+      const storedHistory: unknown = JSON.parse(
+        window.localStorage.getItem(PROMPT_HISTORY_STORAGE_KEY) ?? "[]",
+      );
+      if (!Array.isArray(storedHistory)) return;
+      setPromptHistory(
+        storedHistory
+          .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          .map((item) => item.trim())
+          .slice(0, MAX_PROMPT_HISTORY_ITEMS),
+      );
+    } catch (error) {
+      console.warn("Unable to read prompt history from local storage.", error);
+    }
+  }, []);
 
   async function loadAnalysisImage(file: File) {
     setIsImageReading(true);
@@ -811,6 +905,19 @@ export default function App() {
     event.preventDefault();
     const submittedPrompt = prompt.trim();
     if (!submittedPrompt || isLoading || isImageReading) return;
+    const nextPromptHistory = [
+      submittedPrompt,
+      ...promptHistory.filter((item) => item !== submittedPrompt),
+    ].slice(0, MAX_PROMPT_HISTORY_ITEMS);
+    setPromptHistory(nextPromptHistory);
+    try {
+      window.localStorage.setItem(
+        PROMPT_HISTORY_STORAGE_KEY,
+        JSON.stringify(nextPromptHistory),
+      );
+    } catch (error) {
+      console.warn("Unable to save prompt history to local storage.", error);
+    }
     setIsLoading(true);
     setTaskProgress(null);
     setLocalError("");
@@ -837,6 +944,7 @@ export default function App() {
       <UiFeedbackController />
       <header className="hero" data-feedback-id="hero">
         <p className="eyebrow">数据世界</p>
+        <h1>{activePage === "reference" ? "整理 A股基础信息。" : "用自然语言探索 A股数据。"}</h1>
       </header>
 
       <nav className="page-tabs" aria-label="主要功能" role="tablist" data-feedback-id="page-tabs">
@@ -972,8 +1080,8 @@ export default function App() {
               {response.plan.queries.map((query) => (
                 <div className="query-card" key={query.query_id}>
                   <strong>{query.operation}</strong><p>{query.purpose}</p>
-                  <code>{JSON.stringify(query.params, null, 2)}</code>
-                  <code>{JSON.stringify({ fields: query.fields, filters: query.filters, aggregations: query.aggregations }, null, 2)}</code>
+                  <code>{JSON.stringify(query.params)}</code>
+                  <code>{JSON.stringify({ fields: query.fields, filters: query.filters, aggregations: query.aggregations })}</code>
                 </div>
               ))}
               </>
