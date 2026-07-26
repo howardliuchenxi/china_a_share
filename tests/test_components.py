@@ -79,8 +79,10 @@ class FakeMarketDataProvider:
         return operation in {
             "daily",
             "daily_basic",
+            "monthly",
             "ths_member",
             "top10_floatholders",
+            "weekly",
         } or (
             operation == "stock_basic" and self.stock_frame is not None
         )
@@ -151,6 +153,21 @@ def test_validator_rejects_operation_outside_provider_catalog():
         assert "outside" in str(exc)
     else:
         raise AssertionError("Expected a plan validation error.")
+
+
+def test_validator_rejects_market_wide_monthly_range_without_native_key():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "monthly"
+    plan.queries[0].params = {
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+
+    with pytest.raises(
+        PlanValidationError,
+        match="monthly requires ts_code or trade_date",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
 def test_validator_downgrades_undeclared_derived_calculation():
@@ -601,6 +618,52 @@ def test_planner_preserves_universe_query_for_generic_retail_ranking_pipeline():
     assert validated.feasibility == "supported"
 
 
+def test_planner_routes_market_month_ranking_to_daily_boundary_snapshots():
+    plan = QueryPlan(
+        interpretation="Find the largest A-share return in June.",
+        requirements=[
+            {
+                "requirement": "Rank all A-shares by June return.",
+                "status": "covered",
+                "implementation": "Calculate period returns and sort locally.",
+                "evidence": "Daily close prices provide the boundary values.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="monthly-june",
+                operation="monthly",
+                params={
+                    "start_date": "20260601",
+                    "end_date": "20260630",
+                },
+                fields=["ts_code", "trade_date", "close"],
+                purpose="Retrieve June prices.",
+            )
+        ],
+    )
+    session = FakeSession(
+        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="A股6月涨幅最大的公司是"),
+        [
+            DataOperation(name="daily", description="Daily prices."),
+            DataOperation(name="monthly", description="Monthly prices."),
+        ],
+    )
+
+    assert result.queries[0].operation == "daily"
+    assert result.queries[0].params == {
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+    assert result.queries[0].transform == "period_return_by_ts_code"
+    assert result.result_pipeline is not None
+    assert result.result_pipeline.steps[-1].count == 1
+
+
 def test_validator_rejects_result_pipeline_field_before_provider_execution():
     plan = make_daily_plan()
     plan.result_pipeline = ResultPipeline.model_validate(
@@ -850,6 +913,97 @@ def test_executor_ranks_daily_amount_and_calculates_period_returns():
     assert amount_result.row_count == 20
     assert amount_result.rows[0]["amount"] == 24.0
     assert return_result.rows[0]["period_return_pct"] == 20.0
+
+
+def test_full_market_period_return_reads_only_boundary_snapshots():
+    class BoundaryProvider(FakeMarketDataProvider):
+        def supports(self, operation):
+            return operation in {"daily", "stock_basic"}
+
+        def query(
+            self,
+            operation,
+            params,
+            fields,
+            *,
+            api_route,
+            request_id,
+            query_id,
+        ):
+            self.calls.append((operation, dict(params)))
+            if operation == "stock_basic":
+                return pd.DataFrame(
+                    [
+                        {
+                            "ts_code": "000001.SZ",
+                            "name": "First",
+                            "industry": "Bank",
+                        },
+                        {
+                            "ts_code": "000002.SZ",
+                            "name": "Second",
+                            "industry": "Property",
+                        },
+                    ]
+                )
+            closes = {
+                "20260601": [10.0, 20.0],
+                "20260630": [15.0, 18.0],
+            }
+            values = closes.get(params["trade_date"], [])
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": code,
+                        "trade_date": params["trade_date"],
+                        "close": close,
+                    }
+                    for code, close in zip(
+                        ("000001.SZ", "000002.SZ"),
+                        values,
+                    )
+                ]
+            )
+
+    provider = BoundaryProvider()
+    executor = DataQueryExecutor(provider)
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=executor,
+    )
+    query = DataQuery(
+        query_id="june-return",
+        operation="daily",
+        params={"start_date": "20260601", "end_date": "20260630"},
+        fields=["ts_code", "trade_date", "close"],
+        purpose="Calculate full-market June returns.",
+        transform="period_return_by_ts_code",
+    )
+
+    result = service._execute_full_market_range_by_date(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.rows[0] == {
+        "ts_code": "000001.SZ",
+        "start_date": "20260601",
+        "end_date": "20260630",
+        "start_close": 10.0,
+        "end_close": 15.0,
+        "period_return_pct": 50.0,
+        "name": "First",
+        "industry": "Bank",
+    }
+    daily_calls = [call for call in provider.calls if call[0] == "daily"]
+    assert daily_calls == [
+        ("daily", {"trade_date": "20260601"}),
+        ("daily", {"trade_date": "20260630"}),
+    ]
 
 
 def test_planner_normalizes_fields_misplaced_in_params():

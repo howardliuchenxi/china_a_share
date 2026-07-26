@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 MAX_QUERIES_PER_ANALYSIS = 8
 MAX_DYNAMIC_HOLDER_QUERIES = 6_000
+MAX_BOUNDARY_DATE_PROBES = 10
 HOLDER_FANOUT_LOG_INTERVAL = 50
 HOLDER_PROGRESS_UPDATE_INTERVAL = 25
 VALID_SECURITY_SUFFIXES = (".SH", ".SZ", ".BJ")
@@ -44,7 +45,7 @@ FIELD_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCREENSHOT_EVIDENCE_START = "<untrusted_screenshot_evidence>"
 SCREENSHOT_EVIDENCE_END = "</untrusted_screenshot_evidence>"
 STOCK_NAME_OPERATION = "stock_basic"
-STOCK_NAME_FIELDS = ("ts_code", "name")
+STOCK_METADATA_FIELDS = ("ts_code", "name", "industry")
 QUARTER_END_PATTERN = re.compile(r"^\d{4}(0331|0630|0930|1231)$")
 DERIVED_CALCULATION_MARKERS = (
     "local join",
@@ -68,7 +69,15 @@ TRANSFORM_OUTPUT_FIELDS = {
         "non_top10_float_ratio",
         "calculation_status",
     },
-    "period_return_by_ts_code": {"period_return_pct"},
+    "period_return_by_ts_code": {
+        "name",
+        "industry",
+        "start_date",
+        "end_date",
+        "start_close",
+        "end_close",
+        "period_return_pct",
+    },
 }
 
 
@@ -230,6 +239,12 @@ class ASharePlanValidator:
         """Reject parameters that escape the A-share market boundary."""
         if not isinstance(params, dict):
             raise PlanValidationError("Provider parameters must be a JSON object.")
+        if operation in {"weekly", "monthly"} and not (
+            params.get("ts_code") or params.get("trade_date")
+        ):
+            raise PlanValidationError(
+                f"{operation} requires ts_code or trade_date."
+            )
         if operation == "top10_floatholders" and "period" in params:
             period = params["period"]
             if not isinstance(period, str) or not QUARTER_END_PATTERN.fullmatch(period):
@@ -466,19 +481,21 @@ class DataQueryExecutor:
             for ts_code, security_rows in normalized.groupby("ts_code"):
                 first = security_rows.iloc[0]
                 last = security_rows.iloc[-1]
-                rows.append(
-                    {
-                        "ts_code": ts_code,
-                        "start_date": str(first["trade_date"]),
-                        "end_date": str(last["trade_date"]),
-                        "start_close": float(first["close"]),
-                        "end_close": float(last["close"]),
-                        "period_return_pct": round(
-                            (float(last["close"]) / float(first["close"]) - 1) * 100,
-                            4,
-                        ),
-                    }
-                )
+                row = {
+                    "ts_code": ts_code,
+                    "start_date": str(first["trade_date"]),
+                    "end_date": str(last["trade_date"]),
+                    "start_close": float(first["close"]),
+                    "end_close": float(last["close"]),
+                    "period_return_pct": round(
+                        (float(last["close"]) / float(first["close"]) - 1) * 100,
+                        4,
+                    ),
+                }
+                for field in ("name", "industry"):
+                    if field in security_rows.columns:
+                        row[field] = last[field]
+                rows.append(row)
             return pd.DataFrame(rows)
         return frame
 
@@ -624,32 +641,35 @@ class DataQueryExecutor:
         request_id: str,
         query_id: str,
     ) -> pd.DataFrame:
-        """Add official security names to code-bearing result tables."""
+        """Add official security names and industries to code-bearing result tables."""
         if (
             frame.empty
             or "ts_code" not in frame.columns
-            or "name" in frame.columns
             or not self._provider.supports(STOCK_NAME_OPERATION)
         ):
             return frame
         catalog = self._provider.query(
             STOCK_NAME_OPERATION,
             {"list_status": "L"},
-            STOCK_NAME_FIELDS,
+            STOCK_METADATA_FIELDS,
             api_route=api_route,
             request_id=request_id,
             query_id=f"{query_id}-stock-names",
         )
-        if not set(STOCK_NAME_FIELDS).issubset(catalog.columns):
+        if not {"ts_code", "name"}.issubset(catalog.columns):
             raise ValueError("stock_basic result must contain ts_code and name")
-        names_by_code = catalog.drop_duplicates("ts_code").set_index("ts_code")["name"]
         enriched = frame.copy()
-        code_column_index = enriched.columns.get_loc("ts_code")
-        enriched.insert(
-            code_column_index + 1,
-            "name",
-            enriched["ts_code"].map(names_by_code),
-        )
+        metadata = catalog.drop_duplicates("ts_code").set_index("ts_code")
+        insertion_index = enriched.columns.get_loc("ts_code") + 1
+        for field in ("name", "industry"):
+            if field in enriched.columns or field not in metadata.columns:
+                continue
+            enriched.insert(
+                insertion_index,
+                field,
+                enriched["ts_code"].map(metadata[field]),
+            )
+            insertion_index += 1
         return enriched
 
     def _aggregate(self, frame: Any, query: DataQuery) -> Dict[str, int]:
@@ -922,20 +942,17 @@ class AnalysisService:
                 ),
                 None,
             )
-            if source is None or source.status != QueryStatus.SUCCESS:
-                raise ValueError(
-                    "Result pipeline source query did not complete successfully."
+            if source is not None and source.status == QueryStatus.SUCCESS:
+                transformed = self._result_pipeline_executor.execute(
+                    validated_plan.result_pipeline,
+                    source,
                 )
-            transformed = self._result_pipeline_executor.execute(
-                validated_plan.result_pipeline,
-                source,
-            )
-            results = [
-                result
-                for result in results
-                if result.query_id
-                != validated_plan.result_pipeline.source_query_id
-            ] + [transformed]
+                results = [
+                    result
+                    for result in results
+                    if result.query_id
+                    != validated_plan.result_pipeline.source_query_id
+                ] + [transformed]
         decision_trace.append(
             DecisionTraceStep(
                 stage="execution",
@@ -1206,9 +1223,17 @@ class AnalysisService:
         api_route: str,
         request_id: str,
     ) -> QueryResult:
-        """Expand a full-market range into bounded weekday reads."""
+        """Read a full range or only its boundary snapshots when sufficient."""
         start_date = datetime.strptime(query.params["start_date"], "%Y%m%d").date()
         end_date = datetime.strptime(query.params["end_date"], "%Y%m%d").date()
+        if query.transform == "period_return_by_ts_code":
+            return self._execute_full_market_period_return(
+                query,
+                start_date=start_date,
+                end_date=end_date,
+                api_route=api_route,
+                request_id=request_id,
+            )
         rows: List[Dict[str, Any]] = []
         current_date = start_date
         while current_date <= end_date:
@@ -1234,6 +1259,81 @@ class AnalysisService:
             columns=list(query.fields),
             rows=rows,
             row_count=len(rows),
+        )
+
+    def _execute_full_market_period_return(
+        self,
+        query: DataQuery,
+        *,
+        start_date: Any,
+        end_date: Any,
+        api_route: str,
+        request_id: str,
+    ) -> QueryResult:
+        """Calculate market-wide returns from the first and last available snapshots."""
+        boundary_results = []
+        for label, boundary, direction in (
+            ("start", start_date, 1),
+            ("end", end_date, -1),
+        ):
+            result = None
+            candidate = boundary
+            for _ in range(MAX_BOUNDARY_DATE_PROBES):
+                if candidate.weekday() < 5:
+                    boundary_query = query.model_copy(deep=True)
+                    boundary_query.query_id = f"{query.query_id}-{label}"
+                    boundary_query.params = {
+                        "trade_date": candidate.strftime("%Y%m%d")
+                    }
+                    boundary_query.transform = None
+                    result = self._executor.execute(
+                        boundary_query,
+                        api_route=api_route,
+                        request_id=request_id,
+                    )
+                    if result.status != QueryStatus.SUCCESS or result.row_count:
+                        break
+                candidate += timedelta(days=direction)
+            if result is None or result.status != QueryStatus.SUCCESS:
+                return result or QueryResult(
+                    query_id=query.query_id,
+                    provider=self._provider.name,
+                    operation=query.operation,
+                    status=QueryStatus.ERROR,
+                    error=ServiceError(
+                        source="system",
+                        message=f"No valid {label} market snapshot was found.",
+                    ),
+                )
+            if not result.row_count:
+                return QueryResult(
+                    query_id=query.query_id,
+                    provider=self._provider.name,
+                    operation=query.operation,
+                    status=QueryStatus.ERROR,
+                    error=ServiceError(
+                        source="system",
+                        message=f"No valid {label} market snapshot was found.",
+                    ),
+                )
+            boundary_results.append(result)
+
+        frame = pd.DataFrame(
+            boundary_results[0].rows + boundary_results[1].rows
+        )
+        transformed = DataQueryExecutor._apply_tabular_transform(
+            frame,
+            "period_return_by_ts_code",
+        )
+        safe_frame = transformed.astype(object).where(pd.notnull(transformed), None)
+        return QueryResult(
+            query_id=query.query_id,
+            provider=self._provider.name,
+            operation=query.operation,
+            status=QueryStatus.SUCCESS,
+            columns=list(safe_frame.columns),
+            rows=safe_frame.to_dict(orient="records"),
+            row_count=len(safe_frame),
         )
 
 

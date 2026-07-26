@@ -49,6 +49,18 @@ CORE_OPERATION_GUIDANCE = {
         "thresholds such as pe<=10 are not native "
         "parameters; retrieve the field and use a deterministic local filter."
     ),
+    "monthly": (
+        "Monthly A-share prices. The native API requires at least ts_code or "
+        "trade_date; start_date and end_date alone cannot retrieve the full market. "
+        "For a full-market period-return ranking, use daily with start_date and "
+        "end_date so the local executor can compare boundary trading-day snapshots."
+    ),
+    "weekly": (
+        "Weekly A-share prices. The native API requires at least ts_code or "
+        "trade_date; start_date and end_date alone cannot retrieve the full market. "
+        "For a full-market period-return ranking, use daily with start_date and "
+        "end_date so the local executor can compare boundary trading-day snapshots."
+    ),
     "limit_list_d": (
         "Daily A-share limit-up, limit-down, and failed-limit list. Parameters "
         "include trade_date=YYYYMMDD, ts_code, limit_type, exchange, start_date, "

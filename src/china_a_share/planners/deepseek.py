@@ -15,6 +15,7 @@ from china_a_share.core.contracts import (
     DataQuery,
     DataOperation,
     QueryPlan,
+    ResultPipeline,
 )
 from china_a_share.core.errors import PlannerError
 
@@ -91,6 +92,12 @@ class DeepSeekQueryPlanner:
             "top_20_total_amount_by_ts_code to aggregate and rank block-trade amount "
             "over a date range. "
             "period_return_by_ts_code for multi-security period return comparisons. "
+            "For a market-wide or industry-wide return ranking over a month, year, "
+            "or arbitrary date range, use daily with start_date and end_date, request "
+            "ts_code,trade_date,close, and set transform=period_return_by_ts_code. "
+            "The executor reads only the first and last available full-market trading "
+            "day snapshots and calculates returns locally. Never use monthly or weekly "
+            "without ts_code or trade_date. "
             "Use top_10_by_dv_ratio after valuation filters when the user asks for "
             "ten high-dividend securities. "
             "Never expand a date range into one query per day. "
@@ -172,6 +179,7 @@ class DeepSeekQueryPlanner:
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
         self._normalize_common_analytics(plan, request.prompt)
+        self._normalize_market_period_returns(plan, request.prompt)
         self._normalize_latest_completed_date(plan, request.prompt)
         self._downgrade_unexecutable_plan(plan, request.prompt)
         self._split_multi_security_float_holder_queries(plan)
@@ -533,6 +541,98 @@ class DeepSeekQueryPlanner:
                 row_filter.field = "period_return_pct"
                 if isinstance(row_filter.value, float) and abs(row_filter.value) <= 1:
                     row_filter.value *= 100
+
+    @staticmethod
+    def _normalize_market_period_returns(plan: QueryPlan, prompt: str) -> None:
+        """Route broad period-return rankings through two market snapshots."""
+        normalized = prompt.replace(" ", "")
+        asks_for_return = any(
+            marker in normalized for marker in ("涨幅", "跌幅", "收益率")
+        )
+        asks_for_ranking = any(
+            marker in normalized
+            for marker in ("最大", "最高", "最小", "最低", "排名", "前")
+        )
+        if not (asks_for_return and asks_for_ranking):
+            return
+
+        candidates = [
+            query
+            for query in plan.queries
+            if query.operation in {"daily", "weekly", "monthly"}
+            and not query.params.get("ts_code")
+        ]
+        if not candidates:
+            return
+        query = candidates[0].model_copy(deep=True)
+        start_date = query.params.get("start_date")
+        end_date = query.params.get("end_date")
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        completed_date = now.date()
+        if now.time() < ClockTime(17, 10):
+            completed_date -= timedelta(days=1)
+        while completed_date.weekday() >= 5:
+            completed_date -= timedelta(days=1)
+        month_match = re.search(r"(?:(\d{4})年)?(\d{1,2})月", normalized)
+        year_match = re.search(r"(\d{4})年", normalized)
+        if month_match:
+            year = int(month_match.group(1) or now.year)
+            month = int(month_match.group(2))
+            period_start = datetime(year, month, 1).date()
+            if month == 12:
+                next_month = datetime(year + 1, 1, 1).date()
+            else:
+                next_month = datetime(year, month + 1, 1).date()
+            period_end = next_month - timedelta(days=1)
+            start_date = period_start.strftime("%Y%m%d")
+            end_date = min(period_end, completed_date).strftime("%Y%m%d")
+        elif year_match:
+            year = int(year_match.group(1))
+            start_date = f"{year}0101"
+            end_date = min(
+                datetime(year, 12, 31).date(),
+                completed_date,
+            ).strftime("%Y%m%d")
+        elif "今年" in normalized:
+            start_date = f"{now.year}0101"
+            end_date = completed_date.strftime("%Y%m%d")
+        elif "去年" in normalized:
+            start_date = f"{now.year - 1}0101"
+            end_date = f"{now.year - 1}1231"
+        if not isinstance(start_date, str) or not isinstance(end_date, str):
+            return
+        query.operation = "daily"
+        query.params = {"start_date": start_date, "end_date": end_date}
+        query.fields = ["ts_code", "trade_date", "close"]
+        query.transform = "period_return_by_ts_code"
+        query.aggregations = []
+        if plan.result_pipeline:
+            plan.result_pipeline.source_query_id = query.query_id
+        else:
+            direction = (
+                "asc"
+                if any(marker in normalized for marker in ("跌幅最大", "最小", "最低"))
+                else "desc"
+            )
+            plan.result_pipeline = ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": f"{query.query_id}-ranking",
+                    "steps": [
+                        {
+                            "operation": "drop_missing",
+                            "fields": ["period_return_pct"],
+                        },
+                        {
+                            "operation": "sort",
+                            "field": "period_return_pct",
+                            "direction": direction,
+                        },
+                        {"operation": "limit", "count": 1},
+                    ],
+                }
+            )
+        plan.queries = [query]
 
     @staticmethod
     def _normalize_latest_completed_date(plan: QueryPlan, prompt: str) -> None:
