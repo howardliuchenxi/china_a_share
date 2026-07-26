@@ -1021,9 +1021,9 @@ class AnalysisService:
             and q.params.get("start_date")
             and q.params.get("end_date")
         ]
+        fanout_ids = {q.query_id for q in universe_queries + fanout_templates + daily_range_queries}
         standalone_queries = [
-            q for q in plan.queries
-            if q not in set(universe_queries + fanout_templates + daily_range_queries)
+            q for q in plan.queries if q.query_id not in fanout_ids
         ]
 
         # 1. Execute universe queries and build the security list
