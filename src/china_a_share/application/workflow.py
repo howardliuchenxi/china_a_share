@@ -669,8 +669,14 @@ class DataQueryExecutor:
                     f"{aggregation.field}"
                 )
             values = pd.to_numeric(frame[aggregation.field], errors="coerce")
-            mask = operators[aggregation.operator](values, aggregation.value)
-            summary[aggregation.label] = int(mask.fillna(False).sum())
+            if values.isna().all():
+                # Non-numeric field: count all non-null rows
+                summary[aggregation.label] = int(
+                    frame[aggregation.field].notna().sum()
+                )
+            else:
+                mask = operators[aggregation.operator](values, aggregation.value)
+                summary[aggregation.label] = int(mask.fillna(False).sum())
         return summary
 
 
