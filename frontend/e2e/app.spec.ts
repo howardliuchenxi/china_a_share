@@ -61,7 +61,7 @@ test("page load renders analysis page with hero and form", async ({
   await page.goto("/analysis");
 
   // Hero section is visible
-  await expect(page.locator(".hero h1")).toBeVisible();
+  await expect(page.locator(".hero")).toBeVisible();
 
   // Page tabs are visible with correct state
   const analysisTab = page.locator('.page-tabs button[role="tab"]').first();

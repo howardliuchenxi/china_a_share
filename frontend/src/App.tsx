@@ -871,7 +871,6 @@ export default function App() {
       <UiFeedbackController />
       <header className="hero" data-feedback-id="hero">
         <p className="eyebrow">数据世界</p>
-        <h1>{activePage === "reference" ? "整理 A股基础信息。" : "用自然语言探索 A股数据。"}</h1>
       </header>
 
       <nav className="page-tabs" aria-label="主要功能" role="tablist" data-feedback-id="page-tabs">
