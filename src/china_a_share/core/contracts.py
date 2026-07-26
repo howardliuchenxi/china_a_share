@@ -256,6 +256,148 @@ class RequirementCoverage(BaseModel):
     )
 
 
+class ResultAggregation(BaseModel):
+    """One allowlisted grouped aggregation in a deterministic result pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    output_field: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Output column receiving the aggregated value.",
+    )
+    field: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Existing input column aggregated within each group.",
+    )
+    function: Literal["count", "sum", "mean", "min", "max"] = Field(
+        description="Allowlisted deterministic aggregation function.",
+    )
+
+
+class ResultPipelineStep(BaseModel):
+    """One validated relational operation applied to a query result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal[
+        "latest_by_group",
+        "derive",
+        "drop_missing",
+        "filter",
+        "sort",
+        "limit",
+        "quantile_filter",
+        "aggregate",
+    ] = Field(description="Allowlisted relational operation executed by the backend.")
+    field: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Primary input field used by this operation.",
+    )
+    output_field: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="New field produced by a derive operation.",
+    )
+    fields: List[str] = Field(
+        default_factory=list,
+        description="Input fields required to be non-null.",
+    )
+    group_by: List[str] = Field(
+        default_factory=list,
+        description="Columns defining independent groups.",
+    )
+    order_by: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Column used to select the latest row in each group.",
+    )
+    direction: Literal["asc", "desc"] = Field(
+        default="asc",
+        description="Stable ordering direction for latest selection or sorting.",
+    )
+    arithmetic_operator: Optional[
+        Literal["add", "subtract", "multiply", "divide", "constant_minus"]
+    ] = Field(
+        default=None,
+        description="Allowlisted scalar arithmetic applied by a derive operation.",
+    )
+    comparison: Optional[Literal["gt", "ge", "eq", "le", "lt"]] = Field(
+        default=None,
+        description="Comparison used by filter and quantile-filter operations.",
+    )
+    value: Optional[Union[int, float, str]] = Field(
+        default=None,
+        description="Bounded scalar used by arithmetic or row filtering.",
+    )
+    count: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=1_000,
+        description="Maximum rows retained by a limit operation.",
+    )
+    quantile: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Quantile threshold between zero and one.",
+    )
+    aggregations: List[ResultAggregation] = Field(
+        default_factory=list,
+        description="Named grouped aggregations executed in one aggregate step.",
+    )
+
+    @model_validator(mode="after")
+    def validate_operation_arguments(self) -> "ResultPipelineStep":
+        """Require the arguments needed by the selected allowlisted operation."""
+        required = {
+            "latest_by_group": bool(self.group_by and self.order_by),
+            "derive": bool(
+                self.field
+                and self.output_field
+                and self.arithmetic_operator
+                and self.value is not None
+            ),
+            "drop_missing": bool(self.fields),
+            "filter": bool(
+                self.field and self.comparison and self.value is not None
+            ),
+            "sort": bool(self.field),
+            "limit": self.count is not None,
+            "quantile_filter": bool(
+                self.field
+                and self.comparison
+                and self.quantile is not None
+            ),
+            "aggregate": bool(self.group_by and self.aggregations),
+        }
+        if not required[self.operation]:
+            raise ValueError(f"Missing required arguments for {self.operation}")
+        return self
+
+
+class ResultPipeline(BaseModel):
+    """Linear deterministic plan applied to one normalized query result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_query_id: str = Field(
+        min_length=1,
+        description="Query result consumed as the pipeline input.",
+    )
+    output_query_id: str = Field(
+        min_length=1,
+        description="Stable identifier assigned to the transformed result.",
+    )
+    steps: List[ResultPipelineStep] = Field(
+        min_length=1,
+        max_length=12,
+        description="Ordered allowlisted relational operations.",
+    )
+
+
 class QueryPlan(BaseModel):
     """Structured A-share retrieval plan produced from one user request."""
 
@@ -295,6 +437,10 @@ class QueryPlan(BaseModel):
             "source queries succeed."
         ),
     )
+    result_pipeline: Optional[ResultPipeline] = Field(
+        default=None,
+        description="Optional deterministic relational pipeline over one query result.",
+    )
     queries: List[DataQuery] = Field(
         default_factory=list,
         description="Ordered provider-native reads required to satisfy the request.",
@@ -310,6 +456,8 @@ class QueryPlan(BaseModel):
                 raise ValueError("unsupported plans must not contain queries")
             if not self.limitations:
                 raise ValueError("unsupported plans must explain their limitations")
+        if self.result_transform and self.result_pipeline:
+            raise ValueError("result_transform and result_pipeline are mutually exclusive")
         return self
 
 

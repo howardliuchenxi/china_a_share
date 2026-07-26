@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from china_a_share.core.contracts import (
     AnalysisRequest,
     AnalysisResponse,
@@ -87,6 +89,17 @@ def test_original_complex_prompt_requires_async_analysis():
     assert requires_async_analysis(AnalysisRequest(prompt=PHONE_COMPLEX_PROMPT))
     assert requires_async_analysis(AnalysisRequest(prompt=FULL_MARKET_COMPLEX_PROMPT))
     assert not requires_async_analysis(AnalysisRequest(prompt="List A-share stocks."))
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "查找散户比例最高的10只A股股票",
+        "筛选全市场散户比例前10%分位的股票",
+    ],
+)
+def test_full_market_retail_rankings_require_async_analysis(prompt):
+    assert requires_async_analysis(AnalysisRequest(prompt=prompt))
 
 
 def test_task_coordinator_reuses_same_day_submission_and_runs_to_completion():

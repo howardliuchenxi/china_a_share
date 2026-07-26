@@ -39,6 +39,25 @@ logger = logging.getLogger(__name__)
 def requires_async_analysis(request: AnalysisRequest) -> bool:
     """Return whether a request needs durable security-specific fan-out."""
     normalized_prompt = request.prompt.replace(" ", "")
+    requests_full_market_retail_ranking = (
+        "\u6563\u6237\u6bd4\u4f8b" in normalized_prompt
+        and any(
+            marker in normalized_prompt
+            for marker in ("\u80a1\u7968", "A\u80a1", "\u5168\u5e02\u573a")
+        )
+        and any(
+            marker in normalized_prompt
+            for marker in (
+                "\u524d10",
+                "\u524d\u5341",
+                "\u5206\u4f4d",
+                "\u6700\u9ad8",
+                "\u6700\u4f4e",
+            )
+        )
+    )
+    if requests_full_market_retail_ranking:
+        return True
     has_universe = any(
         marker in normalized_prompt
         for marker in ("\u884c\u4e1a", "\u80a1\u7968")

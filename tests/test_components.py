@@ -21,6 +21,7 @@ from china_a_share.core.contracts import (
     QueryPlan,
     QueryResult,
     RequirementCoverage,
+    ResultPipeline,
 )
 from china_a_share.core.errors import PlannerError
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
@@ -518,6 +519,104 @@ def test_planner_accepts_fixed_non_top10_float_retail_proxy():
     assert result.feasibility == "supported"
     assert result.queries[0].transform == "cr10_float_trend"
     assert result.limitations == []
+
+
+def test_planner_preserves_universe_query_for_generic_retail_ranking_pipeline():
+    plan = QueryPlan(
+        interpretation="Rank the full A-share market by the retail proxy.",
+        requirements=[
+            {
+                "requirement": "Return the ten highest retail proxy values.",
+                "status": "covered",
+                "implementation": "Use local sorting and take the top ten.",
+                "evidence": "A validated result pipeline performs the ranking.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="universe",
+                operation="stock_basic",
+                fields=["ts_code"],
+                purpose="Retrieve the A-share universe.",
+            ),
+            DataQuery(
+                query_id="retail-proxy",
+                operation="top10_floatholders",
+                fields=[
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "holder_name",
+                    "hold_float_ratio",
+                ],
+                purpose="Calculate the retail holding proxy for each security.",
+                transform="cr10_float_trend",
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "retail-proxy",
+            "output_query_id": "top-retail-proxy",
+            "steps": [
+                {
+                    "operation": "latest_by_group",
+                    "group_by": ["ts_code"],
+                    "order_by": "end_date",
+                },
+                {
+                    "operation": "drop_missing",
+                    "fields": ["non_top10_float_ratio"],
+                },
+                {
+                    "operation": "sort",
+                    "field": "non_top10_float_ratio",
+                    "direction": "desc",
+                },
+                {"operation": "limit", "count": 10},
+            ],
+        },
+    )
+    session = FakeSession(
+        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="查找散户比例最高的10只A股股票。"),
+        [
+            DataOperation(name="stock_basic", description="A-share universe."),
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            ),
+        ],
+    )
+
+    assert [query.operation for query in result.queries] == [
+        "stock_basic",
+        "top10_floatholders",
+    ]
+    assert result.result_pipeline.output_query_id == "top-retail-proxy"
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(result)
+    assert validated.feasibility == "supported"
+
+
+def test_validator_rejects_result_pipeline_field_before_provider_execution():
+    plan = make_daily_plan()
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "market_direction",
+            "output_query_id": "invalid",
+            "steps": [{"operation": "sort", "field": "missing"}],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="sort references unavailable fields: missing",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
 
 def test_executor_applies_exact_string_filter():
     frame = pd.DataFrame(

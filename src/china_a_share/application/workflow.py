@@ -19,6 +19,7 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.core.errors import DataProviderError, PlannerError, VisionError
 from china_a_share.core.ports import MarketDataProvider, QueryPlanner, VisionAnalyzer
+from china_a_share.result_pipeline import ResultPipelineExecutor
 
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,14 @@ DERIVED_CALCULATION_MARKERS = (
     "连续",
 )
 TRANSFORM_OUTPUT_FIELDS = {
+    "cr10_float_trend": {
+        "ts_code",
+        "end_date",
+        "ann_date",
+        "cr10_float_registered",
+        "non_top10_float_ratio",
+        "calculation_status",
+    },
     "period_return_by_ts_code": {"period_return_pct"},
 }
 
@@ -115,7 +124,9 @@ class ASharePlanValidator:
             )
         ]
         claims_derived_calculation = bool(derived_requirements)
-        has_declared_calculation = bool(plan.result_transform) or any(
+        has_declared_calculation = bool(
+            plan.result_transform or plan.result_pipeline
+        ) or any(
             query.transform or query.aggregations for query in plan.queries
         )
         # Fan-out plans retrieve raw data for client-side processing; they do not
@@ -139,6 +150,8 @@ class ASharePlanValidator:
             for requirement in derived_requirements:
                 requirement.status = "unsupported"
             return plan
+        if plan.result_pipeline:
+            self._validate_result_pipeline(plan)
         query_ids = set()
         for query in plan.queries:
             if query.query_id in query_ids:
@@ -169,6 +182,49 @@ class ASharePlanValidator:
                         f"Aggregation field is not requested: {aggregation.field}"
                     )
         return plan
+
+    @staticmethod
+    def _validate_result_pipeline(plan: QueryPlan) -> None:
+        """Validate pipeline field lineage before any provider call is issued."""
+        pipeline = plan.result_pipeline
+        source_query = next(
+            (
+                query
+                for query in plan.queries
+                if query.query_id == pipeline.source_query_id
+            ),
+            None,
+        )
+        if source_query is None:
+            raise PlanValidationError(
+                "Result pipeline source_query_id does not match a planned query."
+            )
+        available_fields = set(source_query.fields)
+        available_fields.update(
+            TRANSFORM_OUTPUT_FIELDS.get(source_query.transform, set())
+        )
+        for step in pipeline.steps:
+            required_fields = set(step.fields + step.group_by)
+            required_fields.update(
+                field for field in (step.field, step.order_by) if field
+            )
+            required_fields.update(
+                aggregation.field for aggregation in step.aggregations
+            )
+            missing_fields = required_fields.difference(available_fields)
+            if missing_fields:
+                raise PlanValidationError(
+                    f"{step.operation} references unavailable fields: "
+                    + ", ".join(sorted(missing_fields))
+                )
+            if step.operation == "derive":
+                available_fields.add(step.output_field)
+            elif step.operation == "aggregate":
+                available_fields = set(step.group_by)
+                available_fields.update(
+                    aggregation.output_field
+                    for aggregation in step.aggregations
+                )
 
     def _validate_params(self, operation: str, params: Dict[str, Any]) -> None:
         """Reject parameters that escape the A-share market boundary."""
@@ -628,6 +684,7 @@ class AnalysisService:
         validator: ASharePlanValidator,
         executor: DataQueryExecutor,
         vision_analyzer: Optional[VisionAnalyzer] = None,
+        result_pipeline_executor: Optional[ResultPipelineExecutor] = None,
     ) -> None:
         """Store explicit replaceable dependencies for one analysis workflow."""
         self._planner = planner
@@ -635,6 +692,9 @@ class AnalysisService:
         self._validator = validator
         self._executor = executor
         self._vision_analyzer = vision_analyzer
+        self._result_pipeline_executor = (
+            result_pipeline_executor or ResultPipelineExecutor()
+        )
 
     def analyze(
         self,
@@ -846,6 +906,30 @@ class AnalysisService:
             and all(result.status == QueryStatus.SUCCESS for result in results)
         ):
             results.append(self._build_two_limit_up_next_day_result(results))
+        if validated_plan.result_pipeline:
+            source = next(
+                (
+                    result
+                    for result in results
+                    if result.query_id
+                    == validated_plan.result_pipeline.source_query_id
+                ),
+                None,
+            )
+            if source is None or source.status != QueryStatus.SUCCESS:
+                raise ValueError(
+                    "Result pipeline source query did not complete successfully."
+                )
+            transformed = self._result_pipeline_executor.execute(
+                validated_plan.result_pipeline,
+                source,
+            )
+            results = [
+                result
+                for result in results
+                if result.query_id
+                != validated_plan.result_pipeline.source_query_id
+            ] + [transformed]
         decision_trace.append(
             DecisionTraceStep(
                 stage="execution",

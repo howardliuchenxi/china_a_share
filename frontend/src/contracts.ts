@@ -96,6 +96,48 @@ export interface QueryPlan {
     | "healthcare_retail_cohort_return"
     | "industry_retail_cohort_return"
     | null;
+  /** Optional deterministic relational operations applied to one query result. */
+  result_pipeline?: {
+    /** Query result consumed as the pipeline input. */
+    source_query_id: string;
+    /** Identifier assigned to the transformed result. */
+    output_query_id: string;
+    /** Ordered allowlisted relational operations. */
+    steps: Array<{
+      /** Allowlisted operation executed by the backend. */
+      operation:
+        | "latest_by_group"
+        | "derive"
+        | "drop_missing"
+        | "filter"
+        | "sort"
+        | "limit"
+        | "quantile_filter"
+        | "aggregate";
+      field?: string | null;
+      output_field?: string | null;
+      fields?: string[];
+      group_by?: string[];
+      order_by?: string | null;
+      direction?: "asc" | "desc";
+      arithmetic_operator?:
+        | "add"
+        | "subtract"
+        | "multiply"
+        | "divide"
+        | "constant_minus"
+        | null;
+      comparison?: "gt" | "ge" | "eq" | "le" | "lt" | null;
+      value?: number | string | null;
+      count?: number | null;
+      quantile?: number | null;
+      aggregations?: Array<{
+        output_field: string;
+        field: string;
+        function: "count" | "sum" | "mean" | "min" | "max";
+      }>;
+    }>;
+  } | null;
   /** Ordered provider-native reads required to satisfy the request. */
   queries: DataQuery[];
 }

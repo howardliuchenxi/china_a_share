@@ -111,6 +111,16 @@ class DeepSeekQueryPlanner:
             "an explicitly partial result when a source ratio is missing. "
             "Create one top10_floatholders query per security. Never combine multiple "
             "security codes in one top10_floatholders ts_code parameter. "
+            "For deterministic post-query calculations, prefer result_pipeline over "
+            "inventing a specialized transform. A result pipeline consumes exactly one "
+            "query result and may compose latest_by_group, derive, drop_missing, filter, "
+            "sort, limit, quantile_filter, and aggregate steps. Use sort followed by "
+            "limit for Top N. Use quantile_filter with a quantile between 0 and 1 for "
+            "percentile requests. For a full-market retail-proxy ranking, query "
+            "stock_basic as the universe, add one top10_floatholders template without "
+            "ts_code using transform=cr10_float_trend, then apply latest_by_group on "
+            "ts_code ordered by end_date, drop missing non_top10_float_ratio, and apply "
+            "the requested sort/limit or quantile_filter steps. "
             "Decompose every user request "
             "into atomic requirements and provide concrete catalog evidence for each "
             "one. Mark feasibility as supported only when every requirement maps to "
@@ -645,7 +655,9 @@ class DeepSeekQueryPlanner:
                     if query.operation != "stock_basic"
                 ]
                 if non_catalog_queries and all(
-                    "ts_code" in query.fields for query in non_catalog_queries
+                    "ts_code" in query.fields
+                    and query.params.get("ts_code")
+                    for query in non_catalog_queries
                 ):
                     plan.queries = non_catalog_queries
             return
