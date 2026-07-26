@@ -990,7 +990,6 @@ export default function App() {
               ))}
             </select>
           </div>
-          <label htmlFor="analysis-prompt">描述你需要的数据</label>
           <textarea
             id="analysis-prompt"
             rows={6}
