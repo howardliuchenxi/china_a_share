@@ -971,7 +971,6 @@ export default function App() {
         <div className="section-heading"><span>01</span><h2 id="request-heading">数据请求</h2></div>
         <form onSubmit={handleSubmit}>
           <div className="prompt-history">
-            <label htmlFor="prompt-history">历史输入</label>
             <select
               id="prompt-history"
               value=""
