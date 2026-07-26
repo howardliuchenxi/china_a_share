@@ -298,26 +298,6 @@ select:focus {
   box-shadow: 0 0 0 2px rgba(180, 76, 39, 0.13);
 }
 
-.prompt-history {
-  display: grid;
-  grid-template-columns: auto minmax(0, 480px);
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 14px;
-}
-
-.prompt-history label {
-  margin: 0;
-  color: #657169;
-  font-size: 0.76rem;
-  white-space: nowrap;
-}
-
-.prompt-history select {
-  padding: 7px 10px;
-  font-size: 0.82rem;
-}
-
 textarea {
   display: block;
   width: 100%;
@@ -1127,11 +1107,6 @@ th { position: sticky; top: 0; background: #e9ece5; }
   .screenshot-preview button {
     grid-column: 1 / -1;
     justify-self: start;
-  }
-
-  .prompt-history {
-    grid-template-columns: 1fr;
-    gap: 6px;
   }
 
   .stock-filters {

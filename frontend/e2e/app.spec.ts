@@ -71,42 +71,12 @@ test("page load renders analysis page with hero and form", async ({
   const promptField = page.locator("#analysis-prompt");
   await expect(promptField).toBeVisible();
 
-  // Prompt history is empty before the first submission
-  await expect(page.locator("#prompt-history")).toBeDisabled();
-
   // Submit button is disabled when prompt is empty
   const submitButton = page.locator('button[type="submit"]');
   await expect(submitButton).toBeDisabled();
 
   // Empty output placeholder is visible
   await expect(page.locator(".empty-output")).toBeVisible();
-});
-
-/* ------------------------------------------------------------------ */
-/*  Scenario: prompt history                                            */
-/* ------------------------------------------------------------------ */
-
-test("prompt history selection populates prompt input", async ({ page }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem(
-      "china-a-share.prompt-history",
-      JSON.stringify([
-        "查询2026年7月17日A股涨跌分布",
-        "查询A股列表",
-      ]),
-    );
-  });
-  await mockApiRoutes(page, successWithMultiRowFixture);
-
-  await page.goto("/analysis");
-
-  const historySelect = page.locator("#prompt-history");
-  await expect(historySelect).toBeEnabled();
-  await historySelect.selectOption("查询A股列表");
-
-  const promptField = page.locator("#analysis-prompt");
-  await expect(promptField).toHaveValue("查询A股列表");
-  await expect(page.locator('button[type="submit"]')).toBeEnabled();
 });
 
 /* ------------------------------------------------------------------ */
