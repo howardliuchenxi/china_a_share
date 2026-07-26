@@ -970,6 +970,27 @@ export default function App() {
       <section className="request-panel" aria-labelledby="request-heading" data-feedback-id="request-panel">
         <div className="section-heading"><span>01</span><h2 id="request-heading">数据请求</h2></div>
         <form onSubmit={handleSubmit}>
+          <div className="prompt-history">
+            <label htmlFor="prompt-history">历史输入</label>
+            <select
+              id="prompt-history"
+              value=""
+              disabled={promptHistory.length === 0}
+              onChange={(event) => {
+                if (!event.target.value) return;
+                setPrompt(event.target.value);
+                setResponse(null);
+                setLocalError("");
+              }}
+            >
+              <option value="">
+                {promptHistory.length === 0 ? "暂无历史输入" : "选择之前输入的问题"}
+              </option>
+              {promptHistory.map((item, index) => (
+                <option value={item} key={`${index}-${item}`}>{item}</option>
+              ))}
+            </select>
+          </div>
           <label htmlFor="analysis-prompt">描述你需要的数据</label>
           <textarea
             id="analysis-prompt"
