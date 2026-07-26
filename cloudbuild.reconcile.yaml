@@ -24,6 +24,51 @@ steps:
         printf 'Deployment reconciliation action: %s\n' \
           "$$(cat /workspace/deployment-action)"
 
+  - id: notify-start
+    name: python:3.12-slim
+    entrypoint: python
+    secretEnv:
+      - FEISHU_WEBHOOK
+    env:
+      - SERVICE_NAME=${_SERVICE}
+      - SERVICE_REGION=${_REGION}
+      - DEPLOYED_COMMIT=$COMMIT_SHA
+      - SOURCE_COMMIT_SHA=${COMMIT_SHA}
+    args:
+      - -c
+      - |
+        import json
+        import os
+        import urllib.request
+
+        with open("/workspace/deployment-action", encoding="utf-8") as handle:
+            if handle.read().strip() != "deploy":
+                raise SystemExit(0)
+
+        message = "\n".join(
+            (
+                "🚀 A-Share Laboratory deployment started",
+                f"Service: {os.environ['SERVICE_NAME']}",
+                f"Region: {os.environ['SERVICE_REGION']}",
+                f"Commit: {os.environ['SOURCE_COMMIT_SHA'][:12]}",
+            )
+        )
+        request = urllib.request.Request(
+            os.environ["FEISHU_WEBHOOK"],
+            data=json.dumps(
+                {
+                    "msg_type": "text",
+                    "content": {"text": message},
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+        if payload.get("code", payload.get("StatusCode", 0)) != 0:
+            raise RuntimeError(f"Start notification was rejected: {payload}")
+        print("Feishu start notification sent.")
+
   - id: frontend-check
     name: node:22-alpine
     entrypoint: sh
