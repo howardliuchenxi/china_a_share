@@ -582,9 +582,10 @@ button:disabled {
 
 .query-card code {
   display: block;
-  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   color: #8f3c20;
   font-size: 0.78rem;
+  line-height: 1.55;
 }
 
 .error-card {

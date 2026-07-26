@@ -1007,8 +1007,8 @@ export default function App() {
               {response.plan.queries.map((query) => (
                 <div className="query-card" key={query.query_id}>
                   <strong>{query.operation}</strong><p>{query.purpose}</p>
-                  <code>{JSON.stringify(query.params)}</code>
-                  <code>{JSON.stringify({ fields: query.fields, filters: query.filters, aggregations: query.aggregations })}</code>
+                  <code>{JSON.stringify(query.params, null, 2)}</code>
+                  <code>{JSON.stringify({ fields: query.fields, filters: query.filters, aggregations: query.aggregations }, null, 2)}</code>
                 </div>
               ))}
               </>
