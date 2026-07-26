@@ -14,6 +14,19 @@
 - Keep intermediate updates concise and maintain momentum until the agreed
   outcome is implemented and validated.
 
+## CI and deployment failures
+
+- When a GitHub Actions run or Cloud Build fails, investigate the logs directly
+  (use `gh run view` or the GitHub API).
+- If the failure is a code, configuration, or infrastructure bug that can be
+  resolved without human judgement (merge conflicts, missing dependencies,
+  syntax errors, editor prompts in non-interactive shells, etc.), fix it
+  immediately without asking.
+- Only escalate when the failure requires a human decision: secret rotation,
+  billing action, manual infrastructure change, or a trade-off that materially
+  changes the product.
+- After fixing, push and verify the next run passes.
+
 ## Local delivery workflow
 
 - After making changes, limit automated validation to fast, relevant code
