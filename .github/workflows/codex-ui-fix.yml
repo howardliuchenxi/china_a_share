@@ -87,14 +87,42 @@ jobs:
               handle.write(prompt)
           PY
 
-      - name: Ask PI and DeepSeek to implement the scoped improvement
+      - name: Authenticate to Google Cloud
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          echo "$GCP_SA_KEY" > /tmp/gcp-key.json
+          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+          # Create PI provider config for Vertex AI Claude
+          mkdir -p ~/.pi/agent
+          cat > ~/.pi/agent/models.json <<'EOF'
+{
+  "providers": {
+    "vertex": {
+      "baseUrl": "https://asia-east2-aiplatform.googleapis.com/v1/projects/china-a-share-lab/locations/asia-east2/publishers/anthropic/models",
+      "api": "anthropic-messages",
+      "apiKey": "!gcloud auth print-access-token",
+      "models": [
+        {
+          "id": "claude-sonnet-4@20250514",
+          "name": "Claude Sonnet 4 (Vertex)",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 200000,
+          "maxTokens": 64000
+        }
+      ]
+    }
+  }
+}
+EOF
+
+      - name: Ask PI (Vertex AI Claude) to implement the scoped improvement
         run: |
           pi \
             --print \
-            --provider deepseek \
-            --model deepseek-v4-pro \
+            --provider vertex \
+            --model claude-sonnet-4@20250514 \
             --thinking high \
             --no-session \
             --no-extensions \
@@ -104,8 +132,6 @@ jobs:
             "$(< /tmp/ui-feedback-prompt.txt)"
 
       - name: Validate changes and enforce test coverage
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           set -euo pipefail
           git add -N .
@@ -183,8 +209,8 @@ jobs:
 
             pi \
               --print \
-              --provider deepseek \
-              --model deepseek-v4-pro \
+              --provider vertex \
+              --model claude-sonnet-4@20250514 \
               --thinking high \
               --no-session \
               --no-extensions \
