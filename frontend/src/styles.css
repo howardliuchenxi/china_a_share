@@ -422,6 +422,29 @@ button:disabled {
   margin-top: 18px;
 }
 
+.request-trace {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 16px;
+  border-left: 3px solid #3d7459;
+  background: #f3f7f1;
+  color: #405047;
+  padding: 10px 14px;
+}
+
+.request-trace code {
+  color: #23372d;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.request-trace span {
+  color: #657169;
+  font-size: 0.82rem;
+}
+
 .disclosure-card {
   margin-bottom: 16px;
   border: 1px solid #d7b98e;

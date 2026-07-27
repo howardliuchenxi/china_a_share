@@ -234,6 +234,8 @@ export interface AnalysisTask {
 }
 
 export interface AnalysisTaskProgress {
+  /** Stable task identifier used as the analysis trace identifier. */
+  taskId: string;
   /** Current durable lifecycle state. */
   status: AnalysisTaskStatus;
   /** Number of security-specific items completed. */

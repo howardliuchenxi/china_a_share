@@ -1091,6 +1091,13 @@ export default function App() {
 
       <section className="results-panel" aria-labelledby="results-heading" data-feedback-id="results-panel">
         <div className="section-heading"><span>02</span><h2 id="results-heading">数据与错误</h2></div>
+        {(response?.request_id || taskProgress?.taskId) && (
+          <p className="request-trace" role="status">
+            <strong>{"\u8ffd\u8e2a ID"}</strong>
+            <code>{response?.request_id ?? taskProgress?.taskId}</code>
+            <span>{"\u53cd\u9988\u95ee\u9898\u65f6\u53ea\u9700\u63d0\u4f9b\u8fd9\u4e2a ID\u3002"}</span>
+          </p>
+        )}
         {localError && <div className="error-card" role="alert"><strong>本地错误</strong><p>{localError}</p></div>}
         {response?.error && <ErrorCard error={response.error} />}
         {response?.plan?.feasibility === "unsupported"

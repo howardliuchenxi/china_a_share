@@ -60,6 +60,12 @@ export async function submitAnalysis(
     );
   }
   if (response.status === 202 && "status_url" in payload) {
+    onProgress?.({
+      taskId: payload.task_id,
+      status: payload.status,
+      completedItems: 0,
+      totalItems: 0,
+    });
     return pollAnalysisTask(payload, onProgress);
   }
   return payload as AnalysisResponse;
@@ -77,6 +83,7 @@ async function pollAnalysisTask(
     }
     const task = (await response.json()) as AnalysisTask;
     onProgress?.({
+      taskId: task.task_id,
       status: task.status,
       completedItems: task.completed_items,
       totalItems: task.total_items,

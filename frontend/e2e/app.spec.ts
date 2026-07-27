@@ -259,6 +259,9 @@ test("start-analysis button shows loading state and then results", async ({
   // Summary grid should show counts
   await expect(page.locator(".summary-grid")).toBeVisible();
   await expect(page.locator(".summary-grid dt").first()).toHaveText("上涨");
+  await expect(page.locator(".request-trace")).toContainText(
+    successWithMultiRowFixture.request_id,
+  );
 });
 
 /* ------------------------------------------------------------------ */
