@@ -34,6 +34,13 @@ PERIOD_RETURN_FIELD_ALIASES = {
     "return_pct": "period_return_pct",
     "pct_return": "period_return_pct",
 }
+RETAIL_PROXY_DISCLOSURE = (
+    "This result uses non_top10_float_ratio as a holding-dispersion proxy. "
+    "It includes retail holders and institutions outside the disclosed top ten "
+    "and is not a verified individual-investor ownership percentage."
+)
+
+
 class DeepSeekQueryPlanner:
     """Convert natural language into a query plan using DeepSeek."""
 
@@ -233,6 +240,7 @@ class DeepSeekQueryPlanner:
         self._normalize_latest_completed_date(plan, request.prompt)
         self._downgrade_unexecutable_plan(plan, request.prompt)
         self._split_multi_security_float_holder_queries(plan)
+        self._append_audited_disclosures(plan, request.prompt)
         return plan
 
     @staticmethod
@@ -467,6 +475,42 @@ class DeepSeekQueryPlanner:
         )
         DeepSeekQueryPlanner._normalize_market_period_returns(plan, prompt)
         return plan
+
+    @staticmethod
+    def _append_audited_disclosures(plan: QueryPlan, prompt: str) -> None:
+        """Attach user-visible caveats for approved approximations and assumptions."""
+        if plan.feasibility != "supported":
+            return
+
+        disclosures = []
+        if any(
+            query.transform == "cr10_float_trend"
+            for query in plan.queries
+        ):
+            disclosures.append(RETAIL_PROXY_DISCLOSURE)
+
+        normalized = prompt.replace(" ", "")
+        month_match = re.search(r"(?:(\d{4})年)?(\d{1,2})月", normalized)
+        if month_match and month_match.group(1) is None:
+            period_query = next(
+                (
+                    query
+                    for query in plan.queries
+                    if query.transform == "period_return_by_ts_code"
+                    and isinstance(query.params.get("start_date"), str)
+                ),
+                None,
+            )
+            if period_query is not None:
+                resolved_year = period_query.params["start_date"][:4]
+                disclosures.append(
+                    "The omitted year was resolved to "
+                    f"{resolved_year} using Asia/Shanghai semantics."
+                )
+
+        for disclosure in disclosures:
+            if disclosure not in plan.limitations:
+                plan.limitations.append(disclosure)
 
     def _decode_plan_response(self, response: Any, prompt: str) -> QueryPlan:
         """Validate one planner response before any deterministic normalization."""

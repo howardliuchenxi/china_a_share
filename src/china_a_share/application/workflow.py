@@ -828,20 +828,38 @@ class AnalysisService:
                 )
             )
             plan = self._planner.plan(planning_request, operations)
+            planning_has_disclosures = bool(
+                plan.feasibility == "supported" and plan.limitations
+            )
             decision_trace.append(
                 DecisionTraceStep(
                     stage="planning",
-                    status="success" if plan.feasibility == "supported" else "warning",
+                    status=(
+                        "warning"
+                        if planning_has_disclosures
+                        or plan.feasibility == "unsupported"
+                        else "success"
+                    ),
                     title="Query plan created",
                     detail=(
-                        "The planner produced an executable query plan."
-                        if plan.feasibility == "supported"
-                        else "The planner determined that the request cannot be fulfilled without guessing."
+                        "The planner produced an executable query plan with "
+                        "user-visible methodology disclosures."
+                        if planning_has_disclosures
+                        else (
+                            "The planner produced an executable query plan."
+                            if plan.feasibility == "supported"
+                            else "The planner determined that the request cannot "
+                            "be fulfilled without guessing."
+                        )
                     ),
                     evidence=[
                         f"Feasibility: {plan.feasibility}",
                         f"Requirements assessed: {len(plan.requirements)}",
                         f"Queries planned: {len(plan.queries)}",
+                    ]
+                    + [
+                        f"Disclosure: {limitation}"
+                        for limitation in plan.limitations
                     ]
                     + [
                         (

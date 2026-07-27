@@ -422,6 +422,28 @@ button:disabled {
   margin-top: 18px;
 }
 
+.disclosure-card {
+  margin-bottom: 16px;
+  border: 1px solid #d7b98e;
+  background: #fff8eb;
+  color: #68451f;
+  padding: 16px 18px;
+}
+
+.disclosure-card strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.disclosure-card ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.disclosure-card li + li {
+  margin-top: 6px;
+}
+
 .empty-output {
   margin: 0;
   color: #657169;

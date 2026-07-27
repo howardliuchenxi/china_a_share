@@ -660,7 +660,8 @@ def test_planner_accepts_fixed_non_top10_float_retail_proxy():
 
     assert result.feasibility == "supported"
     assert result.queries[0].transform == "cr10_float_trend"
-    assert result.limitations == []
+    assert len(result.limitations) == 1
+    assert "non_top10_float_ratio" in result.limitations[0]
 
 
 def test_planner_preserves_universe_query_for_generic_retail_ranking_pipeline():
@@ -838,7 +839,9 @@ def test_planner_recovers_unsupported_market_month_return_ranking():
     )
 
     assert result.feasibility == "supported"
-    assert result.limitations == []
+    assert result.limitations == [
+        "The omitted year was resolved to 2026 using Asia/Shanghai semantics."
+    ]
     assert result.queries[0].operation == "daily"
     assert result.queries[0].params == {
         "start_date": "20260601",

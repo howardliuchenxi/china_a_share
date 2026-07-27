@@ -325,6 +325,38 @@ function ErrorCard({ error }: { error: ServiceError }) {
   );
 }
 
+function formatPlanDisclosure(disclosure: string): string {
+  if (disclosure.includes("non_top10_float_ratio")) {
+    return "\u672c\u7ed3\u679c\u4f7f\u7528\u201c\u975e\u524d\u5341\u5927\u6d41\u901a\u80a1\u4e1c\u6301\u80a1\u6bd4\u4f8b\u201d\u4f5c\u4e3a\u6301\u80a1\u5206\u6563\u5ea6\u4ee3\u7406\u3002\u5b83\u5305\u542b\u6563\u6237\u53ca\u672a\u8fdb\u5165\u524d\u5341\u7684\u673a\u6784\uff0c\u4e0d\u7b49\u4e8e\u771f\u5b9e\u4e2a\u4eba\u6295\u8d44\u8005\u6301\u80a1\u6bd4\u4f8b\u3002";
+  }
+  const inferredYear = disclosure.match(
+    /^The omitted year was resolved to (\d{4})/,
+  );
+  if (inferredYear) {
+    return `\u95ee\u9898\u672a\u6307\u5b9a\u5e74\u4efd\uff0c\u5df2\u6309\u4e0a\u6d77\u65f6\u533a\u89e3\u6790\u4e3a ${inferredYear[1]} \u5e74\u3002`;
+  }
+  return disclosure;
+}
+
+function PlanDisclosure({ response }: { response: AnalysisResponse }) {
+  if (
+    response.plan?.feasibility !== "supported"
+    || response.plan.limitations.length === 0
+  ) {
+    return null;
+  }
+  return (
+    <aside className="disclosure-card" role="note">
+      <strong>{"\u53e3\u5f84\u8bf4\u660e"}</strong>
+      <ul>
+        {response.plan.limitations.map((item) => (
+          <li key={item}>{formatPlanDisclosure(item)}</li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
 function DecisionTrace({ response }: { response: AnalysisResponse | null }) {
   if (!response?.decision_trace.length) {
     return <ol className="workflow-list">{workflowSteps.map((step) => <li key={step}>{step}</li>)}</ol>;
@@ -1075,6 +1107,7 @@ export default function App() {
               )}
             </div>
           )}
+        {response && <PlanDisclosure response={response} />}
         {response?.results.map((result) => (
           <ResultTable
             result={result}
