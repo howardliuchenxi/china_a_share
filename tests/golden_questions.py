@@ -60,6 +60,28 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         ],
     },
     {
+        "family": "st_period_return",
+        "tier": "approximation",
+        "delivery": "sync",
+        "operations": ["stock_basic", "daily"],
+        "prompts": [
+            "st公司最近3个月的涨跌幅",
+            "带ST的股票过去一年的收益率如何",
+            "ST板块最近半个月的区间涨幅",
+        ],
+    },
+    {
+        "family": "valuation_period_return",
+        "tier": "approximation",
+        "delivery": "sync",
+        "operations": ["daily_basic", "daily"],
+        "prompts": [
+            "市盈率p90线上的选10家公司，看看最近半年的涨跌幅",
+            "高PE的前20只股票最近一个月涨了多少",
+            "市净率最低的50家公司今年以来的收益率",
+        ],
+    },
+    {
         "family": "retail_proxy_ranking",
         "tier": "approximation",
         "delivery": "async",

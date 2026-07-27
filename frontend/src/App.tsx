@@ -21,7 +21,7 @@ import type {
   StockListResponse,
 } from "./contracts";
 
-type ReferenceView = "stocks" | "calendar";
+type ReferenceView = "stocks" | "calendar" | "dictionary";
 type PageView = "analysis" | "reference";
 
 const workflowSteps = [
@@ -680,6 +680,7 @@ function ReferenceDataPage() {
         {([
           ["stocks", "股票列表"],
           ["calendar", "交易日历"],
+          ["dictionary", "数据字典"],
         ] as const).map(([view, label]) => (
           <button
             type="button"
@@ -855,6 +856,92 @@ function ReferenceDataPage() {
                 </div>
               );
             })}
+          </div>
+        </section>
+      )}
+
+      {activeView === "dictionary" && (
+        <section className="reference-panel" aria-labelledby="dictionary-heading">
+          <div className="reference-view-heading">
+            <h2 id="dictionary-heading">数据字典</h2>
+          </div>
+          <div className="stock-table-scroll">
+            <table className="stock-table">
+              <thead>
+                <tr>
+                  <th>字段名称</th>
+                  <th>标识符</th>
+                  <th>含义</th>
+                  <th>计算公式</th>
+                  <th>数据来源</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>市盈率 (PE)</strong></td>
+                  <td><code>pe</code></td>
+                  <td>估值指标，衡量股价与每股收益的比例。</td>
+                  <td>总市值 / 净利润</td>
+                  <td>Tushare</td>
+                </tr>
+                <tr>
+                  <td><strong>市净率 (PB)</strong></td>
+                  <td><code>pb</code></td>
+                  <td>估值指标，衡量股价与每股净资产的比例。</td>
+                  <td>总市值 / 净资产</td>
+                  <td>Tushare</td>
+                </tr>
+                <tr>
+                  <td><strong>换手率</strong></td>
+                  <td><code>turnover_rate</code></td>
+                  <td>交易活跃度指标，一定时间内市场中股票转手买卖的频率。</td>
+                  <td>区间成交股数 / 流通总股数</td>
+                  <td>Tushare</td>
+                </tr>
+                <tr>
+                  <td><strong>换手率变动</strong></td>
+                  <td><code>turnover_change_pct</code></td>
+                  <td>换手率相较于基期的相对变化比例，用于衡量交易活跃度的上升或下降。</td>
+                  <td>(期末换手率 - 基期换手率) / 基期换手率 * 100%</td>
+                  <td>A-Share Lab 衍生计算</td>
+                </tr>
+                <tr>
+                  <td><strong>CR10 流通股集中度</strong></td>
+                  <td><code>cr10_float_registered</code></td>
+                  <td>前十大无限售流通股东的流通股本持股比例合计，反映筹码集中度。</td>
+                  <td>前十流通股东有效持股比例之和</td>
+                  <td>A-Share Lab 衍生计算</td>
+                </tr>
+                <tr>
+                  <td><strong>持股分散度代理</strong></td>
+                  <td><code>non_top10_float_ratio</code></td>
+                  <td>100%减去CR10流通股集中度；包含散户和未进入前十的机构，不等于个人投资者持股比例。</td>
+                  <td>100% - cr10_float_registered</td>
+                  <td>A-Share Lab 衍生计算</td>
+                </tr>
+                <tr>
+                  <td><strong>代理账户占比</strong></td>
+                  <td><code>omnibus_float_ratio</code></td>
+                  <td>前十大流通股东中，香港中央结算等代理账户的流通股持股比例。其背后可能对应多个实际投资者。</td>
+                  <td>识别代理账户并加总其流通股比例</td>
+                  <td>A-Share Lab 衍生计算</td>
+                </tr>
+                <tr>
+                  <td><strong>日度涨跌幅</strong></td>
+                  <td><code>pct_chg</code></td>
+                  <td>股票在一个交易日内的价格变动百分比。</td>
+                  <td>(当日收盘价 - 前一交易日收盘价) / 前一交易日收盘价 * 100%</td>
+                  <td>Tushare</td>
+                </tr>
+                <tr>
+                  <td><strong>区间收益率</strong></td>
+                  <td><code>period_return_pct</code></td>
+                  <td>股票在特定日期区间的价格变动百分比。</td>
+                  <td>(期末收盘价 - 期初前一交易日收盘价) / 期初前一交易日收盘价 * 100%</td>
+                  <td>A-Share Lab 衍生计算</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
       )}
