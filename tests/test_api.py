@@ -38,6 +38,12 @@ class FakeDispatcher:
 class FakeAnalysisService:
     def __init__(self):
         self.calls = []
+        
+        class FakePlanner:
+            name = "test-planner"
+            
+        self.planner = FakePlanner()
+        self._vision_analyzer = None
 
     def analyze(self, request_id, request, *, api_route):
         self.calls.append((request_id, request, api_route))
@@ -122,7 +128,11 @@ def test_health_endpoint_reports_backend_availability(caplog):
         response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {
+        "status": "ok",
+        "planner": "test-planner",
+        "vision_provider": "none"
+    }
     event = next(
         record.structured_fields
         for record in caplog.records
