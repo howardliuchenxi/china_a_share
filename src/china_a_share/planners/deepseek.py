@@ -179,9 +179,19 @@ class DeepSeekQueryPlanner:
                 candidate_operations,
             )
         )
-        known_fallback_plan = (
-            known_retail_ranking_plan or known_market_period_ranking_plan
-        )
+        if known_retail_ranking_plan is not None:
+            self._append_audited_disclosures(
+                known_retail_ranking_plan,
+                request.prompt,
+            )
+            return known_retail_ranking_plan
+        if known_market_period_ranking_plan is not None:
+            self._append_audited_disclosures(
+                known_market_period_ranking_plan,
+                request.prompt,
+            )
+            return known_market_period_ranking_plan
+
         for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
             response = self._request_with_retry(request_payload)
             try:
@@ -195,13 +205,6 @@ class DeepSeekQueryPlanner:
                 ):
                     sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
                     continue
-                if (
-                    str(exc)
-                    == "DeepSeek returned a query plan that violates the contract."
-                    and known_fallback_plan is not None
-                ):
-                    plan = known_fallback_plan
-                    break
                 raise
         else:
             raise PlannerError(
@@ -209,30 +212,6 @@ class DeepSeekQueryPlanner:
                 message="DeepSeek returned no usable query plan.",
             )
 
-        pipeline_source = (
-            plan.result_pipeline.source_query_id
-            if plan.result_pipeline is not None
-            else None
-        )
-        has_retail_proxy_lineage = any(
-            query.query_id == pipeline_source
-            and query.transform == "cr10_float_trend"
-            for query in plan.queries
-        )
-        if (
-            known_retail_ranking_plan is not None
-            and not has_retail_proxy_lineage
-        ):
-            # This audited workflow has stricter field-lineage requirements than a
-            # merely schema-valid model response can guarantee. Keep the model call
-            # for interpretation, then normalize the recognized intent to the fixed
-            # provider reads and deterministic ranking pipeline.
-            plan = known_retail_ranking_plan
-        if (
-            known_market_period_ranking_plan is not None
-            and plan.feasibility == "unsupported"
-        ):
-            plan = known_market_period_ranking_plan
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
         self._normalize_common_analytics(plan, request.prompt)

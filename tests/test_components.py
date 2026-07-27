@@ -288,7 +288,7 @@ def test_planner_retries_one_contract_invalid_response():
     assert len(session.calls) == 2
 
 
-def test_planner_recovers_known_retail_ranking_after_contract_invalid_responses():
+def test_planner_uses_known_retail_ranking_without_model_call():
     invalid_response = FakeResponse(
         {"choices": [{"message": {"content": '{"market":"A_SHARE"'}}]}
     )
@@ -305,7 +305,7 @@ def test_planner_recovers_known_retail_ranking_after_contract_invalid_responses(
         ],
     )
 
-    assert len(session.calls) == 2
+    assert session.calls == []
     assert [query.operation for query in result.queries] == [
         "stock_basic",
         "top10_floatholders",
@@ -320,7 +320,7 @@ def test_planner_recovers_known_retail_ranking_after_contract_invalid_responses(
     assert validated.feasibility == "supported"
 
 
-def test_planner_normalizes_schema_valid_retail_ranking_with_invalid_lineage():
+def test_planner_ignores_model_variation_for_known_retail_ranking():
     model_plan = QueryPlan(
         interpretation="Rank A-shares by retail ratio.",
         requirements=[
@@ -383,6 +383,7 @@ def test_planner_normalizes_schema_valid_retail_ranking_with_invalid_lineage():
     )
 
     assert result.queries[1].transform == "cr10_float_trend"
+    assert session.calls == []
     assert [step.operation for step in result.result_pipeline.steps] == [
         "latest_by_group",
         "drop_missing",
@@ -737,7 +738,8 @@ def test_planner_preserves_universe_query_for_generic_retail_ranking_pipeline():
         "stock_basic",
         "top10_floatholders",
     ]
-    assert result.result_pipeline.output_query_id == "top-retail-proxy"
+    assert result.result_pipeline.output_query_id == "ranked-retail-proxy"
+    assert session.calls == []
     validated = ASharePlanValidator(
         FakeMarketDataProvider(stock_frame=pd.DataFrame())
     ).validate(result)
@@ -789,14 +791,15 @@ def test_planner_routes_market_month_ranking_to_daily_boundary_snapshots():
     )
 
     assert result.queries[0].operation == "daily"
+    assert session.calls == []
     assert result.queries[0].params == {
         "start_date": "20260601",
         "end_date": "20260630",
     }
     assert result.queries[0].transform == "period_return_by_ts_code"
     assert result.result_pipeline is not None
-    assert result.result_pipeline.steps[0].field == "period_return_pct"
-    assert result.result_pipeline.steps[0].direction == "desc"
+    assert result.result_pipeline.steps[-2].field == "period_return_pct"
+    assert result.result_pipeline.steps[-2].direction == "desc"
     assert result.result_pipeline.steps[-1].count == 10
     validated = ASharePlanValidator(FakeMarketDataProvider()).validate(result)
     assert validated.feasibility == "supported"
@@ -839,6 +842,7 @@ def test_planner_recovers_unsupported_market_month_return_ranking():
     )
 
     assert result.feasibility == "supported"
+    assert session.calls == []
     assert result.limitations == [
         "The omitted year was resolved to 2026 using Asia/Shanghai semantics."
     ]
@@ -853,6 +857,26 @@ def test_planner_recovers_unsupported_market_month_return_ranking():
     assert result.result_pipeline.steps[-1].count == 1
     validated = ASharePlanValidator(FakeMarketDataProvider()).validate(result)
     assert validated.feasibility == "supported"
+
+    alternate_session = FakeSession(
+        FakeResponse(
+            {
+                "choices": [
+                    {"message": {"content": make_daily_plan().model_dump_json()}}
+                ]
+            }
+        )
+    )
+    repeated = DeepSeekQueryPlanner(
+        "test-key",
+        session=alternate_session,
+    ).plan(
+        AnalysisRequest(prompt="A股6月涨幅最大的公司是"),
+        [DataOperation(name="daily", description="Daily prices.")],
+    )
+
+    assert alternate_session.calls == []
+    assert repeated == result
 
 
 def test_validator_rejects_result_pipeline_field_before_provider_execution():
