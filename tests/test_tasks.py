@@ -97,10 +97,18 @@ def test_original_complex_prompt_requires_async_analysis():
         "查找散户比例最高的10只A股股票",
         "筛选全市场散户比例前10%分位的股票",
         "大A在6月散户最多的股票前十",
+        "找到散户比例top10的股票",
+        "找到散户比例 Top 10 的股票",
     ],
 )
 def test_full_market_retail_rankings_require_async_analysis(prompt):
     assert requires_async_analysis(AnalysisRequest(prompt=prompt))
+
+
+def test_single_security_retail_request_stays_synchronous():
+    assert not requires_async_analysis(
+        AnalysisRequest(prompt="分析贵州茅台的散户比例")
+    )
 
 
 def test_task_coordinator_reuses_same_day_submission_and_runs_to_completion():
