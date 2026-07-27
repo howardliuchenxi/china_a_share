@@ -4,7 +4,7 @@ from datetime import datetime, time as ClockTime, timedelta
 import json
 import re
 from time import sleep
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -26,9 +26,8 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEEPSEEK_TIMEOUT_SECONDS = 60
 DEEPSEEK_MAX_OUTPUT_TOKENS = 2_000
-DEEPSEEK_MAX_ATTEMPTS = 2
+DEEPSEEK_MAX_ATTEMPTS = 3
 DEEPSEEK_RETRY_DELAY_SECONDS = 1
-TRANSIENT_ERROR_MARKERS = ("too busy", "temporarily", "timed out")
 PERIOD_RETURN_FIELD_ALIASES = {
     "period_return": "period_return_pct",
     "return_pct": "period_return_pct",
@@ -60,6 +59,32 @@ class DeepSeekQueryPlanner:
         candidate_operations: Sequence[DataOperation],
     ) -> QueryPlan:
         """Build a query plan using only the active provider's catalog."""
+        return self._plan_with_validation(
+            request,
+            candidate_operations,
+            validator=None,
+        )
+
+    def plan_validated(
+        self,
+        request: AnalysisRequest,
+        candidate_operations: Sequence[DataOperation],
+        validator: Callable[[QueryPlan], QueryPlan],
+    ) -> QueryPlan:
+        """Build and locally validate a plan with bounded corrective retries."""
+        return self._plan_with_validation(
+            request,
+            candidate_operations,
+            validator=validator,
+        )
+
+    def _plan_with_validation(
+        self,
+        request: AnalysisRequest,
+        candidate_operations: Sequence[DataOperation],
+        validator: Optional[Callable[[QueryPlan], QueryPlan]],
+    ) -> QueryPlan:
+        """Retry planning with concrete validation feedback before audited fallback."""
         guidance = "\n".join(
             f"- {operation.name}: {operation.description}"
             for operation in candidate_operations
@@ -158,17 +183,6 @@ class DeepSeekQueryPlanner:
             f"Allowed operation names:\n{allowed_operations}\n\n"
             f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}"
         )
-        request_payload = {
-            "model": DEEPSEEK_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": request.prompt},
-            ],
-            "thinking": {"type": "disabled"},
-            "response_format": {"type": "json_object"},
-            "max_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
-            "stream": False,
-        }
         known_retail_ranking_plan = self._build_known_retail_ranking_plan(
             request.prompt,
             candidate_operations,
@@ -179,48 +193,137 @@ class DeepSeekQueryPlanner:
                 candidate_operations,
             )
         )
-        if known_retail_ranking_plan is not None:
-            self._append_audited_disclosures(
-                known_retail_ranking_plan,
-                request.prompt,
-            )
-            return known_retail_ranking_plan
-        if known_market_period_ranking_plan is not None:
-            self._append_audited_disclosures(
-                known_market_period_ranking_plan,
-                request.prompt,
-            )
-            return known_market_period_ranking_plan
-
+        feedback = None
+        last_error: Optional[Exception] = None
         for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
-            response = self._request_with_retry(request_payload)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": request.prompt},
+            ]
+            if feedback:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "The previous query plan was rejected by the trusted "
+                            "local validator. Return a complete corrected plan and "
+                            "do not repeat this error:\n"
+                            f"{feedback}"
+                        ),
+                    }
+                )
+            request_payload = {
+                "model": DEEPSEEK_MODEL,
+                "messages": messages,
+                "thinking": {"type": "disabled"},
+                "response_format": {"type": "json_object"},
+                "max_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
+                "stream": False,
+            }
             try:
+                response = self._request_once(request_payload)
                 plan = self._decode_plan_response(response, request.prompt)
-                break
             except PlannerError as exc:
-                if (
-                    str(exc)
-                    == "DeepSeek returned a query plan that violates the contract."
-                    and attempt + 1 < DEEPSEEK_MAX_ATTEMPTS
-                ):
+                if exc.http_status in {400, 401, 403, 404}:
+                    raise
+                last_error = exc
+                feedback = str(exc)
+                if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
                     sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
                     continue
-                raise
-        else:
-            raise PlannerError(
-                source=self.name,
-                message="DeepSeek returned no usable query plan.",
-            )
+                break
 
+            self._finalize_plan(plan, request.prompt)
+            known_error = self._known_plan_error(
+                plan,
+                known_retail_ranking_plan=known_retail_ranking_plan,
+                known_market_period_ranking_plan=known_market_period_ranking_plan,
+            )
+            if known_error is not None:
+                last_error = ValueError(known_error)
+                feedback = known_error
+            elif validator is not None:
+                try:
+                    validator(plan)
+                    return plan
+                except ValueError as exc:
+                    last_error = exc
+                    feedback = str(exc)
+            else:
+                return plan
+
+            if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
+                sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
+
+        fallback_plan = (
+            known_retail_ranking_plan or known_market_period_ranking_plan
+        )
+        if fallback_plan is not None:
+            self._append_audited_disclosures(fallback_plan, request.prompt)
+            if validator is not None:
+                validator(fallback_plan)
+            return fallback_plan
+        if isinstance(last_error, PlannerError):
+            raise last_error
+        raise PlannerError(
+            source=self.name,
+            message=(
+                "DeepSeek could not produce a valid query plan after "
+                f"{DEEPSEEK_MAX_ATTEMPTS} attempts: {last_error}"
+            ),
+        ) from last_error
+
+    def _finalize_plan(self, plan: QueryPlan, prompt: str) -> None:
+        """Apply deterministic normalization before semantic validation."""
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
-        self._normalize_common_analytics(plan, request.prompt)
-        self._normalize_market_period_returns(plan, request.prompt)
-        self._normalize_latest_completed_date(plan, request.prompt)
-        self._downgrade_unexecutable_plan(plan, request.prompt)
+        self._normalize_common_analytics(plan, prompt)
+        self._normalize_market_period_returns(plan, prompt)
+        self._normalize_latest_completed_date(plan, prompt)
+        self._downgrade_unexecutable_plan(plan, prompt)
         self._split_multi_security_float_holder_queries(plan)
-        self._append_audited_disclosures(plan, request.prompt)
-        return plan
+        self._append_audited_disclosures(plan, prompt)
+
+    @staticmethod
+    def _known_plan_error(
+        plan: QueryPlan,
+        *,
+        known_retail_ranking_plan: Optional[QueryPlan],
+        known_market_period_ranking_plan: Optional[QueryPlan],
+    ) -> Optional[str]:
+        """Return a corrective error when an audited intent is planned incorrectly."""
+        if known_retail_ranking_plan is not None:
+            pipeline_source = (
+                plan.result_pipeline.source_query_id
+                if plan.result_pipeline is not None
+                else None
+            )
+            if not any(
+                query.query_id == pipeline_source
+                and query.transform == "cr10_float_trend"
+                for query in plan.queries
+            ):
+                return (
+                    "The retail ranking must source its result pipeline from a "
+                    "top10_floatholders query using transform=cr10_float_trend."
+                )
+        if known_market_period_ranking_plan is not None:
+            pipeline_source = (
+                plan.result_pipeline.source_query_id
+                if plan.result_pipeline is not None
+                else None
+            )
+            if not any(
+                query.query_id == pipeline_source
+                and query.operation == "daily"
+                and query.transform == "period_return_by_ts_code"
+                for query in plan.queries
+            ):
+                return (
+                    "The full-market period ranking must source its result pipeline "
+                    "from daily using transform=period_return_by_ts_code."
+                )
+        return None
 
     @staticmethod
     def _build_known_retail_ranking_plan(
@@ -537,41 +640,20 @@ class DeepSeekQueryPlanner:
             ) from exc
         return plan
 
-    def _request_with_retry(self, request_payload: dict) -> Any:
-        """Retry one transient planner failure without hiding a final error."""
-        last_exception = None
-        for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
-            try:
-                response = self._session.post(
-                    DEEPSEEK_API_URL,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=request_payload,
-                    timeout=DEEPSEEK_TIMEOUT_SECONDS,
-                )
-            except requests.RequestException as exc:
-                last_exception = exc
-                if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
-                    sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
-                    continue
-                raise PlannerError(source=self.name, message=str(exc)) from exc
-
-            try:
-                error = response.json().get("error") or {}
-            except (AttributeError, ValueError):
-                return response
-            message = str(error.get("message") or "").lower()
-            if (
-                error
-                and any(marker in message for marker in TRANSIENT_ERROR_MARKERS)
-                and attempt + 1 < DEEPSEEK_MAX_ATTEMPTS
-            ):
-                sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
-                continue
-            return response
-        raise PlannerError(source=self.name, message=str(last_exception))
+    def _request_once(self, request_payload: dict) -> Any:
+        """Issue one planner request so the outer loop bounds total model calls."""
+        try:
+            return self._session.post(
+                DEEPSEEK_API_URL,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=request_payload,
+                timeout=DEEPSEEK_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            raise PlannerError(source=self.name, message=str(exc)) from exc
 
     @staticmethod
     def _normalize_raw_query_defaults(raw_plan: Any) -> None:

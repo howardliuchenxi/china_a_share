@@ -827,7 +827,15 @@ class AnalysisService:
                     evidence=[f"Candidate operations: {len(operations)}"],
                 )
             )
-            plan = self._planner.plan(planning_request, operations)
+            validated_planner = getattr(self._planner, "plan_validated", None)
+            if callable(validated_planner):
+                plan = validated_planner(
+                    planning_request,
+                    operations,
+                    self._validator.validate,
+                )
+            else:
+                plan = self._planner.plan(planning_request, operations)
             planning_has_disclosures = bool(
                 plan.feasibility == "supported" and plan.limitations
             )
