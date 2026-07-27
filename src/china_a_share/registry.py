@@ -90,6 +90,17 @@ CORE_OPERATION_GUIDANCE = {
         "a partial result with a known ratio and an uncovered-ratio upper bound, not a "
         "complete CR10 value."
     ),
+    "stk_holdernumber": (
+        "Shareholder count per reporting period. Parameters include ts_code, "
+        "end_date, start_date, and end_date. Common fields: ts_code, ann_date, "
+        "end_date, holder_num. holder_num is total shareholders. Period must be "
+        "a quarter end (YYYY0331, YYYY0630, YYYY0930, or YYYY1231). Use this "
+        "to measure retail breadth: fewer shareholders + high average holding "
+        "per account = institutional concentration; many shareholders + low "
+        "average holdings = retail dispersion. For retail analysis, combine "
+        "holder_num with daily_basic.float_share to compute average holding per "
+        "shareholder."
+    ),
     "stock_basic": (
         "A-share security master. Parameters include ts_code, exchange, market, "
         "and list_status. Common fields include ts_code,symbol,name,area,industry,"

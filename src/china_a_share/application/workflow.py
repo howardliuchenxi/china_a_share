@@ -33,6 +33,7 @@ VALID_SECURITY_SUFFIXES = (".SH", ".SZ", ".BJ")
 FANOUT_OPERATIONS = {
     "top10_floatholders",
     "top10_holders",
+    "stk_holdernumber",
     "income",
     "balancesheet",
     "cashflow",
