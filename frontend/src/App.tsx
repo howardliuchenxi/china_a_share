@@ -1062,7 +1062,7 @@ export default function App() {
               />
               <div>
                 <strong>{analysisImageName}</strong>
-                <span>{"\u622a\u56fe\u5c06\u5148\u7531 GLM-5V-Turbo \u8bc6\u522b\uff0c\u518d\u4ea4\u7ed9 DeepSeek \u89c4\u5212\u67e5\u8be2\u3002"}</span>
+                <span>{"\u622a\u56fe\u5c06\u5148\u7531 GLM-5V-Turbo \u8bc6\u522b\uff0c\u518d\u4ea4\u7ed9 Vertex\u00a0AI\u00a0Claude \u89c4\u5212\u67e5\u8be2\u3002"}</span>
               </div>
               <button type="button" onClick={removeAnalysisImage} disabled={isLoading}>
                 {"\u5220\u9664"}
