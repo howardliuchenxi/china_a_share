@@ -27,7 +27,7 @@ from china_a_share.tasks import (
     CloudRunJobDispatcher,
     CloudStorageAnalysisTaskStore,
 )
-from china_a_share.planners.deepseek import DeepSeekQueryPlanner
+from china_a_share.planners.vertex_claude import VertexClaudeQueryPlanner
 from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
     TushareDataProvider,
@@ -38,7 +38,7 @@ from china_a_share.vision.glm import GLMVisionAnalyzer
 def create_analysis_service(settings: Settings) -> AnalysisService:
     """Assemble the configured planner, provider, cache, validator, and executor."""
     provider = _create_data_provider(settings)
-    planner = DeepSeekQueryPlanner(settings.deepseek_api_key)
+    planner = VertexClaudeQueryPlanner(settings.deepseek_api_key)
     validator = ASharePlanValidator(provider)
     executor = DataQueryExecutor(provider)
     vision_analyzer = (

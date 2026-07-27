@@ -284,6 +284,24 @@ class DeepSeekQueryPlanner:
         self._split_multi_security_float_holder_queries(plan)
         self._append_audited_disclosures(plan, prompt)
 
+    def normalize_and_validate_plan(
+        self, raw_content: str, prompt: str
+    ) -> QueryPlan:
+        """Parse, normalize, and validate a raw plan JSON from an external planner."""
+        import json
+        try:
+            raw_plan = json.loads(raw_content)
+        except json.JSONDecodeError as exc:
+            raise PlannerError(
+                source=self.name,
+                message="Planner returned non-JSON content.",
+            ) from exc
+        self._normalize_raw_query_defaults(raw_plan)
+        self._normalize_two_limit_up_analysis(raw_plan, prompt)
+        plan = QueryPlan.model_validate(raw_plan)
+        self._finalize_plan(plan, prompt)
+        return plan
+
     @staticmethod
     def _known_plan_error(
         plan: QueryPlan,

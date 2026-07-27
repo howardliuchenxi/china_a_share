@@ -93,6 +93,7 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          export_environment_variables: true
 
       - name: Set up Vertex AI PI provider config
         run: |
@@ -103,7 +104,7 @@ jobs:
     "vertex": {
       "baseUrl": "https://asia-east2-aiplatform.googleapis.com/v1/projects/china-a-share-lab/locations/asia-east2/publishers/anthropic/models",
       "api": "anthropic-messages",
-      "apiKey": "!gcloud auth print-access-token",
+      "apiKey": "$CLOUDSDK_AUTH_ACCESS_TOKEN",
       "models": [
         {
           "id": "claude-sonnet-4@20250514",
