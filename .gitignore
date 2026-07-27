@@ -26,3 +26,5 @@ build/
 # Playwright
 frontend/test-results/
 frontend/.playwright/
+google-cloud-sdk/
+google-cloud-sdk/

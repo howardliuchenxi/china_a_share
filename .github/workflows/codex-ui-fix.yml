@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Check out deployed source
         uses: actions/checkout@v4
@@ -88,12 +89,13 @@ jobs:
           PY
 
       - name: Authenticate to Google Cloud
-        env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Vertex AI PI provider config
         run: |
-          echo "$GCP_SA_KEY" > /tmp/gcp-key.json
-          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
-          # Create PI provider config for Vertex AI Claude
           mkdir -p ~/.pi/agent
           cat > ~/.pi/agent/models.json <<'EOF'
 {
