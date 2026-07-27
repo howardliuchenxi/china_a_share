@@ -874,6 +874,7 @@ export default function App() {
   const [isImageReading, setIsImageReading] = useState(false);
   const [analysisImage, setAnalysisImage] = useState<AnalysisImage | null>(null);
   const [analysisImageName, setAnalysisImageName] = useState("");
+  const [plannerName, setPlannerName] = useState("Vertex AI Claude");
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -891,6 +892,15 @@ export default function App() {
     } catch (error) {
       console.warn("Unable to read prompt history from local storage.", error);
     }
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/health")
+      .then((resp) => resp.json())
+      .then((data) => {
+        if (data.planner) setPlannerName(data.planner);
+      })
+      .catch(() => {});
   }, []);
 
   async function loadAnalysisImage(file: File) {
@@ -1062,7 +1072,7 @@ export default function App() {
               />
               <div>
                 <strong>{analysisImageName}</strong>
-                <span>{"\u622a\u56fe\u5c06\u5148\u7531 GLM-5V-Turbo \u8bc6\u522b\uff0c\u518d\u4ea4\u7ed9 Vertex\u00a0AI\u00a0Claude \u89c4\u5212\u67e5\u8be2\u3002"}</span>
+                <span>{"截图将先由 GLM-5V-Turbo 识别，再交给 " + plannerName + " 规划查询。"}</span>
               </div>
               <button type="button" onClick={removeAnalysisImage} disabled={isLoading}>
                 {"\u5220\u9664"}

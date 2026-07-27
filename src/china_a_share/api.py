@@ -133,8 +133,14 @@ def create_app(
 
     @application.get(HEALTH_API_ROUTE)
     def health() -> dict:
-        """Report that the local backend process is available."""
-        return {"status": "ok"}
+        """Report service availability and configured AI components."""
+        planner_name = service.planner.name if service else "unknown"
+        vision_provider = "glm" if service and service._vision_analyzer else "none"
+        return {
+            "status": "ok",
+            "planner": planner_name,
+            "vision_provider": vision_provider,
+        }
 
     active_service = service
     active_stock_catalog_service = stock_catalog_service
