@@ -196,6 +196,22 @@ class ASharePlanValidator:
             return plan
         if plan.result_pipeline:
             self._validate_result_pipeline(plan)
+        orphaned_fanout_templates = [
+            query.operation
+            for query in plan.queries
+            if query.operation in FANOUT_OPERATIONS
+            and not query.params.get("ts_code")
+        ]
+        has_universe_query = any(
+            query.operation in UNIVERSE_OPERATIONS
+            for query in plan.queries
+        )
+        if orphaned_fanout_templates and not has_universe_query:
+            raise PlanValidationError(
+                "Security fan-out templates require a stock_basic or ths_member "
+                "universe query: "
+                + ", ".join(orphaned_fanout_templates)
+            )
         query_ids = set()
         for query in plan.queries:
             if query.query_id in query_ids:

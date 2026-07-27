@@ -298,14 +298,22 @@ class DeepSeekQueryPlanner:
                 if plan.result_pipeline is not None
                 else None
             )
-            if not any(
+            has_universe_query = any(
+                query.operation in {"stock_basic", "ths_member"}
+                for query in plan.queries
+            )
+            has_retail_template = any(
                 query.query_id == pipeline_source
                 and query.transform == "cr10_float_trend"
+                and not query.params.get("ts_code")
                 for query in plan.queries
-            ):
+            )
+            if not has_universe_query or not has_retail_template:
                 return (
-                    "The retail ranking must source its result pipeline from a "
-                    "top10_floatholders query using transform=cr10_float_trend."
+                    "The retail ranking requires a stock_basic or ths_member "
+                    "universe and must source its result pipeline from a "
+                    "top10_floatholders template using "
+                    "transform=cr10_float_trend."
                 )
         if known_market_period_ranking_plan is not None:
             pipeline_source = (

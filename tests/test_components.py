@@ -401,6 +401,80 @@ def test_planner_falls_back_after_three_retail_plans_with_invalid_lineage():
     assert validated.feasibility == "supported"
 
 
+def test_planner_rejects_retail_template_without_security_universe():
+    incomplete_plan = QueryPlan(
+        interpretation="Rank A-shares by the retail proxy.",
+        requirements=[
+            {
+                "requirement": "Return the top ten retail proxy values.",
+                "status": "covered",
+                "implementation": "Sort the holder proxy locally.",
+                "evidence": "The result pipeline supports deterministic sorting.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="holders",
+                operation="top10_floatholders",
+                params={"end_date": "20260727"},
+                fields=[
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "holder_name",
+                    "hold_float_ratio",
+                ],
+                purpose="Retrieve float-holder snapshots.",
+                transform="cr10_float_trend",
+            )
+        ],
+        result_pipeline={
+            "source_query_id": "holders",
+            "output_query_id": "ranking",
+            "steps": [
+                {
+                    "operation": "sort",
+                    "field": "non_top10_float_ratio",
+                    "direction": "desc",
+                },
+                {"operation": "limit", "count": 10},
+            ],
+        },
+    )
+    session = FakeSession(
+        FakeResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": incomplete_plan.model_dump_json()
+                        }
+                    }
+                ]
+            }
+        )
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="找到散户比例top10的股票"),
+        [
+            DataOperation(name="stock_basic", description="A-share universe."),
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            ),
+        ],
+    )
+
+    assert len(session.calls) == 3
+    assert [query.operation for query in result.queries] == [
+        "stock_basic",
+        "top10_floatholders",
+    ]
+    retry_feedback = session.calls[1][1]["json"]["messages"][-1]["content"]
+    assert "requires a stock_basic or ths_member universe" in retry_feedback
+
+
 def test_planner_retries_with_semantic_validation_feedback():
     invalid_plan = make_daily_plan()
     invalid_plan.result_pipeline = ResultPipeline.model_validate(
@@ -973,6 +1047,54 @@ def test_validator_uses_transformed_result_fields_for_pipeline_lineage():
     with pytest.raises(
         PlanValidationError,
         match="sort references unavailable fields: ts_code",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_validator_rejects_security_fanout_template_without_universe():
+    plan = QueryPlan(
+        interpretation="Rank the full market by the retail proxy.",
+        requirements=[
+            {
+                "requirement": "Rank all A-shares by the retail proxy.",
+                "status": "covered",
+                "implementation": "Fan out top10_floatholders and sort locally.",
+                "evidence": "The holder operation supports one security per call.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="retail-proxy",
+                operation="top10_floatholders",
+                params={"end_date": "20260727"},
+                fields=[
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "holder_name",
+                    "hold_float_ratio",
+                ],
+                purpose="Calculate the retail proxy.",
+                transform="cr10_float_trend",
+            )
+        ],
+        result_pipeline={
+            "source_query_id": "retail-proxy",
+            "output_query_id": "ranked-retail-proxy",
+            "steps": [
+                {
+                    "operation": "sort",
+                    "field": "non_top10_float_ratio",
+                    "direction": "desc",
+                },
+                {"operation": "limit", "count": 10},
+            ],
+        },
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="Security fan-out templates require.*universe query",
     ):
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
