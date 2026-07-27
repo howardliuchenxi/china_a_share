@@ -243,8 +243,8 @@ EOF
           msg = f"PI UI 改进失败 #{feedback_id}: {suggestion} — {run_url}"
 
           payload = json.dumps({
-              "msgtype": "text",
-              "text": {"content": msg},
+              "msg_type": "text",
+              "content": {"text": msg},
           }).encode()
 
           for env_var, name in [("WECHAT_WEBHOOK", "WeChat"), ("FEISHU_WEBHOOK", "Feishu")]:
@@ -339,3 +339,30 @@ EOF
       - name: Push directly to main
         run: |
           git push origin "HEAD:main"
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+          FEEDBACK_ID: ${{ github.event.client_payload.feedback_id }}
+          SUGGESTION: ${{ github.event.client_payload.suggestion }}
+          RUN_URL: ${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          suggestion = os.environ.get("SUGGESTION", "")[:60].replace("\n", " ")
+          feedback_id = os.environ.get("FEEDBACK_ID", "")
+          run_url = os.environ.get("RUN_URL", "")
+          msg = f"PI UI 改进合并失败 #{feedback_id}: {suggestion} — {run_url}"
+          payload = json.dumps({"msg_type": "text", "content": {"text": msg}}).encode()
+          for env_var, name in [("FEISHU_WEBHOOK", "Feishu")]:
+              webhook = os.environ.get(env_var, "")
+              if not webhook:
+                  continue
+              try:
+                  req = urllib.request.Request(webhook, data=payload, headers={"Content-Type": "application/json"})
+                  urllib.request.urlopen(req, timeout=10)
+                  print(f"{name} notification sent.")
+              except Exception as exc:
+                  print(f"{name} notification failed: {exc}")
+          PY
