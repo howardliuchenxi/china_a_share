@@ -47,6 +47,15 @@ SCREENSHOT_EVIDENCE_END = "</untrusted_screenshot_evidence>"
 STOCK_NAME_OPERATION = "stock_basic"
 STOCK_METADATA_FIELDS = ("ts_code", "name", "industry")
 QUARTER_END_PATTERN = re.compile(r"^\d{4}(0331|0630|0930|1231)$")
+DATE_VALUE_PATTERN = re.compile(r"^\d{8}$")
+DATE_PARAM_NAMES = {
+    "trade_date",
+    "start_date",
+    "end_date",
+    "ann_date",
+    "float_date",
+    "period",
+}
 DERIVED_CALCULATION_MARKERS = (
     "local join",
     "local aggregation",
@@ -78,6 +87,32 @@ TRANSFORM_OUTPUT_FIELDS = {
         "end_close",
         "period_return_pct",
     },
+}
+TRANSFORM_RESULT_FIELDS = {
+    "cr10_float_trend": {
+        "ts_code",
+        "end_date",
+        "ann_date",
+        "cr10_float_registered",
+        "non_top10_float_ratio",
+        "known_top_holder_float_ratio",
+        "uncovered_float_ratio_upper_bound",
+        "omnibus_float_ratio",
+        "holder_count",
+        "ratio_holder_count",
+        "missing_ratio_holders",
+        "calculation_status",
+    },
+    "count_by_trade_date": {"trade_date", "count"},
+    "top_count_by_trade_date": {"trade_date", "count"},
+    "count_by_ts_code": {"ts_code", "count"},
+    "top_10_count_by_ts_code": {"ts_code", "count"},
+    "count_by_industry": {"industry", "count"},
+    "top_20_total_amount_by_ts_code": {"ts_code", "total_amount"},
+    "period_return_by_ts_code": TRANSFORM_OUTPUT_FIELDS[
+        "period_return_by_ts_code"
+    ]
+    | {"ts_code"},
 }
 
 
@@ -208,9 +243,11 @@ class ASharePlanValidator:
             raise PlanValidationError(
                 "Result pipeline source_query_id does not match a planned query."
             )
-        available_fields = set(source_query.fields)
-        available_fields.update(
-            TRANSFORM_OUTPUT_FIELDS.get(source_query.transform, set())
+        available_fields = set(
+            TRANSFORM_RESULT_FIELDS.get(
+                source_query.transform,
+                set(source_query.fields),
+            )
         )
         for step in pipeline.steps:
             required_fields = set(step.fields + step.group_by)
@@ -245,6 +282,29 @@ class ASharePlanValidator:
             raise PlanValidationError(
                 f"{operation} requires ts_code or trade_date."
             )
+        if operation in {"daily", "daily_basic"} and not (
+            params.get("ts_code")
+            or params.get("trade_date")
+            or (params.get("start_date") and params.get("end_date"))
+        ):
+            raise PlanValidationError(
+                f"{operation} requires ts_code, trade_date, or a complete date range."
+            )
+        for name in DATE_PARAM_NAMES.intersection(params):
+            value = params[name]
+            if not isinstance(value, str) or not DATE_VALUE_PATTERN.fullmatch(value):
+                raise PlanValidationError(f"{name} must use YYYYMMDD format.")
+            try:
+                datetime.strptime(value, "%Y%m%d")
+            except ValueError as exc:
+                raise PlanValidationError(
+                    f"{name} must be a valid calendar date."
+                ) from exc
+        if params.get("start_date") and params.get("end_date"):
+            if params["start_date"] > params["end_date"]:
+                raise PlanValidationError(
+                    "start_date must not be later than end_date."
+                )
         if operation == "top10_floatholders" and "period" in params:
             period = params["period"]
             if not isinstance(period, str) or not QUARTER_END_PATTERN.fullmatch(period):
@@ -479,16 +539,22 @@ class DataQueryExecutor:
             normalized = normalized.dropna(subset=["close"]).sort_values("trade_date")
             rows = []
             for ts_code, security_rows in normalized.groupby("ts_code"):
+                if security_rows["trade_date"].astype(str).nunique() < 2:
+                    continue
                 first = security_rows.iloc[0]
                 last = security_rows.iloc[-1]
+                start_close = float(first["close"])
+                end_close = float(last["close"])
+                if start_close <= 0:
+                    continue
                 row = {
                     "ts_code": ts_code,
                     "start_date": str(first["trade_date"]),
                     "end_date": str(last["trade_date"]),
-                    "start_close": float(first["close"]),
-                    "end_close": float(last["close"]),
+                    "start_close": start_close,
+                    "end_close": end_close,
                     "period_return_pct": round(
-                        (float(last["close"]) / float(first["close"]) - 1) * 100,
+                        (end_close / start_close - 1) * 100,
                         4,
                     ),
                 }
@@ -943,10 +1009,24 @@ class AnalysisService:
                 None,
             )
             if source is not None and source.status == QueryStatus.SUCCESS:
-                transformed = self._result_pipeline_executor.execute(
-                    validated_plan.result_pipeline,
-                    source,
-                )
+                try:
+                    transformed = self._result_pipeline_executor.execute(
+                        validated_plan.result_pipeline,
+                        source,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "result_pipeline_failed request_id=%s source_query_id=%s",
+                        request_id,
+                        validated_plan.result_pipeline.source_query_id,
+                    )
+                    transformed = QueryResult(
+                        query_id=validated_plan.result_pipeline.output_query_id,
+                        provider=self._provider.name,
+                        operation="result_pipeline",
+                        status=QueryStatus.ERROR,
+                        error=ServiceError(source="system", message=str(exc)),
+                    )
                 results = [
                     result
                     for result in results

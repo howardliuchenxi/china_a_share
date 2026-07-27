@@ -59,6 +59,7 @@ class FakePlanner:
                 DataQuery(
                     query_id="q1",
                     operation=candidate_operations[0].name,
+                    params={"trade_date": "20260717"},
                     purpose="Retrieve daily prices.",
                 )
             ],

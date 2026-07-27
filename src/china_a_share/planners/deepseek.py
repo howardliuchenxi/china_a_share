@@ -16,6 +16,7 @@ from china_a_share.core.contracts import (
     DataOperation,
     QueryPlan,
     ResultPipeline,
+    ResultPipelineStep,
 )
 from china_a_share.core.errors import PlannerError
 
@@ -28,6 +29,11 @@ DEEPSEEK_MAX_OUTPUT_TOKENS = 2_000
 DEEPSEEK_MAX_ATTEMPTS = 2
 DEEPSEEK_RETRY_DELAY_SECONDS = 1
 TRANSIENT_ERROR_MARKERS = ("too busy", "temporarily", "timed out")
+PERIOD_RETURN_FIELD_ALIASES = {
+    "period_return": "period_return_pct",
+    "return_pct": "period_return_pct",
+    "pct_return": "period_return_pct",
+}
 class DeepSeekQueryPlanner:
     """Convert natural language into a query plan using DeepSeek."""
 
@@ -547,11 +553,13 @@ class DeepSeekQueryPlanner:
         """Route broad period-return rankings through two market snapshots."""
         normalized = prompt.replace(" ", "")
         asks_for_return = any(
-            marker in normalized for marker in ("涨幅", "跌幅", "收益率")
-        )
-        asks_for_ranking = any(
             marker in normalized
-            for marker in ("最大", "最高", "最小", "最低", "排名", "前")
+            for marker in ("涨幅", "跌幅", "收益率", "上涨", "下跌")
+        )
+        requested_limit = DeepSeekQueryPlanner._parse_requested_limit(normalized)
+        asks_for_ranking = requested_limit is not None or any(
+            marker in normalized
+            for marker in ("最大", "最高", "最小", "最低", "排名", "最多")
         )
         if not (asks_for_return and asks_for_ranking):
             return
@@ -576,8 +584,11 @@ class DeepSeekQueryPlanner:
         month_match = re.search(r"(?:(\d{4})年)?(\d{1,2})月", normalized)
         year_match = re.search(r"(\d{4})年", normalized)
         if month_match:
-            year = int(month_match.group(1) or now.year)
             month = int(month_match.group(2))
+            explicit_year = month_match.group(1)
+            year = int(explicit_year or now.year)
+            if explicit_year is None and month > now.month:
+                year -= 1
             period_start = datetime(year, month, 1).date()
             if month == 12:
                 next_month = datetime(year + 1, 1, 1).date()
@@ -608,10 +619,47 @@ class DeepSeekQueryPlanner:
         query.aggregations = []
         if plan.result_pipeline:
             plan.result_pipeline.source_query_id = query.query_id
+            has_limit = False
+            for step in plan.result_pipeline.steps:
+                if step.field in PERIOD_RETURN_FIELD_ALIASES:
+                    step.field = PERIOD_RETURN_FIELD_ALIASES[step.field]
+                step.fields = [
+                    PERIOD_RETURN_FIELD_ALIASES.get(field, field)
+                    for field in step.fields
+                ]
+                if step.order_by in PERIOD_RETURN_FIELD_ALIASES:
+                    step.order_by = PERIOD_RETURN_FIELD_ALIASES[step.order_by]
+                if step.operation == "sort" and step.field == "period_return_pct":
+                    step.direction = (
+                        "asc"
+                        if any(
+                            marker in normalized
+                            for marker in (
+                                "跌幅最大",
+                                "下跌最多",
+                                "最小",
+                                "最低",
+                            )
+                        )
+                        else "desc"
+                    )
+                if step.operation == "limit":
+                    has_limit = True
+                    if requested_limit is not None:
+                        step.count = requested_limit
+            if requested_limit is not None and not has_limit:
+                plan.result_pipeline.steps.append(
+                    ResultPipelineStep.model_validate(
+                        {"operation": "limit", "count": requested_limit}
+                    )
+                )
         else:
             direction = (
                 "asc"
-                if any(marker in normalized for marker in ("跌幅最大", "最小", "最低"))
+                if any(
+                    marker in normalized
+                    for marker in ("跌幅最大", "下跌最多", "最小", "最低")
+                )
                 else "desc"
             )
             plan.result_pipeline = ResultPipeline.model_validate(
@@ -628,11 +676,49 @@ class DeepSeekQueryPlanner:
                             "field": "period_return_pct",
                             "direction": direction,
                         },
-                        {"operation": "limit", "count": 1},
+                        {
+                            "operation": "limit",
+                            "count": requested_limit or 1,
+                        },
                     ],
                 }
             )
         plan.queries = [query]
+
+    @staticmethod
+    def _parse_requested_limit(prompt: str) -> Optional[int]:
+        """Return an explicit Top-N limit from Arabic or common Chinese numerals."""
+        match = re.search(
+            r"(?<!之)前(\d{1,4}|[一二三四五六七八九十百两]+)",
+            prompt,
+        )
+        if not match:
+            match = re.search(r"top\s*(\d{1,4})", prompt, re.IGNORECASE)
+        if not match:
+            return None
+        token = match.group(1)
+        if token.isdigit():
+            return min(int(token), 1_000)
+        digits = {
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+        }
+        if token == "十":
+            return 10
+        if token == "百":
+            return 100
+        if "十" in token:
+            tens, ones = token.split("十", 1)
+            return digits.get(tens, 1) * 10 + digits.get(ones, 0)
+        return digits.get(token)
 
     @staticmethod
     def _normalize_latest_completed_date(plan: QueryPlan, prompt: str) -> None:

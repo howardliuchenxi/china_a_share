@@ -170,6 +170,24 @@ def test_validator_rejects_market_wide_monthly_range_without_native_key():
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
+def test_validator_rejects_invalid_or_reversed_date_ranges():
+    plan = make_daily_plan()
+    plan.queries[0].params = {
+        "start_date": "20260230",
+        "end_date": "20260101",
+    }
+
+    with pytest.raises(PlanValidationError, match="valid calendar date"):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    plan.queries[0].params = {
+        "start_date": "20260630",
+        "end_date": "20260601",
+    }
+    with pytest.raises(PlanValidationError, match="must not be later"):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
 def test_validator_downgrades_undeclared_derived_calculation():
     plan = make_daily_plan()
     plan.queries[0].aggregations = []
@@ -641,13 +659,21 @@ def test_planner_routes_market_month_ranking_to_daily_boundary_snapshots():
                 purpose="Retrieve June prices.",
             )
         ],
+        result_pipeline={
+            "source_query_id": "monthly-june",
+            "output_query_id": "top-june-returns",
+            "steps": [
+                {"operation": "sort", "field": "period_return"},
+                {"operation": "limit", "count": 1},
+            ],
+        },
     )
     session = FakeSession(
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
     result = DeepSeekQueryPlanner("test-key", session=session).plan(
-        AnalysisRequest(prompt="A股6月涨幅最大的公司是"),
+        AnalysisRequest(prompt="大A在6月上涨最多的股票前十。"),
         [
             DataOperation(name="daily", description="Daily prices."),
             DataOperation(name="monthly", description="Monthly prices."),
@@ -661,7 +687,11 @@ def test_planner_routes_market_month_ranking_to_daily_boundary_snapshots():
     }
     assert result.queries[0].transform == "period_return_by_ts_code"
     assert result.result_pipeline is not None
-    assert result.result_pipeline.steps[-1].count == 1
+    assert result.result_pipeline.steps[0].field == "period_return_pct"
+    assert result.result_pipeline.steps[0].direction == "desc"
+    assert result.result_pipeline.steps[-1].count == 10
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+    assert validated.feasibility == "supported"
 
 
 def test_validator_rejects_result_pipeline_field_before_provider_execution():
@@ -679,6 +709,94 @@ def test_validator_rejects_result_pipeline_field_before_provider_execution():
         match="sort references unavailable fields: missing",
     ):
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_validator_uses_transformed_result_fields_for_pipeline_lineage():
+    plan = make_daily_plan()
+    plan.queries[0].transform = "count_by_trade_date"
+    plan.queries[0].fields = ["trade_date", "ts_code"]
+    plan.queries[0].aggregations = []
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "market_direction",
+            "output_query_id": "ranked-counts",
+            "steps": [{"operation": "sort", "field": "count"}],
+        }
+    )
+
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+    assert validated.result_pipeline.steps[0].field == "count"
+
+    plan.result_pipeline.steps[0].field = "ts_code"
+    with pytest.raises(
+        PlanValidationError,
+        match="sort references unavailable fields: ts_code",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_analysis_returns_structured_error_when_result_pipeline_fails():
+    plan = QueryPlan(
+        interpretation="Run one invalid arithmetic pipeline.",
+        requirements=[
+            {
+                "requirement": "Calculate a derived value.",
+                "status": "covered",
+                "implementation": "Use a deterministic result pipeline.",
+                "evidence": "The pipeline contract defines scalar division.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="source",
+                operation="daily",
+                params={"trade_date": "20260717"},
+                fields=["value"],
+                purpose="Retrieve one numeric value.",
+            )
+        ],
+        result_pipeline={
+            "source_query_id": "source",
+            "output_query_id": "derived",
+            "steps": [
+                {
+                    "operation": "sort",
+                    "field": "value",
+                }
+            ],
+        },
+    )
+
+    class StaticPlanner:
+        name = "static"
+
+        def plan(self, request, candidate_operations):
+            return plan
+
+    provider = FakeMarketDataProvider(frame=pd.DataFrame([{"value": 1.0}]))
+
+    class FailingPipelineExecutor:
+        def execute(self, pipeline, source):
+            raise ValueError("pipeline execution failed")
+
+    service = AnalysisService(
+        planner=StaticPlanner(),
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+        result_pipeline_executor=FailingPipelineExecutor(),
+    )
+
+    response = service.analyze(
+        "request-1",
+        AnalysisRequest(prompt="Calculate the ratio."),
+        api_route="/api/analysis",
+    )
+
+    assert response.status == "error"
+    assert response.results[0].query_id == "derived"
+    assert response.results[0].status == "error"
+    assert response.results[0].error.message == "pipeline execution failed"
 
 
 def test_executor_applies_exact_string_filter():
@@ -948,7 +1066,7 @@ def test_full_market_period_return_reads_only_boundary_snapshots():
                 )
             closes = {
                 "20260601": [10.0, 20.0],
-                "20260630": [15.0, 18.0],
+                "20260630": [15.0, 18.0, 8.0],
             }
             values = closes.get(params["trade_date"], [])
             return pd.DataFrame(
@@ -959,7 +1077,7 @@ def test_full_market_period_return_reads_only_boundary_snapshots():
                         "close": close,
                     }
                     for code, close in zip(
-                        ("000001.SZ", "000002.SZ"),
+                        ("000001.SZ", "000002.SZ", "000003.SZ"),
                         values,
                     )
                 ]
@@ -998,6 +1116,10 @@ def test_full_market_period_return_reads_only_boundary_snapshots():
         "period_return_pct": 50.0,
         "name": "First",
         "industry": "Bank",
+    }
+    assert {row["ts_code"] for row in result.rows} == {
+        "000001.SZ",
+        "000002.SZ",
     }
     daily_calls = [call for call in provider.calls if call[0] == "daily"]
     assert daily_calls == [

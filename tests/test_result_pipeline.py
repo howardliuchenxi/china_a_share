@@ -89,3 +89,22 @@ def test_result_pipeline_fails_fast_when_a_field_is_missing():
 
     with pytest.raises(ValueError, match="sort fields are missing: missing"):
         ResultPipelineExecutor().execute(pipeline, source_result())
+
+
+def test_result_pipeline_contract_rejects_nonnumeric_derive_scalar():
+    with pytest.raises(ValueError, match="derive requires a numeric scalar"):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "source",
+                "output_query_id": "derived",
+                "steps": [
+                    {
+                        "operation": "derive",
+                        "field": "ratio",
+                        "output_field": "adjusted_ratio",
+                        "arithmetic_operator": "multiply",
+                        "value": "",
+                    }
+                ],
+            }
+        )

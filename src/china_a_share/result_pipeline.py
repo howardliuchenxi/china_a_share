@@ -36,7 +36,11 @@ class ResultPipelineExecutor:
         source_row_count = len(frame)
         for step in pipeline.steps:
             frame = self._execute_step(frame, step)
-        rows = frame.where(pd.notna(frame), None).to_dict(orient="records")
+        rows = (
+            frame.astype(object)
+            .where(pd.notna(frame), None)
+            .to_dict(orient="records")
+        )
         return QueryResult(
             query_id=pipeline.output_query_id,
             provider=source.provider,

@@ -92,9 +92,6 @@ export interface QueryPlan {
   /** Optional deterministic cross-query calculation. */
   result_transform:
     | "two_limit_up_next_day_probability"
-    | "dimension_monthly_turnover_decline"
-    | "healthcare_retail_cohort_return"
-    | "industry_retail_cohort_return"
     | null;
   /** Optional deterministic relational operations applied to one query result. */
   result_pipeline?: {

@@ -375,6 +375,11 @@ class ResultPipelineStep(BaseModel):
         }
         if not required[self.operation]:
             raise ValueError(f"Missing required arguments for {self.operation}")
+        if self.operation == "derive" and (
+            isinstance(self.value, bool)
+            or not isinstance(self.value, (int, float))
+        ):
+            raise ValueError("derive requires a numeric scalar value")
         return self
 
 
@@ -426,9 +431,6 @@ class QueryPlan(BaseModel):
     result_transform: Optional[
         Literal[
             "two_limit_up_next_day_probability",
-            "dimension_monthly_turnover_decline",
-            "healthcare_retail_cohort_return",
-            "industry_retail_cohort_return",
         ]
     ] = Field(
         default=None,
