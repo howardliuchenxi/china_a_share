@@ -166,6 +166,15 @@ class DeepSeekQueryPlanner:
             request.prompt,
             candidate_operations,
         )
+        known_market_period_ranking_plan = (
+            self._build_known_market_period_ranking_plan(
+                request.prompt,
+                candidate_operations,
+            )
+        )
+        known_fallback_plan = (
+            known_retail_ranking_plan or known_market_period_ranking_plan
+        )
         for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
             response = self._request_with_retry(request_payload)
             try:
@@ -182,9 +191,9 @@ class DeepSeekQueryPlanner:
                 if (
                     str(exc)
                     == "DeepSeek returned a query plan that violates the contract."
-                    and known_retail_ranking_plan is not None
+                    and known_fallback_plan is not None
                 ):
-                    plan = known_retail_ranking_plan
+                    plan = known_fallback_plan
                     break
                 raise
         else:
@@ -212,6 +221,11 @@ class DeepSeekQueryPlanner:
             # for interpretation, then normalize the recognized intent to the fixed
             # provider reads and deterministic ranking pipeline.
             plan = known_retail_ranking_plan
+        if (
+            known_market_period_ranking_plan is not None
+            and plan.feasibility == "unsupported"
+        ):
+            plan = known_market_period_ranking_plan
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
         self._normalize_common_analytics(plan, request.prompt)
@@ -371,6 +385,88 @@ class DeepSeekQueryPlanner:
                 },
             }
         )
+
+    @staticmethod
+    def _build_known_market_period_ranking_plan(
+        prompt: str,
+        candidate_operations: Sequence[DataOperation],
+    ) -> Optional[QueryPlan]:
+        """Build the supported full-market period-return ranking after model drift."""
+        normalized = prompt.replace(" ", "")
+        requested_limit = DeepSeekQueryPlanner._parse_requested_limit(normalized)
+        has_market_scope = any(
+            marker in normalized
+            for marker in ("A股", "大A", "全市场")
+        )
+        has_return_metric = any(
+            marker in normalized
+            for marker in ("涨幅", "跌幅", "收益率", "上涨", "下跌")
+        )
+        has_ranking = requested_limit is not None or any(
+            marker in normalized
+            for marker in ("最大", "最高", "最小", "最低", "排名", "最多")
+        )
+        has_supported_period = bool(
+            re.search(r"(?:(?:\d{4})年)?\d{1,2}月", normalized)
+            or re.search(r"\d{4}年", normalized)
+            or "今年" in normalized
+            or "去年" in normalized
+        )
+        available_operations = {
+            operation.name for operation in candidate_operations
+        }
+        if not (
+            has_market_scope
+            and has_return_metric
+            and has_ranking
+            and has_supported_period
+            and "daily" in available_operations
+        ):
+            return None
+
+        plan = QueryPlan.model_validate(
+            {
+                "interpretation": (
+                    "Rank the full A-share market by return over the requested "
+                    "calendar period."
+                ),
+                "requirements": [
+                    {
+                        "requirement": (
+                            "Calculate each A-share security's return over the "
+                            "requested period and return the requested ranking."
+                        ),
+                        "status": "covered",
+                        "implementation": (
+                            "Read the first and last available full-market daily "
+                            "snapshots, calculate returns locally, sort, and limit."
+                        ),
+                        "evidence": (
+                            "The daily operation provides trade_date, ts_code, and "
+                            "close; period_return_by_ts_code performs the audited "
+                            "boundary calculation."
+                        ),
+                    }
+                ],
+                "queries": [
+                    {
+                        "query_id": "market-period-return",
+                        "operation": "daily",
+                        "params": {
+                            "start_date": "20000101",
+                            "end_date": "20000102",
+                        },
+                        "fields": ["ts_code", "trade_date", "close"],
+                        "purpose": (
+                            "Retrieve full-market boundary snapshots for the "
+                            "requested return period."
+                        ),
+                    }
+                ],
+            }
+        )
+        DeepSeekQueryPlanner._normalize_market_period_returns(plan, prompt)
+        return plan
 
     def _decode_plan_response(self, response: Any, prompt: str) -> QueryPlan:
         """Validate one planner response before any deterministic normalization."""

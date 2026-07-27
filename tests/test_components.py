@@ -801,6 +801,57 @@ def test_planner_routes_market_month_ranking_to_daily_boundary_snapshots():
     assert validated.feasibility == "supported"
 
 
+def test_planner_recovers_unsupported_market_month_return_ranking():
+    unsupported_plan = QueryPlan(
+        interpretation="Find the A-share company with the largest June return.",
+        feasibility="unsupported",
+        requirements=[
+            {
+                "requirement": "Rank all A-shares by June return.",
+                "status": "unsupported",
+                "evidence": (
+                    "The model incorrectly claimed daily cannot serve the request."
+                ),
+            }
+        ],
+        limitations=[
+            "No operation supports full-market period return directly."
+        ],
+    )
+    session = FakeSession(
+        FakeResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": unsupported_plan.model_dump_json()
+                        }
+                    }
+                ]
+            }
+        )
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="A股6月涨幅最大的公司是"),
+        [DataOperation(name="daily", description="Daily prices.")],
+    )
+
+    assert result.feasibility == "supported"
+    assert result.limitations == []
+    assert result.queries[0].operation == "daily"
+    assert result.queries[0].params == {
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+    assert result.queries[0].transform == "period_return_by_ts_code"
+    assert result.result_pipeline is not None
+    assert result.result_pipeline.steps[-2].direction == "desc"
+    assert result.result_pipeline.steps[-1].count == 1
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+    assert validated.feasibility == "supported"
+
+
 def test_validator_rejects_result_pipeline_field_before_provider_execution():
     plan = make_daily_plan()
     plan.result_pipeline = ResultPipeline.model_validate(
