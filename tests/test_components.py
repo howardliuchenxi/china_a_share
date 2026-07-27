@@ -1041,6 +1041,90 @@ def test_analysis_returns_structured_error_when_result_pipeline_fails():
     assert response.results[0].error.message == "pipeline execution failed"
 
 
+def test_analysis_rejects_synchronous_security_fanout_before_provider_calls():
+    plan = QueryPlan(
+        interpretation="Rank the full market by the retail proxy.",
+        requirements=[
+            {
+                "requirement": "Rank listed A-shares by the retail proxy.",
+                "status": "covered",
+                "implementation": (
+                    "Fan out top10_floatholders over the stock_basic universe."
+                ),
+                "evidence": (
+                    "The worker supports durable per-security fan-out."
+                ),
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="universe",
+                operation="stock_basic",
+                params={"list_status": "L"},
+                fields=["ts_code"],
+                purpose="Retrieve listed A-shares.",
+            ),
+            DataQuery(
+                query_id="retail-proxy",
+                operation="top10_floatholders",
+                fields=[
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "holder_name",
+                    "hold_float_ratio",
+                ],
+                purpose="Calculate the retail proxy per security.",
+                transform="cr10_float_trend",
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "retail-proxy",
+            "output_query_id": "ranked-retail-proxy",
+            "steps": [
+                {
+                    "operation": "drop_missing",
+                    "fields": ["non_top10_float_ratio"],
+                },
+                {
+                    "operation": "sort",
+                    "field": "non_top10_float_ratio",
+                    "direction": "desc",
+                },
+                {"operation": "limit", "count": 10},
+            ],
+        },
+    )
+
+    class StaticPlanner:
+        name = "static"
+
+        def plan(self, request, candidate_operations):
+            return plan
+
+    provider = FakeMarketDataProvider(
+        stock_frame=pd.DataFrame(columns=["ts_code"])
+    )
+    service = AnalysisService(
+        planner=StaticPlanner(),
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+
+    response = service.analyze(
+        "request-fanout",
+        AnalysisRequest(prompt="找到散户比例top10的股票"),
+        api_route="/api/analysis",
+    )
+
+    assert response.status == "error"
+    assert response.error.source == "system"
+    assert "requires a background task" in response.error.message
+    assert response.decision_trace[-2].status == "skipped"
+    assert provider.calls == []
+
+
 def test_executor_applies_exact_string_filter():
     frame = pd.DataFrame(
         [

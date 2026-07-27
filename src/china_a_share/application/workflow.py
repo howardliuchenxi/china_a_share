@@ -994,6 +994,47 @@ class AnalysisService:
             )
 
         if (
+            self._needs_dynamic_security_fanout(validated_plan)
+            and progress_callback is None
+        ):
+            message = (
+                "This supported analysis requires a background task because it "
+                "fans out across a security universe. No provider query was issued."
+            )
+            logger.warning(
+                "synchronous_fanout_rejected request_id=%s",
+                request_id,
+            )
+            decision_trace.extend(
+                [
+                    DecisionTraceStep(
+                        stage="execution",
+                        status="skipped",
+                        title="Synchronous fan-out rejected",
+                        detail=message,
+                    ),
+                    DecisionTraceStep(
+                        stage="result",
+                        status="error",
+                        title="Background task required",
+                        detail=(
+                            "Submit the request through the asynchronous analysis "
+                            "route and monitor its task status."
+                        ),
+                    ),
+                ]
+            )
+            return AnalysisResponse(
+                request_id=request_id,
+                planner=self._planner.name,
+                data_provider=self._provider.name,
+                status="error",
+                plan=validated_plan,
+                decision_trace=decision_trace,
+                error=ServiceError(source="system", message=message),
+            )
+
+        if (
             validated_plan.result_transform
             == "two_limit_up_next_day_probability"
         ):
@@ -1109,8 +1150,8 @@ class AnalysisService:
         )
 
     @staticmethod
-    def _needs_fanout(plan: QueryPlan) -> bool:
-        """Detect plans that require dynamic per-security or per-date fan-out."""
+    def _needs_dynamic_security_fanout(plan: QueryPlan) -> bool:
+        """Detect plans that require dynamic per-security provider calls."""
         has_universe = any(
             q.operation in UNIVERSE_OPERATIONS for q in plan.queries
         )
@@ -1118,6 +1159,11 @@ class AnalysisService:
             q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
             for q in plan.queries
         )
+        return has_universe and has_security_template
+
+    @staticmethod
+    def _needs_fanout(plan: QueryPlan) -> bool:
+        """Detect plans that require dynamic per-security or per-date fan-out."""
         has_daily_range = any(
             q.operation in {"daily", "daily_basic"}
             and not q.params.get("ts_code")
@@ -1125,7 +1171,10 @@ class AnalysisService:
             and q.params.get("end_date")
             for q in plan.queries
         )
-        return (has_universe and has_security_template) or has_daily_range
+        return (
+            AnalysisService._needs_dynamic_security_fanout(plan)
+            or has_daily_range
+        )
 
     def _execute_with_fanout(
         self,
