@@ -111,7 +111,7 @@ def test_single_security_retail_request_stays_synchronous():
     )
 
 
-def test_task_coordinator_reuses_same_day_submission_and_runs_to_completion():
+def test_task_coordinator_dispatches_each_submission_as_a_new_task():
     store = MemoryAnalysisTaskStore()
     dispatcher = FakeDispatcher()
     coordinator = AnalysisTaskCoordinator(store, dispatcher)
@@ -120,16 +120,20 @@ def test_task_coordinator_reuses_same_day_submission_and_runs_to_completion():
     first = coordinator.submit(request)
     second = coordinator.submit(request)
 
-    assert first.task_id == second.task_id
-    assert dispatcher.task_ids == [first.task_id]
+    assert first.task_id != second.task_id
+    assert dispatcher.task_ids == [first.task_id, second.task_id]
 
-    completed = coordinator.run(first.task_id, FakeAnalysisService())
+    first_completed = coordinator.run(first.task_id, FakeAnalysisService())
+    second_completed = coordinator.run(second.task_id, FakeAnalysisService())
 
-    assert completed.status == AnalysisTaskStatus.SUCCEEDED
-    assert completed.completed_items == 4
-    assert completed.total_items == 4
-    assert completed.response is not None
+    assert first_completed.status == AnalysisTaskStatus.SUCCEEDED
+    assert first_completed.completed_items == 4
+    assert first_completed.total_items == 4
+    assert first_completed.response is not None
+    assert second_completed.status == AnalysisTaskStatus.SUCCEEDED
+    assert second_completed.response is not None
     assert coordinator.get(first.task_id).status == AnalysisTaskStatus.SUCCEEDED
+    assert coordinator.get(second.task_id).status == AnalysisTaskStatus.SUCCEEDED
 
 
 def test_cloud_run_dispatcher_sends_only_task_id_override():

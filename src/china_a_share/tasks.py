@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from hashlib import sha256
 import json
 import logging
 from threading import Lock
 from typing import Dict, Optional
+from uuid import uuid4
 
 import google.auth
 from google.auth.transport.requests import AuthorizedSession
@@ -25,7 +25,6 @@ from china_a_share.core.ports import AnalysisTaskDispatcher, AnalysisTaskStore
 
 
 ANALYSIS_TASK_PREFIX = "analysis-jobs"
-ANALYSIS_TASK_VERSION = "2"
 ASYNC_REQUEST_MARKERS = (
     "\u6563\u6237\u6bd4\u4f8b",
     "\u5206\u4e24\u534a",
@@ -185,12 +184,8 @@ class AnalysisTaskCoordinator:
         self._dispatcher = dispatcher
 
     def submit(self, request: AnalysisRequest) -> AnalysisTaskSubmission:
-        """Persist and dispatch one daily-idempotent analysis task."""
-        task_id = self._task_id(request)
-        existing = self._store.get(task_id)
-        if existing and existing.status != AnalysisTaskStatus.FAILED:
-            return self._submission(existing)
-
+        """Persist and dispatch one new analysis task for every submission."""
+        task_id = uuid4().hex
         now = datetime.now(timezone.utc)
         task = AnalysisTask(
             task_id=task_id,
@@ -250,15 +245,6 @@ class AnalysisTaskCoordinator:
         task.updated_at = datetime.now(timezone.utc)
         self._store.put(task)
         return task
-
-    @staticmethod
-    def _task_id(request: AnalysisRequest) -> str:
-        """Build one same-day idempotency key without exposing prompt contents."""
-        current_day = datetime.now(timezone.utc).date().isoformat()
-        payload = (
-            f"{ANALYSIS_TASK_VERSION}:{current_day}:{request.model_dump_json()}"
-        ).encode("utf-8")
-        return sha256(payload).hexdigest()
 
     @staticmethod
     def _submission(task: AnalysisTask) -> AnalysisTaskSubmission:
