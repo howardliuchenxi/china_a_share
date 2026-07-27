@@ -320,6 +320,81 @@ def test_planner_recovers_known_retail_ranking_after_contract_invalid_responses(
     assert validated.feasibility == "supported"
 
 
+def test_planner_normalizes_schema_valid_retail_ranking_with_invalid_lineage():
+    model_plan = QueryPlan(
+        interpretation="Rank A-shares by retail ratio.",
+        requirements=[
+            {
+                "requirement": "Return the top ten retail ratios.",
+                "status": "covered",
+                "implementation": "Filter and sort locally.",
+                "evidence": "The result pipeline supports deterministic filtering.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="universe",
+                operation="stock_basic",
+                fields=["ts_code", "name"],
+                purpose="Retrieve listed stocks.",
+            ),
+            DataQuery(
+                query_id="holders",
+                operation="top10_floatholders",
+                params={"period": "20260630"},
+                fields=["ts_code", "end_date", "hold_float_ratio"],
+                purpose="Retrieve float-holder snapshots.",
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "holders",
+            "output_query_id": "ranking",
+            "steps": [
+                {
+                    "operation": "filter",
+                    "field": "non_top10_float_ratio",
+                    "comparison": "ge",
+                    "value": 0,
+                },
+                {
+                    "operation": "sort",
+                    "field": "non_top10_float_ratio",
+                    "direction": "desc",
+                },
+                {"operation": "limit", "count": 10},
+            ],
+        },
+    )
+    session = FakeSession(
+        FakeResponse(
+            {"choices": [{"message": {"content": model_plan.model_dump_json()}}]}
+        )
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="大A在6月散户比例最多的股票前十"),
+        [
+            DataOperation(name="stock_basic", description="A-share universe."),
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            ),
+        ],
+    )
+
+    assert result.queries[1].transform == "cr10_float_trend"
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "latest_by_group",
+        "drop_missing",
+        "sort",
+        "limit",
+    ]
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(result)
+    assert validated.feasibility == "supported"
+
+
 def test_planner_accepts_limit_up_query_with_native_limit_type():
     plan = QueryPlan(
         interpretation="List yesterday's limit-up stocks.",

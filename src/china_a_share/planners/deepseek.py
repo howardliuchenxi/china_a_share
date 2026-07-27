@@ -193,6 +193,25 @@ class DeepSeekQueryPlanner:
                 message="DeepSeek returned no usable query plan.",
             )
 
+        pipeline_source = (
+            plan.result_pipeline.source_query_id
+            if plan.result_pipeline is not None
+            else None
+        )
+        has_retail_proxy_lineage = any(
+            query.query_id == pipeline_source
+            and query.transform == "cr10_float_trend"
+            for query in plan.queries
+        )
+        if (
+            known_retail_ranking_plan is not None
+            and not has_retail_proxy_lineage
+        ):
+            # This audited workflow has stricter field-lineage requirements than a
+            # merely schema-valid model response can guarantee. Keep the model call
+            # for interpretation, then normalize the recognized intent to the fixed
+            # provider reads and deterministic ranking pipeline.
+            plan = known_retail_ranking_plan
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
         self._normalize_common_analytics(plan, request.prompt)
