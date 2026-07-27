@@ -109,6 +109,12 @@ def create_app(
                 api_route in MONITORED_API_ROUTES
                 or api_route.startswith(f"{ANALYSIS_TASK_API_ROUTE}/")
             ):
+                response_size = 0
+                try:
+                    if hasattr(response, "body") and response.body:
+                        response_size = len(response.body)
+                except Exception:
+                    pass
                 # Route allowlisting prevents user-controlled paths from becoming labels.
                 log_event(
                     logger,
@@ -121,6 +127,7 @@ def create_app(
                     duration_ms=int(
                         (perf_counter() - started_at) * MILLISECONDS_PER_SECOND
                     ),
+                    response_size=response_size,
                     request_id=request_id,
                 )
 

@@ -805,6 +805,26 @@ class AnalysisService:
             result_pipeline_executor or ResultPipelineExecutor()
         )
 
+    @staticmethod
+    def _log_termination(
+        request_id: str,
+        reason: str,
+        status: str = "error",
+        plan_feasibility: str = "",
+        error_info: str = "",
+    ) -> None:
+        """Log one structured termination event for every analysis outcome."""
+        logger.info(
+            "analysis_terminated request_id=%s status=%s reason=%s"
+            " plan_feasibility=%s error=%s",
+            request_id,
+            status,
+            reason,
+            plan_feasibility,
+            error_info,
+        )
+
+
     def analyze(
         self,
         request_id: str,
@@ -912,6 +932,7 @@ class AnalysisService:
                 exc.source,
                 exc.code,
             )
+            self._log_termination(request_id, reason="vision_error", status="error", error_info=str(exc))
             return AnalysisResponse(
                 request_id=request_id,
                 planner=self._planner.name,
@@ -932,6 +953,7 @@ class AnalysisService:
                 request_id,
                 exc.source,
             )
+            self._log_termination(request_id, reason="planner_error", status="error", error_info=str(exc))
             return AnalysisResponse(
                 request_id=request_id,
                 planner=self._planner.name,
@@ -956,6 +978,7 @@ class AnalysisService:
                     detail=str(exc),
                 )
             )
+            self._log_termination(request_id, reason="plan_validation_error", status="error", error_info=str(exc))
             return AnalysisResponse(
                 request_id=request_id,
                 planner=self._planner.name,
@@ -974,6 +997,7 @@ class AnalysisService:
                     detail=str(exc),
                 )
             )
+            self._log_termination(request_id, reason="unexpected_error", status="error", error_info=str(exc))
             return AnalysisResponse(
                 request_id=request_id,
                 planner=self._planner.name,
@@ -1000,6 +1024,12 @@ class AnalysisService:
                         detail="The response preserves the planner limitations for review.",
                     ),
                 ]
+            )
+            self._log_termination(
+                request_id,
+                reason="unsupported_plan",
+                status="error",
+                plan_feasibility="unsupported",
             )
             return AnalysisResponse(
                 request_id=request_id,
@@ -1040,6 +1070,12 @@ class AnalysisService:
                         ),
                     ),
                 ]
+            )
+            self._log_termination(
+                request_id,
+                reason="background_task_required",
+                status="error",
+                plan_feasibility=validated_plan.feasibility,
             )
             return AnalysisResponse(
                 request_id=request_id,
@@ -1155,6 +1191,12 @@ class AnalysisService:
             request_id,
             overall_status,
             len(results),
+        )
+        self._log_termination(
+            request_id,
+            reason="completed",
+            status=overall_status,
+            plan_feasibility=validated_plan.feasibility,
         )
         return AnalysisResponse(
             request_id=request_id,
