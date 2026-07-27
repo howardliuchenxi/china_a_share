@@ -96,6 +96,7 @@ def test_original_complex_prompt_requires_async_analysis():
     [
         "查找散户比例最高的10只A股股票",
         "筛选全市场散户比例前10%分位的股票",
+        "大A在6月散户最多的股票前十",
     ],
 )
 def test_full_market_retail_rankings_require_async_analysis(prompt):

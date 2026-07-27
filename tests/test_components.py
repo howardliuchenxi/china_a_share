@@ -288,6 +288,38 @@ def test_planner_retries_one_contract_invalid_response():
     assert len(session.calls) == 2
 
 
+def test_planner_recovers_known_retail_ranking_after_contract_invalid_responses():
+    invalid_response = FakeResponse(
+        {"choices": [{"message": {"content": '{"market":"A_SHARE"'}}]}
+    )
+    session = SequenceFakeSession([invalid_response, invalid_response])
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="大A在6月散户最多的股票前十"),
+        [
+            DataOperation(name="stock_basic", description="A-share universe."),
+            DataOperation(
+                name="top10_floatholders",
+                description="Float-holder snapshots.",
+            ),
+        ],
+    )
+
+    assert len(session.calls) == 2
+    assert [query.operation for query in result.queries] == [
+        "stock_basic",
+        "top10_floatholders",
+    ]
+    assert result.queries[1].params == {"period": "20260630"}
+    assert result.result_pipeline is not None
+    assert result.result_pipeline.steps[-2].direction == "desc"
+    assert result.result_pipeline.steps[-1].count == 10
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(result)
+    assert validated.feasibility == "supported"
+
+
 def test_planner_accepts_limit_up_query_with_native_limit_type():
     plan = QueryPlan(
         interpretation="List yesterday's limit-up stocks.",
