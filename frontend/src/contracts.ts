@@ -101,6 +101,7 @@ export interface QueryPlan {
         | "rolling_mean"
         | "rolling_sum"
         | "shift"
+        | "match_at_offset"
         | "match_source"
         | "compare_fields"
         | "compare_scalar"
@@ -128,6 +129,8 @@ export interface QueryPlan {
       window?: number | null;
       min_periods?: number | null;
       periods?: number | null;
+      offset_value?: number | null;
+      offset_unit?: "day" | "week" | "month" | "year" | null;
       require_consecutive?: boolean;
       aggregations?: Array<{
         output_field: string;

@@ -49,6 +49,17 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         ],
     },
     {
+        "family": "limit_up_forward_horizon",
+        "tier": "supported",
+        "delivery": "sync",
+        "operations": ["limit_list_d", "daily"],
+        "prompts": [
+            "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+            "统计20250101至20251231三连板事件未来三个月的收益表现",
+            "分析过去一年连续四个交易日涨停后未来两周的上涨概率和收益分布",
+        ],
+    },
+    {
         "family": "market_period_return",
         "tier": "supported",
         "delivery": "sync",

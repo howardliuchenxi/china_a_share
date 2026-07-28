@@ -248,6 +248,41 @@ class ResultPipelineExecutor:
                 )
             ordered[step.output_field] = shifted
             return ordered.reset_index(drop=True)
+        if step.operation == "match_at_offset":
+            ordered = frame.sort_values(
+                step.group_by + [step.order_by],
+                kind="mergesort",
+            ).copy()
+            ordered_dates = pd.to_datetime(
+                ordered[step.order_by],
+                format="%Y%m%d",
+                errors="coerce",
+            )
+            offsets = {
+                "day": pd.DateOffset(days=step.offset_value),
+                "week": pd.DateOffset(weeks=step.offset_value),
+                "month": pd.DateOffset(months=step.offset_value),
+                "year": pd.DateOffset(years=step.offset_value),
+            }
+            ordered["_target_date"] = ordered_dates + offsets[step.offset_unit]
+            ordered[step.output_field] = None
+            for _, indexes in ordered.groupby(
+                step.group_by,
+                sort=False,
+                dropna=False,
+            ).groups.items():
+                group_indexes = list(indexes)
+                group_dates = ordered_dates.loc[group_indexes]
+                for row_index in group_indexes:
+                    target = ordered.at[row_index, "_target_date"]
+                    candidates = group_dates.loc[group_dates >= target]
+                    if not candidates.empty:
+                        match_index = candidates.index[0]
+                        ordered.at[row_index, step.output_field] = ordered.at[
+                            match_index,
+                            step.field,
+                        ]
+            return ordered.drop(columns=["_target_date"]).reset_index(drop=True)
         if step.operation == "compare_fields":
             result = frame.copy()
             left = pd.to_numeric(result[step.field], errors="coerce")

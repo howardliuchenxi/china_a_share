@@ -423,3 +423,41 @@ def test_pipeline_matches_another_source_and_summarizes_a_parameterized_streak()
         "Event count": 1,
         "Probability (%)": 100.0,
     }
+
+
+def test_pipeline_matches_the_next_available_observation_after_calendar_offset():
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "A", "trade_date": "20260105", "close": 10.0},
+            {"ts_code": "A", "trade_date": "20260205", "close": 12.0},
+            {"ts_code": "B", "trade_date": "20260105", "close": 20.0},
+            {"ts_code": "B", "trade_date": "20260206", "close": 18.0},
+        ],
+        row_count=4,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "forward-values",
+            "steps": [
+                {
+                    "operation": "match_at_offset",
+                    "field": "close",
+                    "output_field": "one_month_close",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "offset_value": 1,
+                    "offset_unit": "month",
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows[0]["one_month_close"] == 12.0
+    assert result.rows[2]["one_month_close"] == 18.0

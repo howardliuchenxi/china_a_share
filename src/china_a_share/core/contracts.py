@@ -290,6 +290,7 @@ class ResultPipelineStep(BaseModel):
         "rolling_mean",
         "rolling_sum",
         "shift",
+        "match_at_offset",
         "match_source",
         "compare_fields",
         "compare_scalar",
@@ -380,6 +381,16 @@ class ResultPipelineStep(BaseModel):
         le=250,
         description="Signed row offset used within an ordered group.",
     )
+    offset_value: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=1_000,
+        description="Positive calendar offset applied by a temporal match.",
+    )
+    offset_unit: Optional[Literal["day", "week", "month", "year"]] = Field(
+        default=None,
+        description="Calendar unit applied by a temporal match.",
+    )
     require_consecutive: bool = Field(
         default=False,
         description=(
@@ -434,6 +445,14 @@ class ResultPipelineStep(BaseModel):
                 and self.group_by
                 and self.order_by
                 and self.periods
+            ),
+            "match_at_offset": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.offset_value
+                and self.offset_unit
             ),
             "match_source": bool(
                 self.right_source_query_id

@@ -202,6 +202,73 @@ def test_validator_does_not_infer_execution_rules_from_requirement_prose():
     assert result.requirements[0].status == "covered"
 
 
+def test_future_horizon_rejects_a_next_day_substitution():
+    plan = make_daily_plan()
+    plan.queries[0].params = {
+        "start_date": "20260101",
+        "end_date": "20260701",
+    }
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "wrong-horizon",
+            "steps": [
+                {
+                    "operation": "shift",
+                    "field": "close",
+                    "output_field": "next_close",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "periods": -1,
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="preserve the requested future outcome horizon",
+    ):
+        AnalysisService._validate_planned_time_semantics(
+            plan,
+            "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+        )
+
+
+def test_future_horizon_accepts_the_exact_calendar_offset_and_data_coverage():
+    plan = make_daily_plan()
+    plan.queries[0].params = {
+        "start_date": "20260101",
+        "end_date": "20260701",
+    }
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "one-month-horizon",
+            "steps": [
+                {
+                    "operation": "match_at_offset",
+                    "field": "close",
+                    "output_field": "one_month_close",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "offset_value": 1,
+                    "offset_unit": "month",
+                }
+            ],
+        }
+    )
+
+    result = AnalysisService._validate_planned_time_semantics(
+        plan,
+        "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+    )
+
+    assert result.result_pipeline.steps[0].offset_unit == "month"
+
+
 def test_planner_parses_deepseek_json_plan():
     plan = make_daily_plan()
     session = FakeSession(
