@@ -434,6 +434,65 @@ def test_planner_normalizes_derive_comparison_to_compare_scalar():
     assert step.comparison == "gt"
 
 
+def test_planner_normalizes_event_summary_syntax():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["result_pipeline"] = {
+        "source_query_id": plan["queries"][0]["query_id"],
+        "output_query_id": "event-summary",
+        "steps": [
+            {
+                "operation": "sort",
+                "order_by": "trade_date",
+                "direction": "asc",
+            },
+            {
+                "operation": "derive",
+                "field": "price_ratio",
+                "output_field": "return_pct",
+                "arithmetic_operator": "constant_minus",
+                "value": 1,
+            },
+            {
+                "operation": "summarize",
+                "aggregations": [
+                    {
+                        "output_field": "up_count",
+                        "field": "return_pct",
+                        "function": "count",
+                        "condition": {"operator": "gt", "value": 0},
+                    },
+                    {
+                        "output_field": "up_ratio",
+                        "field": "return_pct",
+                        "function": "mean",
+                        "condition": {"operator": "gt", "value": 0},
+                    },
+                ],
+            },
+        ],
+    }
+    planner = DeepSeekQueryPlanner("test-key")
+
+    result = planner.normalize_and_validate_plan(json.dumps(plan))
+
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "sort",
+        "derive",
+        "compare_scalar",
+        "summarize",
+    ]
+    sort_step, return_step, condition_step, summary_step = (
+        result.result_pipeline.steps
+    )
+    assert sort_step.field == "trade_date"
+    assert return_step.arithmetic_operator == "subtract"
+    assert condition_step.field == "return_pct"
+    assert summary_step.aggregations[0].field == condition_step.output_field
+    assert summary_step.aggregations[0].function == "sum"
+    assert summary_step.aggregations[1].field == condition_step.output_field
+    assert summary_step.aggregations[1].function == "mean"
+
+
 def test_planner_retries_with_semantic_validation_feedback():
     invalid_plan = make_daily_plan()
     invalid_plan.result_pipeline = ResultPipeline.model_validate(

@@ -384,19 +384,73 @@ class DeepSeekQueryPlanner:
         pipeline = raw_plan.get("result_pipeline")
         steps = pipeline.get("steps") if isinstance(pipeline, dict) else None
         if isinstance(steps, list):
+            normalized_steps = []
+            condition_outputs = {}
             for step in steps:
-                if not isinstance(step, dict) or step.get("operation") != "derive":
+                if not isinstance(step, dict):
+                    normalized_steps.append(step)
                     continue
-                comparison = step.get("arithmetic_operator")
-                if comparison not in {"gt", "ge", "eq", "le", "lt"}:
-                    continue
-                step["operation"] = (
-                    "compare_fields"
-                    if step.get("right_field")
-                    else "compare_scalar"
-                )
-                step["comparison"] = comparison
-                step.pop("arithmetic_operator", None)
+                operation = step.get("operation")
+                if (
+                    operation == "sort"
+                    and not step.get("field")
+                    and step.get("order_by")
+                ):
+                    step["field"] = step["order_by"]
+                if operation == "derive":
+                    comparison = step.get("arithmetic_operator")
+                    if comparison in {"gt", "ge", "eq", "le", "lt"}:
+                        step["operation"] = (
+                            "compare_fields"
+                            if step.get("right_field")
+                            else "compare_scalar"
+                        )
+                        step["comparison"] = comparison
+                        step.pop("arithmetic_operator", None)
+                    elif (
+                        comparison == "constant_minus"
+                        and step.get("value") == 1
+                        and "ratio" in str(step.get("field", "")).lower()
+                        and "return" in str(step.get("output_field", "")).lower()
+                    ):
+                        step["arithmetic_operator"] = "subtract"
+                if operation == "summarize":
+                    for aggregation in step.get("aggregations", []):
+                        if not isinstance(aggregation, dict):
+                            continue
+                        condition = aggregation.pop("condition", None)
+                        if not isinstance(condition, dict):
+                            continue
+                        comparison = condition.get("operator")
+                        value = condition.get("value")
+                        field = aggregation.get("field")
+                        if (
+                            comparison not in {"gt", "ge", "eq", "le", "lt"}
+                            or value is None
+                            or not field
+                        ):
+                            continue
+                        condition_key = (field, comparison, str(value))
+                        condition_field = condition_outputs.get(condition_key)
+                        if condition_field is None:
+                            condition_field = (
+                                f"condition_{aggregation['output_field']}"
+                            )
+                            condition_outputs[condition_key] = condition_field
+                            normalized_steps.append(
+                                {
+                                    "operation": "compare_scalar",
+                                    "field": field,
+                                    "output_field": condition_field,
+                                    "comparison": comparison,
+                                    "value": value,
+                                }
+                            )
+                        aggregation["field"] = condition_field
+                        if aggregation.get("function") == "count":
+                            aggregation["function"] = "sum"
+                normalized_steps.append(step)
+            pipeline["steps"] = normalized_steps
         queries = raw_plan.get("queries")
         if not isinstance(queries, list):
             return
