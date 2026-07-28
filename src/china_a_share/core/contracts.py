@@ -607,6 +607,10 @@ class AnalysisResponse(BaseModel):
         default=None,
         description="Planning or system error when no query-level result applies.",
     )
+    cache_metrics: Optional[Dict[str, int]] = Field(
+        default=None,
+        description="Optional metrics tracking cache hits, misses, and bypasses during execution.",
+    )
 
 
 class AnalysisTask(BaseModel):

@@ -1232,6 +1232,9 @@ export default function App() {
               <>
               <h2>{response.plan.interpretation}</h2>
               <p>规划器：{response.planner} · 数据源：{response.data_provider}</p>
+              {response.cache_metrics && (
+                <p>缓存指标：命中 {response.cache_metrics.hit || 0} 次，穿透 {response.cache_metrics.miss || 0} 次，绕过 {response.cache_metrics.bypass || 0} 次</p>
+              )}
               <RequirementCoverage response={response} />
               {response.plan.queries.map((query) => (
                 <div className="query-card" key={query.query_id}>

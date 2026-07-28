@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 
+from china_a_share.cache import request_cache_metrics, request_cache_metrics_lock
 from china_a_share.core.contracts import (
     AnalysisRequest,
     AnalysisResponse,
@@ -835,6 +836,9 @@ class AnalysisService:
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> AnalysisResponse:
         """Run the complete provider-neutral analysis workflow."""
+        with request_cache_metrics_lock:
+            request_cache_metrics[request_id] = {}
+        
         decision_trace: List[DecisionTraceStep] = [
             DecisionTraceStep(
                 stage="requirements",
@@ -1200,6 +1204,9 @@ class AnalysisService:
             status=overall_status,
             plan_feasibility=validated_plan.feasibility,
         )
+        with request_cache_metrics_lock:
+            final_metrics = request_cache_metrics.pop(request_id, {})
+
         return AnalysisResponse(
             request_id=request_id,
             planner=self._planner.name,
@@ -1208,6 +1215,7 @@ class AnalysisService:
             plan=validated_plan,
             results=results,
             decision_trace=decision_trace,
+            cache_metrics=final_metrics,
         )
 
     @staticmethod

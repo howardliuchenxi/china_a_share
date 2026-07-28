@@ -205,6 +205,8 @@ export interface AnalysisResponse {
   decision_trace: DecisionTraceStep[];
   /** Planning or system error when no query-level result applies. */
   error: ServiceError | null;
+  /** Optional metrics tracking cache hits, misses, and bypasses during execution. */
+  cache_metrics?: Record<string, number> | null;
 }
 
 export type AnalysisTaskStatus = "queued" | "running" | "succeeded" | "failed";

@@ -10,6 +10,7 @@ import re
 from threading import Lock, RLock
 from time import perf_counter
 from typing import Callable, Dict, Optional, Sequence, Tuple
+from contextvars import ContextVar
 
 from google.api_core.exceptions import NotFound
 from google.cloud import storage
@@ -30,6 +31,8 @@ MILLISECONDS_PER_SECOND = 1_000
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 OPERATION_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
+request_cache_metrics: Dict[str, Dict[str, int]] = {}
+request_cache_metrics_lock = Lock()
 
 def _utc_now() -> datetime:
     """Return the current UTC instant for cache expiration comparisons."""
@@ -372,6 +375,10 @@ class LayeredDataResponseCache:
         query_id: str,
     ) -> None:
         """Emit exactly one final cache outcome for a logical data query."""
+        with request_cache_metrics_lock:
+            metrics = request_cache_metrics.setdefault(request_id, {})
+            metrics[outcome] = metrics.get(outcome, 0) + 1
+
         log_event(
             logger,
             logging.INFO,
