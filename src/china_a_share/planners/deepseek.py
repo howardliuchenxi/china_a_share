@@ -24,7 +24,7 @@ from china_a_share.core.errors import PlannerError
 DEEPSEEK_PLANNER_NAME = "deepseek"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
-DEEPSEEK_TIMEOUT_SECONDS = 60
+DEEPSEEK_TIMEOUT_SECONDS = 180
 DEEPSEEK_MAX_OUTPUT_TOKENS = 2_000
 DEEPSEEK_MAX_ATTEMPTS = 3
 DEEPSEEK_RETRY_DELAY_SECONDS = 1

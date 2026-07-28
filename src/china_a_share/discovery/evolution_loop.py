@@ -86,19 +86,25 @@ class EvolutionLoop:
             if feedback:
                 llm_prompt += f"\nFeedback from previous generation:\n{feedback}\nPlease improve the formulas."
 
+            llm_response = None
             try:
                 llm_response = self._planner.generate_text(llm_prompt)
-                llm_response = llm_response.strip()
-                if llm_response.startswith("```json"):
-                    llm_response = llm_response[7:]
-                if llm_response.endswith("```"):
-                    llm_response = llm_response[:-3]
                 
-                formulas_data = json.loads(llm_response)
+                # Robust JSON extraction
+                import re
+                match = re.search(r'\[.*\]', llm_response, re.DOTALL)
+                if match:
+                    json_str = match.group(0)
+                else:
+                    json_str = llm_response
+                    
+                formulas_data = json.loads(json_str)
+                logger.info(f"Parsed formulas: {len(formulas_data)} items")
                 hypotheses = [FactorHypothesis(**f) for f in formulas_data]
             except Exception as e:
-                self._update_progress(task, f"LLM 生成失败: {e}")
-                break
+                logger.error(f"LLM parsing failed: {e}. Raw response: {llm_response}")
+                self._update_progress(task, f"第 {gen} 代生成失败，自动重试: {e}")
+                continue
                 
             feedback_parts = []
             
@@ -109,7 +115,7 @@ class EvolutionLoop:
                         hyp.formula,
                         req.train_start,
                         req.train_end,
-                        request_id=task_id,
+                        request_id=task.task_id,
                     )
                     hyp.train_result = result
                     task.progress.formulas_tested += 1
@@ -125,13 +131,14 @@ class EvolutionLoop:
                             hyp.formula,
                             req.val_start,
                             req.val_end,
-                            request_id=task_id,
+                            request_id=task.task_id,
                         )
                         hyp.val_result = val_result
                         if val_result.win_rate > 0.50:
                             task.progress.leaderboard.append(hyp)
                             
                 except Exception as e:
+                    logger.warning(f"Backtest failed for {hyp.formula}: {e}")
                     feedback_parts.append(f"Formula `{hyp.formula}` failed: {e}")
                     
             feedback = "\n".join(feedback_parts)
