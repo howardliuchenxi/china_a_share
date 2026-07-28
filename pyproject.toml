@@ -41,3 +41,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "live: calls real external APIs and is skipped unless explicitly enabled",
+]

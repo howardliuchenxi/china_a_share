@@ -593,7 +593,17 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
                 "offset_value": 1,
                 "offset_unit": "month",
             },
-            {"operation": "summarize", "aggregations": []},
+            {
+                "operation": "aggregate",
+                "group_by": ["ts_code"],
+                "aggregations": [
+                    {
+                        "output_field": "future_return",
+                        "field": "future_return",
+                        "function": "mean",
+                    }
+                ],
+            },
         ],
     }
     planner = DeepSeekQueryPlanner("test-key")

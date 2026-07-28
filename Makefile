@@ -28,11 +28,12 @@ CLOUDSDK_PYTHON := $(shell \
 			&& { command -v "$$candidate" 2>/dev/null || printf '%s' "$$candidate"; break; }; \
 	done)
 
-.PHONY: help check deploy merge release
+.PHONY: help check live-check deploy merge release
 
 help:
 	printf '%s\n' \
 		'make check   Build the frontend and run backend tests.' \
+		'make live-check  Run the real DeepSeek and Tushare regression test.' \
 		'make deploy  Deploy the clean, pushed main commit and update the GCP inventory.' \
 		'make merge   Validate, merge the current clean branch into main, and push main.' \
 		'make release Merge the current branch into main, then deploy that exact commit.'
@@ -40,6 +41,9 @@ help:
 check:
 	npm --prefix frontend run build
 	.venv/bin/python -m pytest
+
+live-check:
+	RUN_LIVE_ANALYSIS=1 .venv/bin/python -m pytest tests/test_live_analysis.py -v -s
 
 deploy: check
 	test -n "$(GCLOUD)" || { echo "Google Cloud CLI was not found. Install gcloud or place it at ~/google-cloud-sdk/bin/gcloud." >&2; exit 1; }

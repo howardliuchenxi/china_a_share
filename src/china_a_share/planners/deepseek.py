@@ -416,7 +416,7 @@ class DeepSeekQueryPlanner:
                     step
                     for step in steps
                     if isinstance(step, dict)
-                    and step.get("operation") == "summarize"
+                    and step.get("operation") in {"summarize", "aggregate"}
                 ),
                 None,
             )
