@@ -13,6 +13,12 @@
   otherwise high risk.
 - Keep intermediate updates concise and maintain momentum until the agreed
   outcome is implemented and validated.
+- After validating requested repository changes, automatically commit the
+  task-scoped files with an imperative English commit message and push the
+  current branch without requesting separate confirmation.
+- Never include unrelated or pre-existing working-tree changes in an automatic
+  commit. If a push is rejected, diagnose and resolve non-destructive issues
+  directly; escalate only when user action or a material decision is required.
 
 ## Self-resolution policy
 
