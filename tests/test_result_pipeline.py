@@ -306,3 +306,120 @@ def test_shift_can_require_the_next_global_order_value():
     )
     assert first_a["next_pct_chg"] is None
     assert first_b["next_pct_chg"] == 2.0
+
+
+def test_pipeline_matches_another_source_and_summarizes_a_parameterized_streak():
+    daily = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {
+                "ts_code": "A",
+                "trade_date": f"2026010{day}",
+                "pct_chg": 2.0 if day == 4 else 10.0,
+            }
+            for day in range(1, 5)
+        ],
+        row_count=4,
+    )
+    limit_ups = QueryResult(
+        query_id="limit-ups",
+        provider="tushare",
+        operation="limit_list_d",
+        status="success",
+        rows=[
+            {"ts_code": "A", "trade_date": f"2026010{day}"}
+            for day in range(1, 4)
+        ],
+        row_count=3,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "event-study",
+            "steps": [
+                {
+                    "operation": "match_source",
+                    "right_source_query_id": "limit-ups",
+                    "join_on": ["trade_date", "ts_code"],
+                    "output_field": "is_limit_up",
+                },
+                {
+                    "operation": "rolling_sum",
+                    "field": "is_limit_up",
+                    "output_field": "streak_count",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "window": 3,
+                },
+                {
+                    "operation": "shift",
+                    "field": "pct_chg",
+                    "output_field": "next_pct_chg",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "periods": -1,
+                    "require_consecutive": True,
+                },
+                {
+                    "operation": "compare_scalar",
+                    "field": "streak_count",
+                    "output_field": "is_streak",
+                    "comparison": "eq",
+                    "value": 3,
+                },
+                {
+                    "operation": "compare_scalar",
+                    "field": "next_pct_chg",
+                    "output_field": "next_up",
+                    "comparison": "gt",
+                    "value": 0,
+                },
+                {
+                    "operation": "derive",
+                    "field": "next_up",
+                    "output_field": "next_up_pct",
+                    "arithmetic_operator": "multiply",
+                    "value": 100,
+                },
+                {
+                    "operation": "filter",
+                    "field": "is_streak",
+                    "comparison": "eq",
+                    "value": 1,
+                },
+                {"operation": "drop_missing", "fields": ["next_pct_chg"]},
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "event_count",
+                            "label": "Event count",
+                            "field": "next_up",
+                            "function": "count",
+                        },
+                        {
+                            "output_field": "probability_pct",
+                            "label": "Probability (%)",
+                            "field": "next_up_pct",
+                            "function": "mean",
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(
+        pipeline,
+        daily,
+        {"daily": daily, "limit-ups": limit_ups},
+    )
+
+    assert result.rows == [{"event_count": 1, "probability_pct": 100.0}]
+    assert result.summary == {
+        "Event count": 1,
+        "Probability (%)": 100.0,
+    }

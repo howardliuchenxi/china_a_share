@@ -3,8 +3,7 @@
 from collections import Counter
 
 from china_a_share.core.contracts import AnalysisRequest
-from china_a_share.planners.deepseek import DeepSeekQueryPlanner
-from china_a_share.registry import STOCK_API_NAMES, TushareOperationCatalog
+from china_a_share.registry import STOCK_API_NAMES
 from china_a_share.tasks import requires_async_analysis
 
 from golden_questions import GOLDEN_QUESTION_FAMILIES
@@ -59,24 +58,3 @@ def test_golden_question_delivery_modes_are_enforced_by_the_router():
         requires_async_analysis(AnalysisRequest(prompt=prompt)) == expected
         for prompt, expected in prompt_expectations
     )
-
-
-def test_high_risk_golden_families_have_deterministic_fallback_plans():
-    planner = DeepSeekQueryPlanner("unused-test-key")
-    catalog = TushareOperationCatalog()
-    builders = {
-        "market_period_return": planner._build_known_market_period_ranking_plan,
-        "retail_proxy_ranking": planner._build_known_retail_ranking_plan,
-    }
-
-    for family in GOLDEN_QUESTION_FAMILIES:
-        builder = builders.get(family["family"])
-        if builder is None:
-            continue
-        for prompt in family["prompts"]:
-            plan = builder(prompt, catalog.search(prompt))
-            assert plan is not None
-            planned_operations = {
-                query.operation for query in plan.queries
-            }
-            assert set(family["operations"]).issubset(planned_operations)

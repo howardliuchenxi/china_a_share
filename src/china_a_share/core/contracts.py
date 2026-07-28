@@ -202,23 +202,14 @@ class DataQuery(BaseModel):
     transform: Optional[
         Literal[
             "cr10_float_trend",
-            "count_by_trade_date",
-            "top_count_by_trade_date",
-            "count_by_ts_code",
-            "top_10_count_by_ts_code",
-            "count_by_industry",
-            "top_20_by_amount",
-            "top_20_by_turnover_rate",
-            "top_20_total_amount_by_ts_code",
             "period_return_by_ts_code",
-            "top_10_by_dv_ratio",
         ]
     ] = Field(
         default=None,
         description=(
             "Optional deterministic transformation applied to one provider result; "
             "Supported transforms provide audited concentration calculations, grouped "
-            "counts, top-amount ranking, or period returns."
+            "audited concentration calculations or period returns."
         ),
     )
     filters: List[DataFilter] = Field(
@@ -266,6 +257,12 @@ class ResultAggregation(BaseModel):
         pattern=OPERATION_NAME_PATTERN,
         description="Output column receiving the aggregated value.",
     )
+    label: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        description="Optional reader-facing label for a summary metric.",
+    )
     field: str = Field(
         min_length=1,
         pattern=OPERATION_NAME_PATTERN,
@@ -291,7 +288,9 @@ class ResultPipelineStep(BaseModel):
         "quantile_filter",
         "aggregate",
         "rolling_mean",
+        "rolling_sum",
         "shift",
+        "match_source",
         "compare_fields",
         "compare_scalar",
         "summarize",
@@ -310,6 +309,15 @@ class ResultPipelineStep(BaseModel):
         default=None,
         pattern=OPERATION_NAME_PATTERN,
         description="Right-hand input field used by a field comparison.",
+    )
+    right_source_query_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Planned query matched against the current pipeline frame.",
+    )
+    join_on: List[str] = Field(
+        default_factory=list,
+        description="Shared key fields used to match another planned query.",
     )
     fields: List[str] = Field(
         default_factory=list,
@@ -413,12 +421,24 @@ class ResultPipelineStep(BaseModel):
                 and self.order_by
                 and self.window
             ),
+            "rolling_sum": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+            ),
             "shift": bool(
                 self.field
                 and self.output_field
                 and self.group_by
                 and self.order_by
                 and self.periods
+            ),
+            "match_source": bool(
+                self.right_source_query_id
+                and self.join_on
+                and self.output_field
             ),
             "compare_fields": bool(
                 self.field
@@ -442,7 +462,7 @@ class ResultPipelineStep(BaseModel):
         ):
             raise ValueError("derive requires a numeric scalar value")
         if (
-            self.operation == "rolling_mean"
+            self.operation in {"rolling_mean", "rolling_sum"}
             and self.min_periods is not None
             and self.min_periods > self.window
         ):
@@ -495,26 +515,6 @@ class QueryPlan(BaseModel):
         default_factory=list,
         description="Concrete missing capabilities that prevent faithful execution.",
     )
-    result_transform: Optional[
-        Literal[
-            "two_limit_up_next_day_probability",
-            "consecutive_limit_up_next_day_probability",
-        ]
-    ] = Field(
-        default=None,
-        description=(
-            "Optional deterministic cross-query calculation applied after all "
-            "source queries succeed."
-        ),
-    )
-    consecutive_limit_up_days: Optional[int] = Field(
-        default=None,
-        ge=2,
-        le=10,
-        description=(
-            "Required consecutive limit-up trading sessions for the event study."
-        ),
-    )
     result_pipeline: Optional[ResultPipeline] = Field(
         default=None,
         description="Optional deterministic relational pipeline over one query result.",
@@ -534,17 +534,6 @@ class QueryPlan(BaseModel):
                 raise ValueError("unsupported plans must not contain queries")
             if not self.limitations:
                 raise ValueError("unsupported plans must explain their limitations")
-        if self.result_transform and self.result_pipeline:
-            raise ValueError("result_transform and result_pipeline are mutually exclusive")
-        if (
-            self.result_transform
-            == "consecutive_limit_up_next_day_probability"
-            and self.consecutive_limit_up_days is None
-        ):
-            raise ValueError(
-                "consecutive_limit_up_days is required for the consecutive "
-                "limit-up transform"
-            )
         return self
 
 

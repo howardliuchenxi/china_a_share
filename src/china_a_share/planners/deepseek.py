@@ -28,11 +28,6 @@ DEEPSEEK_TIMEOUT_SECONDS = 180
 DEEPSEEK_MAX_OUTPUT_TOKENS = 2_000
 DEEPSEEK_MAX_ATTEMPTS = 3
 DEEPSEEK_RETRY_DELAY_SECONDS = 1
-PERIOD_RETURN_FIELD_ALIASES = {
-    "period_return": "period_return_pct",
-    "return_pct": "period_return_pct",
-    "pct_return": "period_return_pct",
-}
 RETAIL_PROXY_DISCLOSURE = (
     "This result uses non_top10_float_ratio as a holding-dispersion proxy. "
     "It includes retail holders and institutions outside the disclosed top ten "
@@ -85,14 +80,6 @@ class DeepSeekQueryPlanner:
         validator: Optional[Callable[[QueryPlan], QueryPlan]],
     ) -> QueryPlan:
         """Retry planning with concrete validation feedback before audited fallback."""
-        audited_time_series_plan = self.build_audited_time_series_plan(
-            request.prompt,
-            candidate_operations,
-        )
-        if audited_time_series_plan is not None:
-            if validator is not None:
-                validator(audited_time_series_plan)
-            return audited_time_series_plan
         guidance = "\n".join(
             f"- {operation.name}: {operation.description}"
             for operation in candidate_operations
@@ -122,22 +109,20 @@ class DeepSeekQueryPlanner:
             "rises after N consecutive limit-up trading days, create exactly two "
             "range queries over the same requested window: limit_list_d with native "
             "limit_type='U' and fields trade_date,ts_code,name; and daily with fields "
-            "trade_date,ts_code,pct_chg. Set result_transform to "
-            "consecutive_limit_up_next_day_probability and set "
-            "consecutive_limit_up_days to N. This deterministic local transform "
+            "trade_date,ts_code,pct_chg. Build a result_pipeline sourced from daily: "
+            "match limit_list_d on trade_date and ts_code, apply a rolling_sum window "
+            "of N, shift the outcome, filter complete streaks, and summarize. This "
+            "deterministic pipeline "
             "joins securities across consecutive market trading dates, excludes "
             "signals without next-session data, and computes the requested probability. "
             "Mark all such requirements covered. "
-            "Use one range query plus a deterministic query transform for common "
-            "ranking and grouping requests. Use count_by_trade_date for daily limit-up "
-            "trends, top_count_by_trade_date for the date with the most limit-ups, "
-            "top_10_count_by_ts_code for the ten securities with the most limit-ups, "
-            "count_by_ts_code for complete security counts, and count_by_industry for "
-            "limit-ups by industry. Use "
-            "top_20_by_amount for the twenty highest daily amounts, and "
-            "top_20_by_turnover_rate for the twenty highest turnover rates. Use "
-            "top_20_total_amount_by_ts_code to aggregate and rank block-trade amount "
-            "over a date range. "
+            "Use one range query plus result_pipeline for common ranking and grouping "
+            "requests. Compose aggregate, sort, and limit with the exact user-requested "
+            "count; never encode Top N into a transform name. Group by trade_date for "
+            "daily limit-up trends, by ts_code for security counts, and by industry for "
+            "industry counts. Sort amount or turnover_rate and apply limit for rankings. "
+            "For block-trade totals, aggregate amount by ts_code, sort total_amount, "
+            "and apply the requested limit. "
             "period_return_by_ts_code for multi-security period return comparisons. "
             "For a market-wide or industry-wide return ranking over a month, year, "
             "or arbitrary date range, use daily with start_date and end_date, request "
@@ -145,8 +130,8 @@ class DeepSeekQueryPlanner:
             "The executor reads only the first and last available full-market trading "
             "day snapshots and calculates returns locally. Never use monthly or weekly "
             "without ts_code or trade_date. "
-            "Use top_10_by_dv_ratio after valuation filters when the user asks for "
-            "ten high-dividend securities. "
+            "For dividend rankings, apply valuation filters, sort dv_ratio, and limit "
+            "to the exact requested count. "
             "Never expand a date range into one query per day. "
             "When a user asks for retail ownership, retail holding ratio, retail trend, "
             "shareholding dispersion, or CR10, treat retail ratio as the project's "
@@ -209,16 +194,6 @@ class DeepSeekQueryPlanner:
             f"Allowed operation names:\n{allowed_operations}\n\n"
             f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}"
         )
-        known_retail_ranking_plan = self._build_known_retail_ranking_plan(
-            request.prompt,
-            candidate_operations,
-        )
-        known_market_period_ranking_plan = (
-            self._build_known_market_period_ranking_plan(
-                request.prompt,
-                candidate_operations,
-            )
-        )
         feedback = None
         last_error: Optional[Exception] = None
         for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
@@ -260,15 +235,7 @@ class DeepSeekQueryPlanner:
                 break
 
             self._finalize_plan(plan, request.prompt)
-            known_error = self._known_plan_error(
-                plan,
-                known_retail_ranking_plan=known_retail_ranking_plan,
-                known_market_period_ranking_plan=known_market_period_ranking_plan,
-            )
-            if known_error is not None:
-                last_error = ValueError(known_error)
-                feedback = known_error
-            elif validator is not None:
+            if validator is not None:
                 try:
                     validator(plan)
                     return plan
@@ -281,14 +248,6 @@ class DeepSeekQueryPlanner:
             if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
                 sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
 
-        fallback_plan = (
-            known_retail_ranking_plan or known_market_period_ranking_plan
-        )
-        if fallback_plan is not None:
-            self._append_audited_disclosures(fallback_plan, request.prompt)
-            if validator is not None:
-                validator(fallback_plan)
-            return fallback_plan
         if isinstance(last_error, PlannerError):
             raise last_error
         raise PlannerError(
@@ -299,240 +258,10 @@ class DeepSeekQueryPlanner:
             ),
         ) from last_error
 
-    @staticmethod
-    def build_audited_time_series_plan(
-        prompt: str,
-        candidate_operations: Sequence[DataOperation],
-    ) -> Optional[QueryPlan]:
-        """Build a deterministic market-wide moving-average event study."""
-        normalized = prompt.replace(" ", "")
-        window_match = re.search(r"(\d{1,3})日均线", normalized)
-        has_market_scope = any(
-            marker in normalized for marker in ("A股", "大A", "全市场")
-        )
-        direction = (
-            "down"
-            if "跌破" in normalized
-            else "up"
-            if "突破" in normalized
-            else None
-        )
-        outcome = (
-            "up"
-            if "上涨概率" in normalized
-            else "down"
-            if "下跌概率" in normalized
-            else None
-        )
-        next_day_requested = any(
-            marker in normalized
-            for marker in ("下一个交易日", "接下来一个交易日", "次日")
-        )
-        available_operations = {
-            operation.name for operation in candidate_operations
-        }
-        if not (
-            window_match
-            and has_market_scope
-            and direction
-            and outcome
-            and next_day_requested
-            and "daily" in available_operations
-        ):
-            return None
-
-        window = int(window_match.group(1))
-        if not 2 <= window <= 250:
-            return None
-        now = datetime.now(ZoneInfo("Asia/Shanghai"))
-        measurement_end = now.date()
-        if now.time() < ClockTime(17, 10):
-            measurement_end -= timedelta(days=1)
-        while measurement_end.weekday() >= 5:
-            measurement_end -= timedelta(days=1)
-        if any(marker in normalized for marker in ("过去半年", "近半年")):
-            measurement_days = 183
-        elif any(marker in normalized for marker in ("过去一年", "近一年")):
-            measurement_days = 365
-        else:
-            month_match = re.search(r"(?:过去|近)(\d{1,2})个月", normalized)
-            if not month_match:
-                return None
-            measurement_days = int(month_match.group(1)) * 30
-        measurement_start = measurement_end - timedelta(days=measurement_days)
-        fetch_start = measurement_start - timedelta(days=window * 2)
-        current_comparison = "lt" if direction == "down" else "gt"
-        previous_comparison = "ge" if direction == "down" else "le"
-        outcome_comparison = "gt" if outcome == "up" else "lt"
-
-        return QueryPlan.model_validate(
-            {
-                "interpretation": (
-                    f"Measure the probability of a next-market-session {outcome} "
-                    f"move after an A-share {direction} cross of the {window}-day "
-                    "moving average, using unadjusted daily close."
-                ),
-                "requirements": [
-                    {
-                        "requirement": (
-                            f"Identify {direction} crosses of the {window}-day "
-                            "moving average during the requested period."
-                        ),
-                        "status": "covered",
-                        "implementation": (
-                            "Calculate a grouped rolling mean and compare current "
-                            "and prior observations deterministically."
-                        ),
-                        "evidence": (
-                            "The daily operation provides ts_code, trade_date, and "
-                            "unadjusted close; the audited pipeline supplies rolling "
-                            "and ordered window operations."
-                        ),
-                    },
-                    {
-                        "requirement": (
-                            f"Calculate the probability that the next market "
-                            f"trading session moves {outcome}."
-                        ),
-                        "status": "covered",
-                        "implementation": (
-                            "Require a consecutive global trading-date observation, "
-                            "exclude unavailable outcomes, and aggregate event count "
-                            "and the boolean outcome mean."
-                        ),
-                        "evidence": (
-                            "Daily pct_chg supplies the outcome and the audited shift "
-                            "rejects suspended securities without a next-session row."
-                        ),
-                    },
-                ],
-                "limitations": [
-                    (
-                        "The moving average uses unadjusted daily close because the "
-                        "current single-source pipeline cannot join adjustment factors."
-                    )
-                ],
-                "queries": [
-                    {
-                        "query_id": "market-moving-average-source",
-                        "operation": "daily",
-                        "params": {
-                            "start_date": fetch_start.strftime("%Y%m%d"),
-                            "end_date": measurement_end.strftime("%Y%m%d"),
-                        },
-                        "fields": ["ts_code", "trade_date", "close", "pct_chg"],
-                        "purpose": (
-                            "Retrieve the measurement period plus rolling-window "
-                            "warm-up observations."
-                        ),
-                    }
-                ],
-                "result_pipeline": {
-                    "source_query_id": "market-moving-average-source",
-                    "output_query_id": "moving-average-event-probability",
-                    "steps": [
-                        {
-                            "operation": "rolling_mean",
-                            "field": "close",
-                            "output_field": "moving_average",
-                            "group_by": ["ts_code"],
-                            "order_by": "trade_date",
-                            "window": window,
-                        },
-                        {
-                            "operation": "shift",
-                            "field": "close",
-                            "output_field": "previous_close",
-                            "group_by": ["ts_code"],
-                            "order_by": "trade_date",
-                            "periods": 1,
-                        },
-                        {
-                            "operation": "shift",
-                            "field": "moving_average",
-                            "output_field": "previous_moving_average",
-                            "group_by": ["ts_code"],
-                            "order_by": "trade_date",
-                            "periods": 1,
-                        },
-                        {
-                            "operation": "shift",
-                            "field": "pct_chg",
-                            "output_field": "next_pct_chg",
-                            "group_by": ["ts_code"],
-                            "order_by": "trade_date",
-                            "periods": -1,
-                            "require_consecutive": True,
-                        },
-                        {
-                            "operation": "compare_fields",
-                            "field": "close",
-                            "right_field": "moving_average",
-                            "output_field": "current_cross_side",
-                            "comparison": current_comparison,
-                        },
-                        {
-                            "operation": "compare_fields",
-                            "field": "previous_close",
-                            "right_field": "previous_moving_average",
-                            "output_field": "previous_cross_side",
-                            "comparison": previous_comparison,
-                        },
-                        {
-                            "operation": "compare_scalar",
-                            "field": "next_pct_chg",
-                            "output_field": "next_day_outcome",
-                            "comparison": outcome_comparison,
-                            "value": 0,
-                        },
-                        {
-                            "operation": "filter",
-                            "field": "current_cross_side",
-                            "comparison": "eq",
-                            "value": 1,
-                        },
-                        {
-                            "operation": "filter",
-                            "field": "previous_cross_side",
-                            "comparison": "eq",
-                            "value": 1,
-                        },
-                        {
-                            "operation": "filter",
-                            "field": "trade_date",
-                            "comparison": "ge",
-                            "value": measurement_start.strftime("%Y%m%d"),
-                        },
-                        {
-                            "operation": "drop_missing",
-                            "fields": ["next_pct_chg"],
-                        },
-                        {
-                            "operation": "summarize",
-                            "aggregations": [
-                                {
-                                    "output_field": "event_count",
-                                    "field": "next_day_outcome",
-                                    "function": "count",
-                                },
-                                {
-                                    "output_field": "outcome_probability",
-                                    "field": "next_day_outcome",
-                                    "function": "mean",
-                                },
-                            ],
-                        },
-                    ],
-                },
-            }
-        )
-
     def _finalize_plan(self, plan: QueryPlan, prompt: str) -> None:
         """Apply deterministic normalization before semantic validation."""
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
-        self._normalize_common_analytics(plan, prompt)
-        self._normalize_market_period_returns(plan, prompt)
         self._normalize_latest_completed_date(plan, prompt)
         self._downgrade_unexecutable_plan(plan, prompt)
         self._split_multi_security_float_holder_queries(plan)
@@ -551,292 +280,8 @@ class DeepSeekQueryPlanner:
                 message="Planner returned non-JSON content.",
             ) from exc
         self._normalize_raw_query_defaults(raw_plan)
-        self._normalize_consecutive_limit_up_analysis(raw_plan, prompt)
         plan = QueryPlan.model_validate(raw_plan)
         self._finalize_plan(plan, prompt)
-        return plan
-
-    @staticmethod
-    def _known_plan_error(
-        plan: QueryPlan,
-        *,
-        known_retail_ranking_plan: Optional[QueryPlan],
-        known_market_period_ranking_plan: Optional[QueryPlan],
-    ) -> Optional[str]:
-        """Return a corrective error when an audited intent is planned incorrectly."""
-        if known_retail_ranking_plan is not None:
-            pipeline_source = (
-                plan.result_pipeline.source_query_id
-                if plan.result_pipeline is not None
-                else None
-            )
-            has_universe_query = any(
-                query.operation in {"stock_basic", "ths_member"}
-                for query in plan.queries
-            )
-            has_retail_template = any(
-                query.query_id == pipeline_source
-                and query.transform == "cr10_float_trend"
-                and not query.params.get("ts_code")
-                for query in plan.queries
-            )
-            if not has_universe_query or not has_retail_template:
-                return (
-                    "The retail ranking requires a stock_basic or ths_member "
-                    "universe and must source its result pipeline from a "
-                    "top10_floatholders template using "
-                    "transform=cr10_float_trend."
-                )
-        if known_market_period_ranking_plan is not None:
-            pipeline_source = (
-                plan.result_pipeline.source_query_id
-                if plan.result_pipeline is not None
-                else None
-            )
-            if not any(
-                query.query_id == pipeline_source
-                and query.operation == "daily"
-                and query.transform == "period_return_by_ts_code"
-                for query in plan.queries
-            ):
-                return (
-                    "The full-market period ranking must source its result pipeline "
-                    "from daily using transform=period_return_by_ts_code."
-                )
-        return None
-
-    @staticmethod
-    def _build_known_retail_ranking_plan(
-        prompt: str,
-        candidate_operations: Sequence[DataOperation],
-    ) -> Optional[QueryPlan]:
-        """Build the audited full-market retail-proxy ranking after model drift."""
-        normalized = prompt.replace(" ", "")
-        requested_limit = DeepSeekQueryPlanner._parse_requested_limit(normalized)
-        asks_for_retail_ranking = (
-            "散户" in normalized
-            and any(
-                marker in normalized
-                for marker in ("股票", "A股", "大A", "全市场")
-            )
-            and (
-                requested_limit is not None
-                or any(
-                    marker in normalized
-                    for marker in ("最多", "最少", "最高", "最低", "排名")
-                )
-            )
-        )
-        available_operations = {
-            operation.name for operation in candidate_operations
-        }
-        if not asks_for_retail_ranking or not {
-            "stock_basic",
-            "top10_floatholders",
-        }.issubset(available_operations):
-            return None
-
-        now = datetime.now(ZoneInfo("Asia/Shanghai"))
-        month_match = re.search(r"(?:(\d{4})年)?(\d{1,2})月", normalized)
-        holder_params: dict[str, str] = {}
-        if month_match:
-            month = int(month_match.group(2))
-            if not 1 <= month <= 12:
-                return None
-            explicit_year = month_match.group(1)
-            year = int(explicit_year or now.year)
-            if explicit_year is None and month > now.month:
-                year -= 1
-            if month in {3, 6, 9, 12}:
-                holder_params["period"] = f"{year}{month:02d}{31 if month in {3, 12} else 30}"
-            else:
-                if month == 12:
-                    next_month = datetime(year + 1, 1, 1)
-                else:
-                    next_month = datetime(year, month + 1, 1)
-                holder_params["end_date"] = (
-                    next_month - timedelta(days=1)
-                ).strftime("%Y%m%d")
-
-        ascending = any(
-            marker in normalized for marker in ("最少", "最低")
-        )
-        return QueryPlan.model_validate(
-            {
-                "interpretation": (
-                    "Rank the A-share market by the approved non-top-ten "
-                    "unrestricted float-holder ratio proxy."
-                ),
-                "requirements": [
-                    {
-                        "requirement": (
-                            "Retrieve the complete listed A-share security universe."
-                        ),
-                        "status": "covered",
-                        "implementation": "Use stock_basic with list_status=L.",
-                        "evidence": (
-                            "stock_basic returns listed A-share security codes."
-                        ),
-                    },
-                    {
-                        "requirement": (
-                            "Calculate the approved retail holding proxy for the "
-                            "requested reporting period."
-                        ),
-                        "status": "covered",
-                        "implementation": (
-                            "Use top10_floatholders with cr10_float_trend."
-                        ),
-                        "evidence": (
-                            "The audited transform returns non_top10_float_ratio."
-                        ),
-                    },
-                    {
-                        "requirement": "Return the requested market ranking.",
-                        "status": "covered",
-                        "implementation": (
-                            "Sort the latest complete proxy values and apply Top N."
-                        ),
-                        "evidence": (
-                            "The validated result pipeline performs deterministic "
-                            "sorting and limiting."
-                        ),
-                    },
-                ],
-                "queries": [
-                    {
-                        "query_id": "a-share-universe",
-                        "operation": "stock_basic",
-                        "params": {"list_status": "L"},
-                        "fields": ["ts_code", "name"],
-                        "purpose": "Retrieve the listed A-share security universe.",
-                    },
-                    {
-                        "query_id": "retail-proxy",
-                        "operation": "top10_floatholders",
-                        "params": holder_params,
-                        "fields": [
-                            "ts_code",
-                            "ann_date",
-                            "end_date",
-                            "holder_name",
-                            "hold_amount",
-                            "hold_float_ratio",
-                        ],
-                        "purpose": (
-                            "Calculate the approved holding-dispersion proxy for "
-                            "each listed security."
-                        ),
-                        "transform": "cr10_float_trend",
-                    },
-                ],
-                "result_pipeline": {
-                    "source_query_id": "retail-proxy",
-                    "output_query_id": "ranked-retail-proxy",
-                    "steps": [
-                        {
-                            "operation": "latest_by_group",
-                            "group_by": ["ts_code"],
-                            "order_by": "end_date",
-                        },
-                        {
-                            "operation": "drop_missing",
-                            "fields": ["non_top10_float_ratio"],
-                        },
-                        {
-                            "operation": "sort",
-                            "field": "non_top10_float_ratio",
-                            "direction": "asc" if ascending else "desc",
-                        },
-                        {
-                            "operation": "limit",
-                            "count": requested_limit or 10,
-                        },
-                    ],
-                },
-            }
-        )
-
-    @staticmethod
-    def _build_known_market_period_ranking_plan(
-        prompt: str,
-        candidate_operations: Sequence[DataOperation],
-    ) -> Optional[QueryPlan]:
-        """Build the supported full-market period-return ranking after model drift."""
-        normalized = prompt.replace(" ", "")
-        requested_limit = DeepSeekQueryPlanner._parse_requested_limit(normalized)
-        has_market_scope = any(
-            marker in normalized
-            for marker in ("A股", "大A", "全市场")
-        )
-        has_return_metric = any(
-            marker in normalized
-            for marker in ("涨幅", "跌幅", "收益率", "上涨", "下跌")
-        )
-        has_ranking = requested_limit is not None or any(
-            marker in normalized
-            for marker in ("最大", "最高", "最小", "最低", "排名", "最多")
-        )
-        has_supported_period = bool(
-            re.search(r"(?:(?:\d{4})年)?\d{1,2}月", normalized)
-            or re.search(r"\d{4}年", normalized)
-            or "今年" in normalized
-            or "去年" in normalized
-        )
-        available_operations = {
-            operation.name for operation in candidate_operations
-        }
-        if not (
-            has_market_scope
-            and has_return_metric
-            and has_ranking
-            and has_supported_period
-            and "daily" in available_operations
-        ):
-            return None
-
-        plan = QueryPlan.model_validate(
-            {
-                "interpretation": (
-                    "Rank the full A-share market by return over the requested "
-                    "calendar period."
-                ),
-                "requirements": [
-                    {
-                        "requirement": (
-                            "Calculate each A-share security's return over the "
-                            "requested period and return the requested ranking."
-                        ),
-                        "status": "covered",
-                        "implementation": (
-                            "Read the first and last available full-market daily "
-                            "snapshots, calculate returns locally, sort, and limit."
-                        ),
-                        "evidence": (
-                            "The daily operation provides trade_date, ts_code, and "
-                            "close; period_return_by_ts_code performs the audited "
-                            "boundary calculation."
-                        ),
-                    }
-                ],
-                "queries": [
-                    {
-                        "query_id": "market-period-return",
-                        "operation": "daily",
-                        "params": {
-                            "start_date": "20000101",
-                            "end_date": "20000102",
-                        },
-                        "fields": ["ts_code", "trade_date", "close"],
-                        "purpose": (
-                            "Retrieve full-market boundary snapshots for the "
-                            "requested return period."
-                        ),
-                    }
-                ],
-            }
-        )
-        DeepSeekQueryPlanner._normalize_market_period_returns(plan, prompt)
         return plan
 
     @staticmethod
@@ -910,7 +355,6 @@ class DeepSeekQueryPlanner:
         try:
             raw_plan = json.loads(content)
             self._normalize_raw_query_defaults(raw_plan)
-            self._normalize_consecutive_limit_up_analysis(raw_plan, prompt)
             plan = QueryPlan.model_validate(raw_plan)
         except (json.JSONDecodeError, ValidationError) as exc:
             raise PlannerError(
@@ -962,25 +406,12 @@ class DeepSeekQueryPlanner:
 
     @staticmethod
     def _normalize_raw_query_defaults(raw_plan: Any) -> None:
-        """Replace nullable list fields and move misplaced query transformations."""
+        """Replace nullable query list fields before contract validation."""
         if not isinstance(raw_plan, dict):
             return
         queries = raw_plan.get("queries")
         if not isinstance(queries, list):
             return
-        misplaced_transform = raw_plan.get("result_transform")
-        query_transforms = {
-            "count_by_trade_date",
-            "top_count_by_trade_date",
-            "count_by_ts_code",
-            "top_10_count_by_ts_code",
-            "count_by_industry",
-            "top_20_by_amount",
-            "top_20_by_turnover_rate",
-            "top_20_total_amount_by_ts_code",
-            "period_return_by_ts_code",
-            "top_10_by_dv_ratio",
-        }
         for query in queries:
             if not isinstance(query, dict):
                 continue
@@ -988,128 +419,6 @@ class DeepSeekQueryPlanner:
                 query["filters"] = []
             if query.get("aggregations") is None:
                 query["aggregations"] = []
-            if misplaced_transform in query_transforms:
-                query["transform"] = misplaced_transform
-                fields = query.setdefault("fields", [])
-                if misplaced_transform == "period_return_by_ts_code":
-                    for field in ("ts_code", "trade_date", "close"):
-                        if field not in fields:
-                            fields.append(field)
-        if misplaced_transform in query_transforms:
-            raw_plan["result_transform"] = None
-
-    @staticmethod
-    def _normalize_consecutive_limit_up_analysis(
-        raw_plan: Any,
-        prompt: str,
-    ) -> None:
-        """Repair a consecutive-limit-up study into deterministic range reads."""
-        if not isinstance(raw_plan, dict):
-            return
-        normalized_prompt = re.sub(r"\s+", "", prompt).lower()
-        count_token = r"(?:\d{1,2}|两|二|三|四|五|六|七|八|九|十)"
-        signal_match = re.search(
-            rf"(?:连续{count_token}(?:天|日|个交易日)?涨停|"
-            rf"连续涨停{count_token}(?:天|日|个交易日)?|"
-            rf"前{count_token}(?:天|日|个交易日)连续涨停|"
-            rf"{count_token}连板)",
-            normalized_prompt,
-        )
-        if signal_match is None:
-            return
-        count_match = re.search(
-            r"\d{1,2}|两|二|三|四|五|六|七|八|九|十",
-            signal_match.group(0),
-        )
-        if count_match is None:
-            return
-        count_value = count_match.group(0)
-        chinese_counts = {
-            "两": 2,
-            "二": 2,
-            "三": 3,
-            "四": 4,
-            "五": 5,
-            "六": 6,
-            "七": 7,
-            "八": 8,
-            "九": 9,
-            "十": 10,
-        }
-        consecutive_days = chinese_counts.get(
-            count_value,
-            int(count_value) if count_value.isdigit() else 0,
-        )
-        if not 2 <= consecutive_days <= 10:
-            return
-        outcome_day = consecutive_days + 1
-        has_next_day_outcome = any(
-            marker in normalized_prompt
-            for marker in (
-                "次日",
-                "下一天",
-                "后一天",
-                "下一交易日",
-                f"第{outcome_day}天",
-            )
-        ) or (
-            outcome_day <= 10
-            and f"第{'一二三四五六七八九十'[outcome_day - 1]}天"
-            in normalized_prompt
-        )
-        if not has_next_day_outcome:
-            return
-        queries = raw_plan.get("queries")
-        if not isinstance(queries, list):
-            return
-        limit_query = next(
-            (
-                query
-                for query in queries
-                if isinstance(query, dict)
-                and query.get("operation") == "limit_list_d"
-            ),
-            None,
-        )
-        if limit_query is None:
-            return
-        params = limit_query.get("params")
-        if not isinstance(params, dict):
-            return
-        start_date = params.get("start_date")
-        end_date = params.get("end_date")
-        if not isinstance(start_date, str) or not isinstance(end_date, str):
-            return
-
-        params["limit_type"] = "U"
-        limit_query["fields"] = ["trade_date", "ts_code", "name"]
-        limit_query["filters"] = []
-        limit_query["aggregations"] = []
-        daily_query = {
-            "query_id": "consecutive-limit-up-daily",
-            "operation": "daily",
-            "params": {"start_date": start_date, "end_date": end_date},
-            "fields": ["trade_date", "ts_code", "pct_chg"],
-            "purpose": (
-                "Provide the trading-day sequence and next-session price changes."
-            ),
-            "filters": [],
-            "aggregations": [],
-        }
-        raw_plan["feasibility"] = "supported"
-        raw_plan["limitations"] = []
-        raw_plan[
-            "result_transform"
-        ] = "consecutive_limit_up_next_day_probability"
-        raw_plan["consecutive_limit_up_days"] = consecutive_days
-        raw_plan["queries"] = [limit_query, daily_query]
-        for requirement in raw_plan.get("requirements", []):
-            if isinstance(requirement, dict):
-                requirement["status"] = "covered"
-                requirement.setdefault(
-                    "implementation",
-                    "Join limit_list_d and daily rows by security and trading date.",
-                )
 
     @staticmethod
     def _normalize_fields(plan: QueryPlan) -> None:
@@ -1157,340 +466,6 @@ class DeepSeekQueryPlanner:
                 for aggregation in query.aggregations
                 if aggregation.field != "ts_code"
             ]
-
-    @staticmethod
-    def _normalize_common_analytics(plan: QueryPlan, prompt: str) -> None:
-        """Collapse common rankings and grouped counts into one bounded query."""
-        normalized = prompt.replace(" ", "")
-        limit_queries = [
-            query for query in plan.queries if query.operation == "limit_list_d"
-        ]
-        requested_transform = None
-        if "涨停" in normalized and "哪一天" in normalized:
-            requested_transform = "top_count_by_trade_date"
-        elif "涨停" in normalized and "每天的涨停数量" in normalized:
-            requested_transform = "count_by_trade_date"
-        elif "涨停" in normalized and (
-            "次数最多" in normalized
-            or "涨停最多的股票" in normalized
-            or "出现过涨停" in normalized
-        ):
-            requested_transform = (
-                "top_10_count_by_ts_code"
-                if "十" in normalized
-                else "count_by_ts_code"
-            )
-        elif "行业" in normalized and "涨停" in normalized:
-            requested_transform = "count_by_industry"
-
-        if requested_transform and limit_queries:
-            start_dates = []
-            end_dates = []
-            for query in limit_queries:
-                trade_date = query.params.get("trade_date")
-                start_date = query.params.get("start_date")
-                end_date = query.params.get("end_date")
-                if isinstance(trade_date, str):
-                    start_dates.append(trade_date)
-                    end_dates.append(trade_date)
-                if isinstance(start_date, str):
-                    start_dates.append(start_date)
-                if isinstance(end_date, str):
-                    end_dates.append(end_date)
-            query = limit_queries[0].model_copy(deep=True)
-            if start_dates and end_dates:
-                query.params = {
-                    "start_date": min(start_dates),
-                    "end_date": max(end_dates),
-                    "limit_type": "U",
-                }
-            query.fields = ["trade_date", "ts_code", "name", "industry"]
-            query.transform = requested_transform
-            query.filters = []
-            query.aggregations = []
-            plan.queries = [query]
-
-        if "成交额排名前20" in normalized:
-            for query in plan.queries:
-                if query.operation != "daily":
-                    continue
-                query.transform = "top_20_by_amount"
-                query.fields = ["ts_code", "pct_chg", "amount"]
-        if "换手率最高的20" in normalized:
-            for query in plan.queries:
-                if query.operation == "daily_basic":
-                    query.transform = "top_20_by_turnover_rate"
-                    for field in ("ts_code", "turnover_rate"):
-                        if field not in query.fields:
-                            query.fields.append(field)
-        if "大宗交易" in normalized and "成交金额最多" in normalized:
-            for query in plan.queries:
-                if query.operation == "block_trade":
-                    query.transform = "top_20_total_amount_by_ts_code"
-                    for field in ("ts_code", "amount"):
-                        if field not in query.fields:
-                            query.fields.append(field)
-        if "比较" in normalized and "最近一个月" in normalized and "涨幅" in normalized:
-            for query in plan.queries:
-                if query.operation == "daily":
-                    query.transform = "period_return_by_ts_code"
-                    for field in ("ts_code", "trade_date", "close"):
-                        if field not in query.fields:
-                            query.fields.append(field)
-        if "十只" in normalized and "股息率" in normalized:
-            valuation_queries = [
-                query for query in plan.queries if query.operation == "daily_basic"
-            ]
-            if valuation_queries:
-                query = valuation_queries[0].model_copy(deep=True)
-                seen_fields = set(query.fields)
-                seen_filters = {
-                    (
-                        row_filter.field,
-                        row_filter.operator,
-                        str(row_filter.value),
-                    )
-                    for row_filter in query.filters
-                }
-                for additional_query in valuation_queries[1:]:
-                    for field in additional_query.fields:
-                        if field not in seen_fields:
-                            query.fields.append(field)
-                            seen_fields.add(field)
-                    for row_filter in additional_query.filters:
-                        filter_key = (
-                            row_filter.field,
-                            row_filter.operator,
-                            str(row_filter.value),
-                        )
-                        if filter_key not in seen_filters:
-                            query.filters.append(row_filter)
-                            seen_filters.add(filter_key)
-                query.transform = "top_10_by_dv_ratio"
-                if "dv_ratio" not in seen_fields:
-                    query.fields.append("dv_ratio")
-                plan.queries = [
-                    item
-                    for item in plan.queries
-                    if item.operation != "daily_basic"
-                ] + [query]
-        for query in plan.queries:
-            period_filters = [
-                row_filter
-                for row_filter in query.filters
-                if row_filter.field == "period_return"
-            ]
-            if query.operation != "daily" or not period_filters:
-                continue
-            query.transform = "period_return_by_ts_code"
-            query.fields = ["ts_code", "trade_date", "close"]
-            for row_filter in period_filters:
-                row_filter.field = "period_return_pct"
-                if isinstance(row_filter.value, float) and abs(row_filter.value) <= 1:
-                    row_filter.value *= 100
-
-    @staticmethod
-    def _normalize_market_period_returns(plan: QueryPlan, prompt: str) -> None:
-        """Route broad period-return rankings through two market snapshots."""
-        if plan.result_transform is not None:
-            # A validated cross-query intent takes precedence over broad ranking
-            # heuristics, which must not reinterpret numbers such as "前2天".
-            return
-        normalized = prompt.replace(" ", "")
-        asks_for_return = any(
-            marker in normalized
-            for marker in ("涨幅", "跌幅", "收益率")
-        ) or any(
-            marker in normalized
-            for marker in ("上涨最多", "下跌最多", "上涨最大", "下跌最大")
-        )
-        requested_limit = DeepSeekQueryPlanner._parse_requested_limit(normalized)
-        asks_for_ranking = requested_limit is not None or any(
-            marker in normalized
-            for marker in ("最大", "最高", "最小", "最低", "排名", "最多")
-        )
-        if not (asks_for_return and asks_for_ranking):
-            return
-
-        candidates = [
-            query
-            for query in plan.queries
-            if query.operation in {"daily", "weekly", "monthly"}
-            and not query.params.get("ts_code")
-        ]
-        if not candidates:
-            return
-        query = candidates[0].model_copy(deep=True)
-        if (
-            plan.result_pipeline is not None
-            and plan.result_pipeline.source_query_id != query.query_id
-        ):
-            # A pipeline tied to another source represents a different declared
-            # calculation and must not be rebound by a broad prompt heuristic.
-            return
-        start_date = query.params.get("start_date")
-        end_date = query.params.get("end_date")
-        now = datetime.now(ZoneInfo("Asia/Shanghai"))
-        completed_date = now.date()
-        if now.time() < ClockTime(17, 10):
-            completed_date -= timedelta(days=1)
-        while completed_date.weekday() >= 5:
-            completed_date -= timedelta(days=1)
-        month_match = re.search(r"(?:(\d{4})年)?(\d{1,2})月", normalized)
-        year_match = re.search(r"(\d{4})年", normalized)
-        if month_match:
-            month = int(month_match.group(2))
-            explicit_year = month_match.group(1)
-            year = int(explicit_year or now.year)
-            if explicit_year is None and month > now.month:
-                year -= 1
-            period_start = datetime(year, month, 1).date()
-            if month == 12:
-                next_month = datetime(year + 1, 1, 1).date()
-            else:
-                next_month = datetime(year, month + 1, 1).date()
-            period_end = next_month - timedelta(days=1)
-            start_date = period_start.strftime("%Y%m%d")
-            end_date = min(period_end, completed_date).strftime("%Y%m%d")
-        elif year_match:
-            year = int(year_match.group(1))
-            start_date = f"{year}0101"
-            end_date = min(
-                datetime(year, 12, 31).date(),
-                completed_date,
-            ).strftime("%Y%m%d")
-        elif "今年" in normalized:
-            start_date = f"{now.year}0101"
-            end_date = completed_date.strftime("%Y%m%d")
-        elif "去年" in normalized:
-            start_date = f"{now.year - 1}0101"
-            end_date = f"{now.year - 1}1231"
-        if not isinstance(start_date, str) or not isinstance(end_date, str):
-            return
-        query.operation = "daily"
-        query.params = {"start_date": start_date, "end_date": end_date}
-        query.fields = ["ts_code", "trade_date", "close"]
-        query.transform = "period_return_by_ts_code"
-        query.aggregations = []
-        if plan.result_pipeline:
-            plan.result_pipeline.source_query_id = query.query_id
-            has_limit = False
-            for step in plan.result_pipeline.steps:
-                if step.field in PERIOD_RETURN_FIELD_ALIASES:
-                    step.field = PERIOD_RETURN_FIELD_ALIASES[step.field]
-                step.fields = [
-                    PERIOD_RETURN_FIELD_ALIASES.get(field, field)
-                    for field in step.fields
-                ]
-                if step.order_by in PERIOD_RETURN_FIELD_ALIASES:
-                    step.order_by = PERIOD_RETURN_FIELD_ALIASES[step.order_by]
-                if step.operation == "sort" and step.field == "period_return_pct":
-                    step.direction = (
-                        "asc"
-                        if any(
-                            marker in normalized
-                            for marker in (
-                                "跌幅最大",
-                                "下跌最多",
-                                "最小",
-                                "最低",
-                            )
-                        )
-                        else "desc"
-                    )
-                if step.operation == "limit":
-                    has_limit = True
-                    if requested_limit is not None:
-                        step.count = requested_limit
-            if requested_limit is not None and not has_limit:
-                plan.result_pipeline.steps.append(
-                    ResultPipelineStep.model_validate(
-                        {"operation": "limit", "count": requested_limit}
-                    )
-                )
-        else:
-            direction = (
-                "asc"
-                if any(
-                    marker in normalized
-                    for marker in ("跌幅最大", "下跌最多", "最小", "最低")
-                )
-                else "desc"
-            )
-            plan.result_pipeline = ResultPipeline.model_validate(
-                {
-                    "source_query_id": query.query_id,
-                    "output_query_id": f"{query.query_id}-ranking",
-                    "steps": [
-                        {
-                            "operation": "drop_missing",
-                            "fields": ["period_return_pct"],
-                        },
-                        {
-                            "operation": "sort",
-                            "field": "period_return_pct",
-                            "direction": direction,
-                        },
-                        {
-                            "operation": "limit",
-                            "count": requested_limit or 1,
-                        },
-                    ],
-                }
-            )
-        plan.queries = [query]
-
-    @staticmethod
-    def _parse_requested_limit(prompt: str) -> Optional[int]:
-        """Return Top N only when the number has an explicit result-limit role."""
-        number_pattern = r"(\d{1,4}|[一二三四五六七八九十百两]+)"
-        contextual_patterns = (
-            # The entity or ranking noun before 前N makes the requested output
-            # cardinality explicit, including common suffix forms like 股票前十.
-            rf"(?:股票|个股|公司|企业|标的|排名|排行|榜单)"
-            rf"(?:中|里|的)?(?:排名|排行)?前{number_pattern}",
-            # A result-unit immediately after 前N distinguishes output limits
-            # from temporal phrases such as 前2天 and 前6个月.
-            rf"前{number_pattern}(?:名|只|支|家|个股票|个股|家公司)",
-            # A named ranking metric also gives 前N an unambiguous output role.
-            rf"(?:涨幅|跌幅|收益率|成交额|换手率|市盈率|市净率|"
-            rf"股息率|散户比例|持股比例)前{number_pattern}",
-        )
-        match = next(
-            (
-                candidate
-                for pattern in contextual_patterns
-                if (candidate := re.search(pattern, prompt))
-            ),
-            None,
-        )
-        if match is None:
-            match = re.search(r"top\s*(\d{1,4})(?!\d)", prompt, re.IGNORECASE)
-        if not match:
-            return None
-        token = match.group(1)
-        if token.isdigit():
-            return min(int(token), 1_000)
-        digits = {
-            "一": 1,
-            "二": 2,
-            "两": 2,
-            "三": 3,
-            "四": 4,
-            "五": 5,
-            "六": 6,
-            "七": 7,
-            "八": 8,
-            "九": 9,
-        }
-        if token == "十":
-            return 10
-        if token == "百":
-            return 100
-        if "十" in token:
-            tens, ones = token.split("十", 1)
-            return digits.get(tens, 1) * 10 + digits.get(ones, 0)
-        return digits.get(token)
 
     @staticmethod
     def _normalize_latest_completed_date(plan: QueryPlan, prompt: str) -> None:

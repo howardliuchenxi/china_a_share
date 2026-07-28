@@ -19,7 +19,7 @@ from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 
 VERTEX_PROJECT = "china-a-share-lab"
 VERTEX_REGION = "asia-east2"
-VERTEX_MODEL = "claude-3-5-sonnet-v20241022"
+VERTEX_MODEL = "claude-3-5-sonnet-v2@20241022"
 VERTEX_API_URL = (
     f"https://{VERTEX_REGION}-aiplatform.googleapis.com/v1/projects/"
     f"{VERTEX_PROJECT}/locations/{VERTEX_REGION}/publishers/anthropic/models/"
@@ -56,12 +56,6 @@ class VertexClaudeQueryPlanner:
         candidate_operations: Sequence[DataOperation],
     ) -> QueryPlan:
         """Build a query plan using Vertex AI Claude, falling back to DeepSeek."""
-        audited_plan = DeepSeekQueryPlanner.build_audited_time_series_plan(
-            request.prompt,
-            candidate_operations,
-        )
-        if audited_plan is not None:
-            return audited_plan
         try:
             return self._plan_with_claude(request, candidate_operations)
         except PlannerError:
@@ -192,25 +186,21 @@ def _build_system_prompt(guidance: str, allowed_operations: str) -> str:
         "rises after N consecutive limit-up trading days, create exactly two "
         "range queries over the same requested window: limit_list_d with native "
         "limit_type='U' and fields trade_date,ts_code,name; and daily with fields "
-        "trade_date,ts_code,pct_chg. Set result_transform to "
-        "consecutive_limit_up_next_day_probability and set "
-        "consecutive_limit_up_days to N. This deterministic local transform "
+        "trade_date,ts_code,pct_chg. Build a result_pipeline sourced from daily: "
+        "match limit_list_d on trade_date and ts_code, apply a rolling_sum window "
+        "of N, shift the outcome, filter complete streaks, and summarize. This "
+        "deterministic pipeline "
         "joins securities across consecutive market trading dates, excludes "
         "signals without third-day data, and computes the requested probability. "
         "Mark all such requirements covered. "
-        "Use one range query plus a deterministic query transform for common "
-        "ranking and grouping requests. Use count_by_trade_date for daily limit-up "
-        "trends, top_count_by_trade_date for the date with the most limit-ups, "
-        "top_10_count_by_ts_code for the ten securities with the most limit-ups, "
-        "count_by_ts_code for complete security counts, and count_by_industry for "
-        "limit-ups by industry. Use "
-        "top_20_by_amount for the twenty highest daily amounts, and "
-        "top_20_by_turnover_rate for the twenty highest turnover rates. Use "
-        "top_20_total_amount_by_ts_code to aggregate and rank block-trade amount "
-        "over a date range. "
+        "Use one range query plus result_pipeline for common ranking and grouping "
+        "requests. Compose aggregate, sort, and limit with the exact requested count; "
+        "never encode Top N into a transform name. Group by trade_date, ts_code, or "
+        "industry as requested. Sort amount or turnover_rate and apply limit for "
+        "rankings. Aggregate block-trade amount by ts_code before sorting and limiting. "
         "period_return_by_ts_code for multi-security period return comparisons. "
-        "Use top_10_by_dv_ratio after valuation filters when the user asks for "
-        "ten high-dividend securities. "
+        "For dividend rankings, apply filters, sort dv_ratio, and limit to the exact "
+        "requested count. "
         "When a user asks for retail ownership, retail holding ratio, retail trend, "
         "shareholding dispersion, or CR10, treat retail ratio as the project's "
         "fixed non_top10_float_ratio proxy: 100% minus the sum of the disclosed "

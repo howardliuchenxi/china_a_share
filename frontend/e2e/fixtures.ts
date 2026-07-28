@@ -495,7 +495,6 @@ export const unsupportedAnalysisFixture: AnalysisResponse = {
     limitations: [
       "The current executor cannot dynamically fan out the full healthcare universe.",
     ],
-    result_transform: null,
     queries: [],
   },
   results: [],

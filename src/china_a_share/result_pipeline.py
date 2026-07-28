@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Mapping, Optional
 
 import pandas as pd
 
@@ -30,17 +30,41 @@ class ResultPipelineExecutor:
         self,
         pipeline: ResultPipeline,
         source: QueryResult,
+        sources: Optional[Mapping[str, QueryResult]] = None,
     ) -> QueryResult:
         """Return one transformed result or fail fast on an invalid field contract."""
         frame = pd.DataFrame(source.rows)
         source_row_count = len(frame)
+        source_results = dict(sources or {})
+        source_results.setdefault(source.query_id, source)
         for step in pipeline.steps:
-            frame = self._execute_step(frame, step)
+            frame = self._execute_step(frame, step, source_results)
         rows = (
             frame.astype(object)
             .where(pd.notna(frame), None)
             .to_dict(orient="records")
         )
+        summary = {
+            "source_row_count": source_row_count,
+            "pipeline_step_count": len(pipeline.steps),
+        }
+        summarize_step = next(
+            (
+                step
+                for step in reversed(pipeline.steps)
+                if step.operation == "summarize"
+            ),
+            None,
+        )
+        if summarize_step is not None and len(frame) == 1:
+            summary = {
+                aggregation.label or aggregation.output_field: (
+                    None
+                    if pd.isna(frame.iloc[0][aggregation.output_field])
+                    else frame.iloc[0][aggregation.output_field]
+                )
+                for aggregation in summarize_step.aggregations
+            }
         return QueryResult(
             query_id=pipeline.output_query_id,
             provider=source.provider,
@@ -49,19 +73,17 @@ class ResultPipelineExecutor:
             columns=list(frame.columns),
             rows=rows,
             row_count=len(rows),
-            summary={
-                "source_row_count": source_row_count,
-                "pipeline_step_count": len(pipeline.steps),
-            },
+            summary=summary,
         )
 
     def _execute_step(
         self,
         frame: pd.DataFrame,
         step: ResultPipelineStep,
+        sources: Mapping[str, QueryResult],
     ) -> pd.DataFrame:
         """Execute one validated relational operation."""
-        required_fields = set(step.fields + step.group_by)
+        required_fields = set(step.fields + step.group_by + step.join_on)
         required_fields.update(
             field
             for field in (step.field, step.right_field, step.order_by)
@@ -139,13 +161,13 @@ class ResultPipelineExecutor:
                 .agg(**named_aggregations)
                 .reset_index()
             )
-        if step.operation == "rolling_mean":
+        if step.operation in {"rolling_mean", "rolling_sum"}:
             ordered = frame.sort_values(
                 step.group_by + [step.order_by],
                 kind="mergesort",
             ).copy()
             numeric = pd.to_numeric(ordered[step.field], errors="coerce")
-            ordered[step.output_field] = (
+            rolling = (
                 numeric.groupby(
                     [ordered[field] for field in step.group_by],
                     sort=False,
@@ -155,10 +177,51 @@ class ResultPipelineExecutor:
                     window=step.window,
                     min_periods=step.min_periods or step.window,
                 )
-                .mean()
-                .reset_index(level=list(range(len(step.group_by))), drop=True)
+            )
+            aggregated = (
+                rolling.mean()
+                if step.operation == "rolling_mean"
+                else rolling.sum()
+            )
+            ordered[step.output_field] = aggregated.reset_index(
+                level=list(range(len(step.group_by))),
+                drop=True,
             )
             return ordered.reset_index(drop=True)
+        if step.operation == "match_source":
+            right_source = sources.get(step.right_source_query_id)
+            if right_source is None:
+                raise ValueError(
+                    "match_source query result is unavailable: "
+                    f"{step.right_source_query_id}"
+                )
+            if right_source.status != QueryStatus.SUCCESS:
+                raise ValueError(
+                    "match_source query did not succeed: "
+                    f"{step.right_source_query_id}"
+                )
+            right = pd.DataFrame(right_source.rows)
+            missing_right = set(step.join_on).difference(right.columns)
+            if missing_right:
+                raise ValueError(
+                    "match_source right fields are missing: "
+                    + ", ".join(sorted(missing_right))
+                )
+            if step.output_field in frame.columns:
+                raise ValueError(
+                    f"match_source output field already exists: {step.output_field}"
+                )
+            marker = right[step.join_on].drop_duplicates().copy()
+            marker[step.output_field] = True
+            matched = frame.merge(
+                marker,
+                on=step.join_on,
+                how="left",
+                sort=False,
+                validate="many_to_one",
+            )
+            matched[step.output_field] = matched[step.output_field].notna()
+            return matched
         if step.operation == "shift":
             ordered = frame.sort_values(
                 step.group_by + [step.order_by],

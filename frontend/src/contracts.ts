@@ -50,16 +50,7 @@ export interface DataQuery {
   /** Optional deterministic transformation applied to the provider rows. */
   transform:
     | "cr10_float_trend"
-    | "count_by_trade_date"
-    | "top_count_by_trade_date"
-    | "count_by_ts_code"
-    | "top_10_count_by_ts_code"
-    | "count_by_industry"
-    | "top_20_by_amount"
-    | "top_20_by_turnover_rate"
-    | "top_20_total_amount_by_ts_code"
     | "period_return_by_ts_code"
-    | "top_10_by_dv_ratio"
     | null;
   /** Deterministic local row filters applied after provider retrieval. */
   filters: DataFilter[];
@@ -89,14 +80,7 @@ export interface QueryPlan {
   requirements: RequirementCoverage[];
   /** Missing capabilities that prevent faithful execution. */
   limitations: string[];
-  /** Optional deterministic cross-query calculation. */
-  result_transform:
-    | "two_limit_up_next_day_probability"
-    | "consecutive_limit_up_next_day_probability"
-    | null;
-  /** Consecutive limit-up sessions required by the event study. */
-  consecutive_limit_up_days?: number | null;
-  /** Optional deterministic relational operations applied to one query result. */
+  /** Optional deterministic operations applied to one or more query results. */
   result_pipeline?: {
     /** Query result consumed as the pipeline input. */
     source_query_id: string;
@@ -113,9 +97,19 @@ export interface QueryPlan {
         | "sort"
         | "limit"
         | "quantile_filter"
-        | "aggregate";
+        | "aggregate"
+        | "rolling_mean"
+        | "rolling_sum"
+        | "shift"
+        | "match_source"
+        | "compare_fields"
+        | "compare_scalar"
+        | "summarize";
       field?: string | null;
       output_field?: string | null;
+      right_field?: string | null;
+      right_source_query_id?: string | null;
+      join_on?: string[];
       fields?: string[];
       group_by?: string[];
       order_by?: string | null;
@@ -131,8 +125,13 @@ export interface QueryPlan {
       value?: number | string | null;
       count?: number | null;
       quantile?: number | null;
+      window?: number | null;
+      min_periods?: number | null;
+      periods?: number | null;
+      require_consecutive?: boolean;
       aggregations?: Array<{
         output_field: string;
+        label?: string | null;
         field: string;
         function: "count" | "sum" | "mean" | "min" | "max";
       }>;

@@ -106,12 +106,6 @@ TRANSFORM_RESULT_FIELDS = {
         "missing_ratio_holders",
         "calculation_status",
     },
-    "count_by_trade_date": {"trade_date", "count"},
-    "top_count_by_trade_date": {"trade_date", "count"},
-    "count_by_ts_code": {"ts_code", "count"},
-    "top_10_count_by_ts_code": {"ts_code", "count"},
-    "count_by_industry": {"industry", "count"},
-    "top_20_total_amount_by_ts_code": {"ts_code", "total_amount"},
     "period_return_by_ts_code": TRANSFORM_OUTPUT_FIELDS[
         "period_return_by_ts_code"
     ]
@@ -171,9 +165,7 @@ class ASharePlanValidator:
             )
         ]
         claims_derived_calculation = bool(derived_requirements)
-        has_declared_calculation = bool(
-            plan.result_transform or plan.result_pipeline
-        ) or any(
+        has_declared_calculation = bool(plan.result_pipeline) or any(
             query.transform or query.aggregations for query in plan.queries
         )
         # Fan-out plans retrieve raw data for client-side processing; they do not
@@ -199,11 +191,6 @@ class ASharePlanValidator:
             return plan
         if plan.result_pipeline:
             self._validate_result_pipeline(plan)
-        if plan.result_transform in {
-            "two_limit_up_next_day_probability",
-            "consecutive_limit_up_next_day_probability",
-        }:
-            self._validate_consecutive_limit_up_transform(plan)
         orphaned_fanout_templates = [
             query.operation
             for query in plan.queries
@@ -252,38 +239,6 @@ class ASharePlanValidator:
         return plan
 
     @staticmethod
-    def _validate_consecutive_limit_up_transform(plan: QueryPlan) -> None:
-        """Require complete, aligned inputs for a consecutive-limit-up study."""
-        limit_queries = [
-            query for query in plan.queries if query.operation == "limit_list_d"
-        ]
-        daily_queries = [
-            query for query in plan.queries if query.operation == "daily"
-        ]
-        if len(limit_queries) != 1 or len(daily_queries) != 1:
-            raise PlanValidationError(
-                "The consecutive-limit-up transform requires exactly one "
-                "limit_list_d query and one daily query."
-            )
-        limit_query = limit_queries[0]
-        daily_query = daily_queries[0]
-        required_limit_fields = {"trade_date", "ts_code"}
-        required_daily_fields = {"trade_date", "ts_code", "pct_chg"}
-        if not required_limit_fields.issubset(limit_query.fields):
-            raise PlanValidationError(
-                "The limit_list_d input must request trade_date and ts_code."
-            )
-        if not required_daily_fields.issubset(daily_query.fields):
-            raise PlanValidationError(
-                "The daily input must request trade_date, ts_code, and pct_chg."
-            )
-        for parameter in ("start_date", "end_date"):
-            if limit_query.params.get(parameter) != daily_query.params.get(parameter):
-                raise PlanValidationError(
-                    "The consecutive-limit-up sources must use the same date range."
-                )
-
-    @staticmethod
     def _validate_result_pipeline(plan: QueryPlan) -> None:
         """Validate pipeline field lineage before any provider call is issued."""
         pipeline = plan.result_pipeline
@@ -306,7 +261,7 @@ class ASharePlanValidator:
             )
         )
         for step in pipeline.steps:
-            required_fields = set(step.fields + step.group_by)
+            required_fields = set(step.fields + step.group_by + step.join_on)
             required_fields.update(
                 field
                 for field in (step.field, step.right_field, step.order_by)
@@ -321,10 +276,38 @@ class ASharePlanValidator:
                     f"{step.operation} references unavailable fields: "
                     + ", ".join(sorted(missing_fields))
                 )
+            if step.operation == "match_source":
+                right_query = next(
+                    (
+                        query
+                        for query in plan.queries
+                        if query.query_id == step.right_source_query_id
+                    ),
+                    None,
+                )
+                if right_query is None:
+                    raise PlanValidationError(
+                        "match_source right_source_query_id does not match "
+                        "a planned query."
+                    )
+                right_fields = set(
+                    TRANSFORM_RESULT_FIELDS.get(
+                        right_query.transform,
+                        set(right_query.fields),
+                    )
+                )
+                missing_right = set(step.join_on).difference(right_fields)
+                if missing_right:
+                    raise PlanValidationError(
+                        "match_source references unavailable right fields: "
+                        + ", ".join(sorted(missing_right))
+                    )
             if step.operation in {
                 "derive",
                 "rolling_mean",
+                "rolling_sum",
                 "shift",
+                "match_source",
                 "compare_fields",
                 "compare_scalar",
             }:
@@ -513,95 +496,6 @@ class DataQueryExecutor:
         transform: Optional[str],
     ) -> pd.DataFrame:
         """Apply one deterministic single-table analytical transformation."""
-        group_fields = {
-            "count_by_trade_date": "trade_date",
-            "top_count_by_trade_date": "trade_date",
-            "count_by_ts_code": "ts_code",
-            "top_10_count_by_ts_code": "ts_code",
-            "count_by_industry": "industry",
-        }
-        if transform in group_fields:
-            field = group_fields[transform]
-            if field not in frame.columns:
-                raise ValueError(f"Grouped-count field is missing: {field}")
-            grouped = (
-                frame.groupby(field, dropna=False)
-                .size()
-                .rename("count")
-                .reset_index()
-            )
-            grouped = grouped.sort_values(
-                ["count", field],
-                ascending=[False, True],
-            ).reset_index(drop=True)
-            if transform == "top_10_count_by_ts_code":
-                return grouped.head(10)
-            if transform == "top_count_by_trade_date":
-                return grouped.head(1)
-            if transform == "count_by_trade_date":
-                return grouped.sort_values("trade_date").reset_index(drop=True)
-            return grouped
-        if transform == "top_20_by_amount":
-            if "amount" not in frame.columns:
-                raise ValueError("Top-amount ranking requires the amount field.")
-            ranked = frame.copy()
-            ranked["amount"] = pd.to_numeric(ranked["amount"], errors="coerce")
-            return ranked.sort_values(
-                "amount",
-                ascending=False,
-                na_position="last",
-            ).head(20).reset_index(drop=True)
-        if transform == "top_20_by_turnover_rate":
-            if "turnover_rate" not in frame.columns:
-                raise ValueError(
-                    "Turnover ranking requires the turnover_rate field."
-                )
-            ranked = frame.copy()
-            ranked["turnover_rate"] = pd.to_numeric(
-                ranked["turnover_rate"],
-                errors="coerce",
-            )
-            return ranked.sort_values(
-                "turnover_rate",
-                ascending=False,
-                na_position="last",
-            ).head(20).reset_index(drop=True)
-        if transform == "top_20_total_amount_by_ts_code":
-            required = {"ts_code", "amount"}
-            if not required.issubset(frame.columns):
-                raise ValueError(
-                    "Security amount ranking requires ts_code and amount."
-                )
-            normalized = frame.copy()
-            normalized["amount"] = pd.to_numeric(
-                normalized["amount"],
-                errors="coerce",
-            )
-            return (
-                normalized.dropna(subset=["amount"])
-                .groupby("ts_code", as_index=False)["amount"]
-                .sum()
-                .rename(columns={"amount": "total_amount"})
-                .sort_values(
-                    ["total_amount", "ts_code"],
-                    ascending=[False, True],
-                )
-                .head(20)
-                .reset_index(drop=True)
-            )
-        if transform == "top_10_by_dv_ratio":
-            if "dv_ratio" not in frame.columns:
-                raise ValueError("Dividend ranking requires the dv_ratio field.")
-            ranked = frame.copy()
-            ranked["dv_ratio"] = pd.to_numeric(
-                ranked["dv_ratio"],
-                errors="coerce",
-            )
-            return ranked.sort_values(
-                "dv_ratio",
-                ascending=False,
-                na_position="last",
-            ).head(10).reset_index(drop=True)
         if transform == "period_return_by_ts_code":
             required = {"ts_code", "trade_date", "close"}
             if not required.issubset(frame.columns):
@@ -1202,17 +1096,7 @@ class AnalysisService:
                 error=ServiceError(source="system", message=message),
             )
 
-        consecutive_limit_transform = validated_plan.result_transform in {
-            "two_limit_up_next_day_probability",
-            "consecutive_limit_up_next_day_probability",
-        }
-        if consecutive_limit_transform:
-            results = self._execute_consecutive_limit_up_sources(
-                validated_plan,
-                api_route=api_route,
-                request_id=request_id,
-            )
-        elif self._needs_fanout(validated_plan):
+        if self._needs_fanout(validated_plan):
             results = self._execute_with_fanout(
                 validated_plan,
                 api_route=api_route,
@@ -1229,16 +1113,6 @@ class AnalysisService:
                     ),
                     validated_plan.queries
                 ))
-        if consecutive_limit_transform and all(
-            result.status == QueryStatus.SUCCESS for result in results
-        ):
-            results.insert(
-                0,
-                self._build_consecutive_limit_up_next_day_result(
-                    results,
-                    validated_plan.consecutive_limit_up_days or 2,
-                ),
-            )
         if validated_plan.result_pipeline:
             source = next(
                 (
@@ -1254,6 +1128,10 @@ class AnalysisService:
                     transformed = self._result_pipeline_executor.execute(
                         validated_plan.result_pipeline,
                         source,
+                        {
+                            result.query_id: result
+                            for result in results
+                        },
                     )
                 except Exception as exc:
                     logger.exception(
@@ -1696,189 +1574,6 @@ class AnalysisService:
             row_count=len(safe_frame),
         )
 
-
-    def _execute_consecutive_limit_up_sources(
-        self,
-        plan: QueryPlan,
-        *,
-        api_route: str,
-        request_id: str,
-    ) -> List[QueryResult]:
-        """Fetch daily rows only for securities with candidate limit-up streaks."""
-        consecutive_days = plan.consecutive_limit_up_days or 2
-        limit_query = next(
-            query for query in plan.queries if query.operation == "limit_list_d"
-        )
-        daily_query = next(
-            query for query in plan.queries if query.operation == "daily"
-        ).model_copy(deep=True)
-        limit_result = self._executor.execute(
-            limit_query,
-            api_route=api_route,
-            request_id=request_id,
-        )
-        if limit_result.status != QueryStatus.SUCCESS:
-            return [limit_result]
-
-        limit_frame = pd.DataFrame(limit_result.rows)
-        candidate_codes: List[str] = []
-        if {"trade_date", "ts_code"}.issubset(limit_frame.columns):
-            dates = sorted(limit_frame["trade_date"].astype(str).unique())
-            codes_by_date = {
-                date_value: set(
-                    limit_frame.loc[
-                        limit_frame["trade_date"].astype(str) == date_value,
-                        "ts_code",
-                    ].astype(str)
-                )
-                for date_value in dates
-            }
-            candidates = set()
-            for index in range(len(dates) - consecutive_days + 1):
-                window_dates = dates[index:index + consecutive_days]
-                streak_codes = set(codes_by_date[window_dates[0]])
-                for date_value in window_dates[1:]:
-                    streak_codes.intersection_update(codes_by_date[date_value])
-                candidates.update(streak_codes)
-            candidate_codes = sorted(candidates)
-
-        if not candidate_codes:
-            daily_result = QueryResult(
-                query_id=daily_query.query_id,
-                provider=self._provider.name,
-                operation="daily",
-                status=QueryStatus.SUCCESS,
-                columns=["trade_date", "ts_code", "pct_chg"],
-            )
-        else:
-            daily_query.params["ts_code"] = ",".join(candidate_codes)
-            daily_result = self._executor.execute(
-                daily_query,
-                api_route=api_route,
-                request_id=request_id,
-            )
-        return [limit_result, daily_result]
-
-    def _build_consecutive_limit_up_next_day_result(
-        self,
-        source_results: List[QueryResult],
-        consecutive_days: int,
-    ) -> QueryResult:
-        """Calculate next-session gains after N consecutive limit-up sessions."""
-        limit_result = next(
-            result
-            for result in source_results
-            if result.operation == "limit_list_d"
-        )
-        daily_result = next(
-            result for result in source_results if result.operation == "daily"
-        )
-        # Preserve the declared schema for successful empty results so an empty
-        # sample remains a valid analytical outcome rather than a contract error.
-        daily_frame = pd.DataFrame(
-            daily_result.rows,
-            columns=daily_result.columns,
-        )
-        limit_frame = pd.DataFrame(
-            limit_result.rows,
-            columns=limit_result.columns,
-        )
-        required_daily = {"trade_date", "ts_code", "pct_chg"}
-        required_limit = {"trade_date", "ts_code"}
-        if not required_daily.issubset(daily_frame.columns):
-            raise ValueError("Daily rows are missing fields required by the transform.")
-        if not required_limit.issubset(limit_frame.columns):
-            raise ValueError(
-                "Limit-list rows are missing fields required by the transform."
-            )
-
-        trading_dates = sorted(daily_frame["trade_date"].astype(str).unique())
-        limit_pairs = {
-            (str(row.trade_date), str(row.ts_code))
-            for row in limit_frame.itertuples(index=False)
-        }
-        daily_changes = {
-            (str(row.trade_date), str(row.ts_code)): row.pct_chg
-            for row in daily_frame.itertuples(index=False)
-        }
-        names = {
-            str(row.ts_code): getattr(row, "name", None)
-            for row in limit_frame.itertuples(index=False)
-        }
-        rows: List[Dict[str, Any]] = []
-        for index in range(len(trading_dates) - consecutive_days):
-            signal_dates = trading_dates[index:index + consecutive_days]
-            outcome_date = trading_dates[index + consecutive_days]
-            streak_codes = {
-                code
-                for date_value, code in limit_pairs
-                if date_value == signal_dates[0]
-            }
-            for signal_date in signal_dates[1:]:
-                streak_codes.intersection_update(
-                    code
-                    for date_value, code in limit_pairs
-                    if date_value == signal_date
-                )
-            for code in sorted(streak_codes):
-                outcome_change = daily_changes.get((outcome_date, code))
-                if outcome_change is None or pd.isna(outcome_change):
-                    continue
-                numeric_change = float(outcome_change)
-                rows.append(
-                    {
-                        "ts_code": code,
-                        "name": names.get(code),
-                        "consecutive_limit_days": consecutive_days,
-                        "signal_start_date": signal_dates[0],
-                        "signal_end_date": signal_dates[-1],
-                        "outcome_trade_date": outcome_date,
-                        "outcome_pct_chg": numeric_change,
-                        "outcome_up": numeric_change > 0,
-                    }
-                )
-
-        up_count = sum(bool(row["outcome_up"]) for row in rows)
-        sample_count = len(rows)
-        probability = (
-            round(up_count * 100 / sample_count, 2)
-            if sample_count
-            else None
-        )
-        outcome_day = consecutive_days + 1
-        chinese_day = {
-            3: "第三天",
-            4: "第四天",
-            5: "第五天",
-            6: "第六天",
-            7: "第七天",
-            8: "第八天",
-            9: "第九天",
-            10: "第十天",
-        }.get(outcome_day, f"第{outcome_day}天")
-        return QueryResult(
-            query_id="consecutive-limit-up-next-day-probability",
-            provider=self._provider.name,
-            operation="consecutive_limit_up_next_day_probability",
-            status=QueryStatus.SUCCESS,
-            columns=[
-                "ts_code",
-                "name",
-                "consecutive_limit_days",
-                "signal_start_date",
-                "signal_end_date",
-                "outcome_trade_date",
-                "outcome_pct_chg",
-                "outcome_up",
-            ],
-            rows=rows,
-            row_count=sample_count,
-            summary={
-                f"有效连续{consecutive_days}天涨停样本": sample_count,
-                f"{chinese_day}上涨样本": up_count,
-                f"{chinese_day}上涨概率（%）": probability,
-            },
-        )
 
     def _prepare_planning_request(
         self,
