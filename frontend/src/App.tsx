@@ -10,6 +10,7 @@ import {
 
 import { fetchStocks, StockListRequestError, submitAnalysis } from "./api";
 import { UiFeedbackController } from "./UiFeedbackController";
+import { DiscoveryPage } from "./DiscoveryPage";
 import type {
   AnalysisImage,
   AnalysisResponse,
@@ -22,7 +23,7 @@ import type {
 } from "./contracts";
 
 type ReferenceView = "stocks" | "dictionary";
-type PageView = "analysis" | "reference";
+type PageView = "analysis" | "reference" | "discovery";
 
 const workflowSteps = [
   "\u8bc6\u522b\u53ef\u9009\u622a\u56fe\u4e2d\u7684\u56fe\u8868\u4e0e\u6587\u5b57",
@@ -913,7 +914,7 @@ export default function App() {
       <UiFeedbackController />
       <header className="hero" data-feedback-id="hero">
         <p className="eyebrow">数据世界</p>
-        <h1>{activePage === "reference" ? "整理 A股基础信息。" : "用自然语言探索 A股数据。"}</h1>
+        <h1>{activePage === "reference" ? "整理 A股基础信息。" : activePage === "discovery" ? "自动挖掘量化策略与因子。" : "用自然语言探索 A股数据。"}</h1>
       </header>
 
       <nav className="page-tabs" aria-label="主要功能" role="tablist" data-feedback-id="page-tabs">
@@ -924,6 +925,14 @@ export default function App() {
           onClick={() => setActivePage("analysis")}
         >
           数据分析
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activePage === "discovery"}
+          onClick={() => setActivePage("discovery")}
+        >
+          策略挖掘
         </button>
         <button
           type="button"
@@ -1091,7 +1100,10 @@ export default function App() {
           </div>
         </details>
       </section>
-      </> : <ReferenceDataPage />}
+      </> : activePage === "discovery" ? <DiscoveryPage onApplyFormula={(formula) => {
+        setPrompt(`验证公式: ${formula}`);
+        setActivePage("analysis");
+      }} /> : <ReferenceDataPage />}
     </main>
   );
 }

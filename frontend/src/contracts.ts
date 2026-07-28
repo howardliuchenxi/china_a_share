@@ -211,6 +211,47 @@ export interface AnalysisResponse {
 
 export type AnalysisTaskStatus = "queued" | "running" | "succeeded" | "failed";
 
+export interface DiscoveryTaskRequest {
+  target_pool: string;
+  train_start: string;
+  train_end: string;
+  val_start: string;
+  val_end: string;
+  factors: string[];
+  prompt: string;
+  max_generations: number;
+}
+
+export interface BacktestResult {
+  win_rate: number;
+  mean_return: number;
+  max_drawdown: number;
+  eval_time_ms: number;
+}
+
+export interface FactorHypothesis {
+  formula: string;
+  description: string;
+  reasoning: string;
+  train_result: BacktestResult | null;
+  val_result: BacktestResult | null;
+}
+
+export interface DiscoveryTaskProgress {
+  current_generation: number;
+  total_generations: number;
+  formulas_tested: number;
+  current_log: string;
+  leaderboard: FactorHypothesis[];
+}
+
+export interface DiscoveryTaskStatusResponse {
+  task_id: string;
+  status: AnalysisTaskStatus;
+  progress: DiscoveryTaskProgress;
+  error: ServiceError | null;
+}
+
 export interface AnalysisTaskSubmission {
   /** Stable task identifier returned by the asynchronous submission endpoint. */
   task_id: string;

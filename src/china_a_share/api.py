@@ -23,6 +23,8 @@ from .core.contracts import (
     AnalysisResponse,
     AnalysisTaskStatusResponse,
     AnalysisTaskSubmission,
+    DiscoveryTaskRequest,
+    DiscoveryTaskStatusResponse,
     ServiceError,
     StockListErrorResponse,
     StockListResponse,
@@ -79,6 +81,8 @@ def create_stock_catalog_service() -> StockCatalogService:
     """Create production stock catalog dependencies from local credentials."""
     return build_stock_catalog_service(Settings.from_env())
 
+
+DISCOVERY_TASK_API_ROUTE = "/api/discovery/tasks"
 
 def create_app(
     service: Optional[AnalysisService] = None,
@@ -254,6 +258,46 @@ def create_app(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="UI feedback could not be dispatched.",
             ) from exc
+
+    @application.post(
+        DISCOVERY_TASK_API_ROUTE,
+        response_model=AnalysisTaskSubmission,
+    )
+    def submit_discovery(
+        request: DiscoveryTaskRequest,
+    ):
+        """Accept an automated alpha discovery task."""
+        nonlocal active_task_coordinator
+        if active_task_coordinator is None:
+            active_task_coordinator = create_analysis_task_coordinator(
+                Settings.from_env()
+            )
+        submission = active_task_coordinator.submit_discovery(request)
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content=submission.model_dump(mode="json"),
+        )
+
+    @application.get(
+        f"{DISCOVERY_TASK_API_ROUTE}/{{task_id}}",
+        response_model=DiscoveryTaskStatusResponse,
+    )
+    def get_discovery_task(task_id: str) -> DiscoveryTaskStatusResponse:
+        """Return current progress or the terminal result for one discovery task."""
+        nonlocal active_task_coordinator
+        if active_task_coordinator is None:
+            active_task_coordinator = create_analysis_task_coordinator(
+                Settings.from_env()
+            )
+        task = active_task_coordinator.get(task_id)
+        if task is None or getattr(task, "task_type", "") != "discovery":
+            raise HTTPException(status_code=404, detail="Discovery task was not found.")
+        return DiscoveryTaskStatusResponse(
+            task_id=task.task_id,
+            status=task.status,
+            progress=task.progress,
+            error=task.error,
+        )
 
     @application.post(
         ANALYSIS_API_ROUTE,

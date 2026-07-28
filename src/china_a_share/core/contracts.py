@@ -656,6 +656,82 @@ class AnalysisTaskSubmission(BaseModel):
     status_url: str = Field(description="Relative endpoint used to poll task state.")
 
 
+class DiscoveryTaskRequest(BaseModel):
+    """Configuration for an automated alpha discovery task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_pool: str = Field(description="Universe constraint (e.g., 'A_SHARE').")
+    train_start: str = Field(description="Start date for training (YYYYMMDD).")
+    train_end: str = Field(description="End date for training (YYYYMMDD).")
+    val_start: str = Field(description="Start date for validation blind test (YYYYMMDD).")
+    val_end: str = Field(description="End date for validation blind test (YYYYMMDD).")
+    factors: List[str] = Field(description="Selected base factor fields to use.", default_factory=list)
+    prompt: str = Field(description="User guidance prompt.", default="")
+    max_generations: int = Field(default=3, description="Number of evolutionary generations.")
+
+
+class BacktestResult(BaseModel):
+    """Performance evaluation of a single factor formula."""
+    
+    model_config = ConfigDict(extra="forbid")
+
+    win_rate: float
+    mean_return: float
+    max_drawdown: float
+    eval_time_ms: int
+
+
+class FactorHypothesis(BaseModel):
+    """A generated formula and its rationale."""
+    
+    model_config = ConfigDict(extra="forbid")
+
+    formula: str
+    description: str
+    reasoning: str
+    train_result: Optional[BacktestResult] = None
+    val_result: Optional[BacktestResult] = None
+
+
+class DiscoveryTaskProgress(BaseModel):
+    """Live progress data for the evolution loop."""
+    
+    model_config = ConfigDict(extra="forbid")
+
+    current_generation: int = 0
+    total_generations: int = 0
+    formulas_tested: int = 0
+    current_log: str = ""
+    leaderboard: List[FactorHypothesis] = Field(default_factory=list)
+
+
+class DiscoveryTask(BaseModel):
+    """Persisted request, progress, and terminal result for one discovery task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_type: Literal["discovery"] = "discovery"
+    task_id: str = Field(description="Stable identifier used to poll task state.")
+    status: AnalysisTaskStatus = Field(description="Current asynchronous task state.")
+    request: DiscoveryTaskRequest = Field(description="Original validated discovery request.")
+    created_at: datetime = Field(description="UTC task creation timestamp.")
+    updated_at: datetime = Field(description="UTC timestamp of the latest state change.")
+    progress: DiscoveryTaskProgress = Field(default_factory=DiscoveryTaskProgress)
+    error: Optional[ServiceError] = None
+
+
+class DiscoveryTaskStatusResponse(BaseModel):
+    """Public task state that excludes the persisted input and screenshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(description="Stable task identifier.")
+    status: AnalysisTaskStatus = Field(description="Current task lifecycle state.")
+    progress: DiscoveryTaskProgress
+    error: Optional[ServiceError] = None
+
+
 class AnalysisTaskStatusResponse(BaseModel):
     """Public task state that excludes the persisted input and screenshot."""
 

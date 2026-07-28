@@ -1,7 +1,7 @@
 """Structural interfaces for replaceable planners, providers, and caches."""
 
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional, Protocol, Sequence
+from typing import Any, Callable, Dict, Optional, Protocol, Sequence, Union
 
 import pandas as pd
 
@@ -9,6 +9,7 @@ from .contracts import (
     AnalysisImage,
     AnalysisRequest,
     AnalysisTask,
+    DiscoveryTask,
     DataCacheRecord,
     DataOperation,
     QueryPlan,
@@ -42,6 +43,10 @@ class QueryPlanner(Protocol):
         candidate_operations: Sequence[DataOperation],
     ) -> QueryPlan:
         """Build a structured plan using only the supplied operation catalog."""
+        ...
+
+    def generate_text(self, prompt: str) -> str:
+        """Generate arbitrary text using the underlying LLM."""
         ...
 
 
@@ -122,11 +127,11 @@ class DataResponseCache(Protocol):
 class AnalysisTaskStore(Protocol):
     """Persist asynchronous analysis task state."""
 
-    def get(self, task_id: str) -> Optional[AnalysisTask]:
+    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
         """Return one task when it exists."""
         ...
 
-    def put(self, task: AnalysisTask) -> None:
+    def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
         """Create or replace one complete task record."""
         ...
 

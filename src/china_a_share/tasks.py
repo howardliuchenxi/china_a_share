@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import json
 import logging
 from threading import Lock
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 from uuid import uuid4
 
 import google.auth
@@ -17,6 +17,8 @@ from china_a_share.application.workflow import AnalysisService
 from china_a_share.core.contracts import (
     AnalysisRequest,
     AnalysisTask,
+    DiscoveryTask,
+    DiscoveryTaskRequest,
     AnalysisTaskStatus,
     AnalysisTaskSubmission,
     ServiceError,
@@ -78,16 +80,16 @@ class MemoryAnalysisTaskStore:
     """Store isolated task records in memory for local tests."""
 
     def __init__(self) -> None:
-        self._tasks: Dict[str, AnalysisTask] = {}
+        self._tasks: Dict[str, Union[AnalysisTask, DiscoveryTask]] = {}
         self._lock = Lock()
 
-    def get(self, task_id: str) -> Optional[AnalysisTask]:
+    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
         """Return an isolated copy of one task."""
         with self._lock:
             task = self._tasks.get(task_id)
             return task.model_copy(deep=True) if task else None
 
-    def put(self, task: AnalysisTask) -> None:
+    def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
         """Create or replace one task atomically."""
         with self._lock:
             self._tasks[task.task_id] = task.model_copy(deep=True)
@@ -103,14 +105,17 @@ class CloudStorageAnalysisTaskStore:
     ) -> None:
         self._bucket = (storage_client or storage.Client()).bucket(bucket_name)
 
-    def get(self, task_id: str) -> Optional[AnalysisTask]:
+    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
         """Return one persisted task when its object exists."""
         blob = self._bucket.blob(self._object_name(task_id))
         if not blob.exists():
             return None
-        return AnalysisTask.model_validate_json(blob.download_as_text())
+        data = json.loads(blob.download_as_text())
+        if data.get("task_type") == "discovery":
+            return DiscoveryTask.model_validate(data)
+        return AnalysisTask.model_validate(data)
 
-    def put(self, task: AnalysisTask) -> None:
+    def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
         """Replace one complete task record."""
         blob = self._bucket.blob(self._object_name(task.task_id))
         blob.upload_from_string(
@@ -206,7 +211,34 @@ class AnalysisTaskCoordinator:
             raise
         return self._submission(task)
 
-    def get(self, task_id: str) -> Optional[AnalysisTask]:
+    def submit_discovery(self, request: DiscoveryTaskRequest) -> AnalysisTaskSubmission:
+        """Persist and dispatch one new discovery task for every submission."""
+        task_id = uuid4().hex
+        now = datetime.now(timezone.utc)
+        task = DiscoveryTask(
+            task_id=task_id,
+            status=AnalysisTaskStatus.QUEUED,
+            request=request,
+            created_at=now,
+            updated_at=now,
+        )
+        self._store.put(task)
+        try:
+            self._dispatcher.dispatch(task_id)
+        except Exception as exc:
+            logger.exception("discovery_task_dispatch_failed task_id=%s", task_id)
+            task.status = AnalysisTaskStatus.FAILED
+            task.updated_at = datetime.now(timezone.utc)
+            task.error = ServiceError(source="system", message=str(exc))
+            self._store.put(task)
+            raise
+        return AnalysisTaskSubmission(
+            task_id=task.task_id,
+            status=task.status,
+            status_url=f"/api/discovery/tasks/{task.task_id}",
+        )
+
+    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
         """Return the current persisted task state."""
         return self._store.get(task_id)
 

@@ -675,6 +675,30 @@ class DeepSeekQueryPlanner:
             ) from exc
         return plan
 
+    def generate_text(self, prompt: str) -> str:
+        """Generate arbitrary text using the underlying LLM."""
+        payload = {
+            "model": DEEPSEEK_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "max_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
+        }
+        try:
+            response = self._session.post(
+                DEEPSEEK_API_URL,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=DEEPSEEK_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.RequestException as exc:
+            raise PlannerError(source=self.name, message=str(exc)) from exc
+
     def _request_once(self, request_payload: dict) -> Any:
         """Issue one planner request so the outer loop bounds total model calls."""
         try:
