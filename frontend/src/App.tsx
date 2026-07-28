@@ -411,10 +411,13 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
         <h3>{result.provider} · {result.operation}</h3>
         <span>共 {result.row_count.toLocaleString()} 行</span>
       </div>
-      {result.row_count > 0 && Object.keys(result.summary).length > 0 && (
+      {Object.keys(result.summary).length > 0 && (
         <dl className="summary-grid">
           {Object.entries(result.summary).map(([label, value]) => (
-            <div key={label}><dt>{label}</dt><dd>{value.toLocaleString()}</dd></div>
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value === null ? "不可计算" : value.toLocaleString()}</dd>
+            </div>
           ))}
         </dl>
       )}

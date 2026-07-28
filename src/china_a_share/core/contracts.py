@@ -559,9 +559,12 @@ class QueryResult(BaseModel):
         ge=0,
         description="Number of rows returned for this query.",
     )
-    summary: Dict[str, Union[int, float]] = Field(
+    summary: Dict[str, Optional[Union[int, float]]] = Field(
         default_factory=dict,
-        description="Local counts or rates requested by the validated query plan.",
+        description=(
+            "Local counts or rates requested by the validated query plan; null "
+            "means the value is not computable from an empty valid sample."
+        ),
     )
     error: Optional[ServiceError] = Field(
         default=None,

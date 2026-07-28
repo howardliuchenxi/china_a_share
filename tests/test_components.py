@@ -629,7 +629,16 @@ def test_planner_repairs_model_generated_limit_up_filter_and_code_count():
     assert query.aggregations == []
 
 
-def test_planner_repairs_unsupported_two_limit_up_probability_plan():
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "分析之前一个月，连续两天涨停后第三天上涨的概率。",
+        "能查到过去半年中，所有股票，前2天连续涨停的股票，第三天上涨的概率多大？",
+        "统计两连板股票下一交易日上涨的几率。",
+        "分析2连板后次日是否上涨。",
+    ],
+)
+def test_planner_repairs_unsupported_two_limit_up_probability_plan(prompt):
     raw_plan = {
         "market": "A_SHARE",
         "interpretation": "Analyze the probability after two limit-up days.",
@@ -663,9 +672,7 @@ def test_planner_repairs_unsupported_two_limit_up_probability_plan():
     )
 
     result = DeepSeekQueryPlanner("test-key", session=session).plan(
-        AnalysisRequest(
-            prompt="分析之前一个月，连续两天涨停后第三天上涨的概率。"
-        ),
+        AnalysisRequest(prompt=prompt),
         [
             DataOperation(name="limit_list_d", description="Daily limit list."),
             DataOperation(name="daily", description="Daily price changes."),
@@ -682,6 +689,78 @@ def test_planner_repairs_unsupported_two_limit_up_probability_plan():
         requirement.status == "covered"
         for requirement in result.requirements
     )
+
+
+def test_validator_rejects_incomplete_two_limit_up_transform_inputs():
+    plan = QueryPlan(
+        interpretation="Calculate the next-day probability after two limit-ups.",
+        requirements=[
+            {
+                "requirement": "Calculate the requested probability.",
+                "status": "covered",
+                "implementation": "Join consecutive limit-up and daily rows locally.",
+                "evidence": "Both operations are available.",
+            }
+        ],
+        result_transform="two_limit_up_next_day_probability",
+        queries=[
+            DataQuery(
+                query_id="limit-ups",
+                operation="limit_list_d",
+                params={
+                    "start_date": "20260101",
+                    "end_date": "20260630",
+                    "limit_type": "U",
+                },
+                fields=["trade_date", "ts_code"],
+                purpose="Retrieve limit-up rows.",
+            )
+        ],
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="requires exactly one limit_list_d query and one daily query",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_two_limit_up_transform_treats_empty_sources_as_valid_sample():
+    provider = FakeMarketDataProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    result = service._build_two_limit_up_next_day_result(
+        [
+            QueryResult(
+                query_id="limit-ups",
+                provider=provider.name,
+                operation="limit_list_d",
+                status="success",
+                columns=["trade_date", "ts_code", "name"],
+                rows=[],
+            ),
+            QueryResult(
+                query_id="daily",
+                provider=provider.name,
+                operation="daily",
+                status="success",
+                columns=["trade_date", "ts_code", "pct_chg"],
+                rows=[],
+            ),
+        ]
+    )
+
+    assert result.status == "success"
+    assert result.row_count == 0
+    assert result.summary == {
+        "有效两连板样本": 0,
+        "第三天上涨样本": 0,
+        "第三天上涨概率（%）": None,
+    }
 
 
 @pytest.mark.parametrize(

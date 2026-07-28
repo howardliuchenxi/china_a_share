@@ -277,11 +277,42 @@ def create_app(
             )
         if active_service is None:
             active_service = create_analysis_service()
-        return active_service.analyze(
-            http_request.state.request_id,
-            request,
-            api_route=ANALYSIS_API_ROUTE,
-        )
+        try:
+            return active_service.analyze(
+                http_request.state.request_id,
+                request,
+                api_route=ANALYSIS_API_ROUTE,
+            )
+        except Exception:
+            # This API boundary prevents unexpected execution or transformation
+            # defects from degrading into an untraceable plain-text HTTP 500.
+            log_event(
+                logger,
+                logging.ERROR,
+                "analysis_request_failed",
+                api_route=ANALYSIS_API_ROUTE,
+                request_id=http_request.state.request_id,
+                source="system",
+                exc_info=True,
+            )
+            return AnalysisResponse(
+                request_id=http_request.state.request_id,
+                planner=active_service.planner.name,
+                data_provider=getattr(
+                    active_service,
+                    "data_provider_name",
+                    "unknown",
+                ),
+                status="error",
+                error=ServiceError(
+                    source="system",
+                    code="ANALYSIS_EXECUTION_FAILED",
+                    message=(
+                        "The analysis could not be completed. Use the request ID "
+                        "to locate the server-side error."
+                    ),
+                ),
+            )
 
     @application.get(
         f"{ANALYSIS_TASK_API_ROUTE}/{{task_id}}",

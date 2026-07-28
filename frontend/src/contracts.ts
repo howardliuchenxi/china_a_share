@@ -183,7 +183,7 @@ export interface QueryResult {
   /** Number of rows returned for this query. */
   row_count: number;
   /** Controlled local counts calculated from this result. */
-  summary: Record<string, number>;
+  summary: Record<string, number | null>;
   /** Upstream error details when this query failed. */
   error: ServiceError | null;
 }

@@ -736,8 +736,27 @@ class DeepSeekQueryPlanner:
         """Repair the known two-limit-up study into two deterministic range reads."""
         if not isinstance(raw_plan, dict):
             return
-        normalized_prompt = prompt.replace(" ", "")
-        if "连续两天涨停" not in normalized_prompt or "第三天" not in normalized_prompt:
+        normalized_prompt = re.sub(r"\s+", "", prompt).lower()
+        has_two_day_limit_signal = bool(
+            re.search(
+                r"(?:连续(?:2|两|二|两个)(?:天|日|个交易日)?涨停|"
+                r"前(?:2|两|二)(?:天|日|个交易日)连续涨停|"
+                r"(?:2|两|二)连板)",
+                normalized_prompt,
+            )
+        )
+        has_next_day_outcome = any(
+            marker in normalized_prompt
+            for marker in (
+                "第三天",
+                "第3天",
+                "次日",
+                "下一天",
+                "后一天",
+                "下一交易日",
+            )
+        )
+        if not has_two_day_limit_signal or not has_next_day_outcome:
             return
         queries = raw_plan.get("queries")
         if not isinstance(queries, list):
@@ -968,6 +987,10 @@ class DeepSeekQueryPlanner:
     @staticmethod
     def _normalize_market_period_returns(plan: QueryPlan, prompt: str) -> None:
         """Route broad period-return rankings through two market snapshots."""
+        if plan.result_transform is not None:
+            # A validated cross-query intent takes precedence over broad ranking
+            # heuristics, which must not reinterpret numbers such as "前2天".
+            return
         normalized = prompt.replace(" ", "")
         asks_for_return = any(
             marker in normalized

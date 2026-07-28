@@ -55,6 +55,11 @@ class FakeAnalysisService:
         )
 
 
+class FailingAnalysisService(FakeAnalysisService):
+    def analyze(self, request_id, request, *, api_route):
+        raise RuntimeError("unexpected transform failure")
+
+
 class FakeStockCatalogService:
     def __init__(self, response=None, error=None):
         self.response = response
@@ -269,6 +274,30 @@ def test_analysis_endpoint_runs_the_injected_service(caplog):
     )
     assert event["api_route"] == "/api/analysis"
     assert event["method"] == "POST"
+
+
+def test_analysis_endpoint_returns_structured_error_for_unexpected_failure(caplog):
+    client = TestClient(create_app(FailingAnalysisService()))
+
+    with caplog.at_level(logging.ERROR):
+        response = client.post(
+            "/api/analysis",
+            json={"prompt": "Analyze arbitrary stock data."},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "error"
+    assert payload["request_id"]
+    assert payload["error"]["code"] == "ANALYSIS_EXECUTION_FAILED"
+    event = next(
+        record
+        for record in caplog.records
+        if getattr(record, "structured_fields", {}).get("event")
+        == "analysis_request_failed"
+    )
+    assert event.exc_info
+    assert event.structured_fields["request_id"] == payload["request_id"]
 
 
 def test_complex_analysis_returns_pollable_async_task():

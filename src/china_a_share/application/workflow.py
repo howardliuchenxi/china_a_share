@@ -199,6 +199,8 @@ class ASharePlanValidator:
             return plan
         if plan.result_pipeline:
             self._validate_result_pipeline(plan)
+        if plan.result_transform == "two_limit_up_next_day_probability":
+            self._validate_two_limit_up_transform(plan)
         orphaned_fanout_templates = [
             query.operation
             for query in plan.queries
@@ -245,6 +247,38 @@ class ASharePlanValidator:
                         f"Aggregation field is not requested: {aggregation.field}"
                     )
         return plan
+
+    @staticmethod
+    def _validate_two_limit_up_transform(plan: QueryPlan) -> None:
+        """Require complete, aligned inputs for the two-limit-up calculation."""
+        limit_queries = [
+            query for query in plan.queries if query.operation == "limit_list_d"
+        ]
+        daily_queries = [
+            query for query in plan.queries if query.operation == "daily"
+        ]
+        if len(limit_queries) != 1 or len(daily_queries) != 1:
+            raise PlanValidationError(
+                "two_limit_up_next_day_probability requires exactly one "
+                "limit_list_d query and one daily query."
+            )
+        limit_query = limit_queries[0]
+        daily_query = daily_queries[0]
+        required_limit_fields = {"trade_date", "ts_code"}
+        required_daily_fields = {"trade_date", "ts_code", "pct_chg"}
+        if not required_limit_fields.issubset(limit_query.fields):
+            raise PlanValidationError(
+                "The limit_list_d input must request trade_date and ts_code."
+            )
+        if not required_daily_fields.issubset(daily_query.fields):
+            raise PlanValidationError(
+                "The daily input must request trade_date, ts_code, and pct_chg."
+            )
+        for parameter in ("start_date", "end_date"):
+            if limit_query.params.get(parameter) != daily_query.params.get(parameter):
+                raise PlanValidationError(
+                    "The two-limit-up source queries must use the same date range."
+                )
 
     @staticmethod
     def _validate_result_pipeline(plan: QueryPlan) -> None:
@@ -856,6 +890,16 @@ class AnalysisService:
         self._result_pipeline_executor = (
             result_pipeline_executor or ResultPipelineExecutor()
         )
+
+    @property
+    def planner(self) -> QueryPlanner:
+        """Return the planner identity used in public analysis responses."""
+        return self._planner
+
+    @property
+    def data_provider_name(self) -> str:
+        """Return the stable provider identity used in public analysis responses."""
+        return self._provider.name
 
     @staticmethod
     def _log_termination(
@@ -1705,8 +1749,16 @@ class AnalysisService:
         daily_result = next(
             result for result in source_results if result.operation == "daily"
         )
-        daily_frame = pd.DataFrame(daily_result.rows)
-        limit_frame = pd.DataFrame(limit_result.rows)
+        # Preserve the declared schema for successful empty results so an empty
+        # sample remains a valid analytical outcome rather than a contract error.
+        daily_frame = pd.DataFrame(
+            daily_result.rows,
+            columns=daily_result.columns,
+        )
+        limit_frame = pd.DataFrame(
+            limit_result.rows,
+            columns=limit_result.columns,
+        )
         required_daily = {"trade_date", "ts_code", "pct_chg"}
         required_limit = {"trade_date", "ts_code"}
         if not required_daily.issubset(daily_frame.columns):
@@ -1757,7 +1809,11 @@ class AnalysisService:
 
         up_count = sum(bool(row["third_day_up"]) for row in rows)
         sample_count = len(rows)
-        probability = round(up_count * 100 / sample_count, 2) if sample_count else 0.0
+        probability = (
+            round(up_count * 100 / sample_count, 2)
+            if sample_count
+            else None
+        )
         return QueryResult(
             query_id="two-limit-up-next-day-probability",
             provider=self._provider.name,
