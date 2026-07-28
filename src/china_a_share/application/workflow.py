@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 
@@ -1104,14 +1105,15 @@ class AnalysisService:
                 progress_callback=progress_callback,
             )
         else:
-            results = [
-                self._executor.execute(
-                    query,
-                    api_route=api_route,
-                    request_id=request_id,
-                )
-                for query in validated_plan.queries
-            ]
+            with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
+                results = list(pool.map(
+                    lambda query: self._executor.execute(
+                        query,
+                        api_route=api_route,
+                        request_id=request_id,
+                    ),
+                    validated_plan.queries
+                ))
         if (
             validated_plan.result_transform
             == "two_limit_up_next_day_probability"
@@ -1295,14 +1297,16 @@ class AnalysisService:
         results: List[QueryResult] = []
 
         # 2. Execute standalone queries
-        for query in standalone_queries:
-            results.append(
-                self._executor.execute(
-                    query,
-                    api_route=api_route,
-                    request_id=request_id,
-                )
-            )
+        if standalone_queries:
+            with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
+                results.extend(pool.map(
+                    lambda q: self._executor.execute(
+                        q,
+                        api_route=api_route,
+                        request_id=request_id,
+                    ),
+                    standalone_queries,
+                ))
 
         # 3. Handle full-market daily range queries by date fan-out
         for query in daily_range_queries:
@@ -1345,52 +1349,60 @@ class AnalysisService:
 
             fanout_rows: List[Dict[str, Any]] = []
             missing_count = 0
-            for index, ts_code in enumerate(stock_codes, start=1):
+            
+            def _fetch_security(ts_code: str) -> QueryResult:
                 security_query = template.model_copy(deep=True)
                 security_query.query_id = f"{template.query_id}-{ts_code}"
                 security_query.params["ts_code"] = ts_code
-                security_result = self._executor.execute(
+                result = self._executor.execute(
                     security_query,
                     api_route=api_route,
                     request_id=request_id,
                 )
-                if security_result.status == QueryStatus.SUCCESS:
-                    for row in security_result.rows:
+                if result.status == QueryStatus.SUCCESS:
+                    for row in result.rows:
                         row["ts_code"] = ts_code
-                    fanout_rows.extend(security_result.rows)
-                else:
-                    error_message = (
-                        security_result.error.message
-                        if security_result.error
-                        else ""
-                    )
-                    tolerable = any(
-                        marker in error_message
-                        for marker in (
-                            "No float-holder snapshots",
-                            "CR10 float requires 10 unique holders",
-                            "暂无数据",
-                        )
-                    )
-                    if tolerable:
-                        missing_count += 1
-                    else:
-                        results.append(security_result)
+                return result
 
-                if index % HOLDER_FANOUT_LOG_INTERVAL == 0:
-                    logger.info(
-                        "fanout_progress request_id=%s operation=%s "
-                        "completed=%s total=%s",
-                        request_id,
-                        template.operation,
-                        index,
-                        universe_count,
-                    )
-                if progress_callback and (
-                    index % HOLDER_PROGRESS_UPDATE_INTERVAL == 0
-                    or index == universe_count
-                ):
-                    progress_callback(index, universe_count)
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                futures = [pool.submit(_fetch_security, ts_code) for ts_code in stock_codes]
+                for index, future in enumerate(as_completed(futures), start=1):
+                    security_result = future.result()
+                    if security_result.status == QueryStatus.SUCCESS:
+                        fanout_rows.extend(security_result.rows)
+                    else:
+                        error_message = (
+                            security_result.error.message
+                            if security_result.error
+                            else ""
+                        )
+                        tolerable = any(
+                            marker in error_message
+                            for marker in (
+                                "No float-holder snapshots",
+                                "CR10 float requires 10 unique holders",
+                                "暂无数据",
+                            )
+                        )
+                        if tolerable:
+                            missing_count += 1
+                        else:
+                            results.append(security_result)
+
+                    if index % HOLDER_FANOUT_LOG_INTERVAL == 0:
+                        logger.info(
+                            "fanout_progress request_id=%s operation=%s "
+                            "completed=%s total=%s",
+                            request_id,
+                            template.operation,
+                            index,
+                            universe_count,
+                        )
+                    if progress_callback and (
+                        index % HOLDER_PROGRESS_UPDATE_INTERVAL == 0
+                        or index == universe_count
+                    ):
+                        progress_callback(index, universe_count)
 
             logger.info(
                 "fanout_completed request_id=%s operation=%s "
@@ -1448,23 +1460,29 @@ class AnalysisService:
                 api_route=api_route,
                 request_id=request_id,
             )
-        rows: List[Dict[str, Any]] = []
+        trade_dates = []
         current_date = start_date
         while current_date <= end_date:
             if current_date.weekday() < 5:
-                daily_query = query.model_copy(deep=True)
-                trade_date = current_date.strftime("%Y%m%d")
-                daily_query.query_id = f"{query.query_id}-{trade_date}"
-                daily_query.params = {"trade_date": trade_date}
-                result = self._executor.execute(
-                    daily_query,
-                    api_route=api_route,
-                    request_id=request_id,
-                )
+                trade_dates.append(current_date.strftime("%Y%m%d"))
+            current_date += timedelta(days=1)
+
+        def _fetch_date(trade_date: str) -> QueryResult:
+            daily_query = query.model_copy(deep=True)
+            daily_query.query_id = f"{query.query_id}-{trade_date}"
+            daily_query.params = {"trade_date": trade_date}
+            return self._executor.execute(
+                daily_query,
+                api_route=api_route,
+                request_id=request_id,
+            )
+
+        rows: List[Dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
+            for result in pool.map(_fetch_date, trade_dates):
                 if result.status != QueryStatus.SUCCESS:
                     return result
                 rows.extend(result.rows)
-            current_date += timedelta(days=1)
         return QueryResult(
             query_id=query.query_id,
             provider=self._provider.name,
@@ -1485,11 +1503,7 @@ class AnalysisService:
         request_id: str,
     ) -> QueryResult:
         """Calculate market-wide returns from the first and last available snapshots."""
-        boundary_results = []
-        for label, boundary, direction in (
-            ("start", start_date, 1),
-            ("end", end_date, -1),
-        ):
+        def _find_boundary(label: str, boundary: Any, direction: int) -> Optional[QueryResult]:
             result = None
             candidate = boundary
             for _ in range(MAX_BOUNDARY_DATE_PROBES):
@@ -1508,6 +1522,15 @@ class AnalysisService:
                     if result.status != QueryStatus.SUCCESS or result.row_count:
                         break
                 candidate += timedelta(days=direction)
+            return result
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            boundary_results = list(pool.map(
+                lambda args: _find_boundary(*args),
+                [("start", start_date, 1), ("end", end_date, -1)]
+            ))
+
+        for label, result in zip(["start", "end"], boundary_results):
             if result is None or result.status != QueryStatus.SUCCESS:
                 return result or QueryResult(
                     query_id=query.query_id,
