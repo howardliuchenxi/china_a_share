@@ -43,7 +43,7 @@ class FactorBacktester:
         def _fetch_day(dt: str) -> pd.DataFrame:
             try:
                 # Fetch valuation/factors
-                query1 = DataQuery(query_id=f"db-{dt}", operation="daily_basic", params={"trade_date": dt}, fields=[])
+                query1 = DataQuery(query_id=f"db-{dt}", operation="daily_basic", params={"trade_date": dt}, fields=[], purpose="backtest")
                 res1 = self._executor.execute(query1, api_route=api_route, request_id=request_id)
                 if res1.status != QueryStatus.SUCCESS or res1.row_count == 0:
                     return pd.DataFrame()
@@ -58,7 +58,7 @@ class FactorBacktester:
                 # and predict the `pct_chg` of that same day (contemporaneous correlation, not predictive, but good for testing the loop).
                 # To be predictive, we'd need to align date + 1. Let's do it properly:
                 # Just fetch `daily` for `dt` and merge.
-                query2 = DataQuery(query_id=f"d-{dt}", operation="daily", params={"trade_date": dt}, fields=["ts_code", "pct_chg", "close", "amount"])
+                query2 = DataQuery(query_id=f"d-{dt}", operation="daily", params={"trade_date": dt}, fields=["ts_code", "pct_chg", "close", "amount"], purpose="backtest")
                 res2 = self._executor.execute(query2, api_route=api_route, request_id=request_id)
                 df2 = pd.DataFrame(res2.rows) if res2.status == QueryStatus.SUCCESS else pd.DataFrame()
 

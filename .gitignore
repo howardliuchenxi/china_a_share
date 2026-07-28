@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
+*.swp
 data/*.csv
 frontend/node_modules/
 node_modules/
