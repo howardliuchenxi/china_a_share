@@ -317,6 +317,49 @@ def test_planner_retries_one_contract_invalid_response():
     retry_messages = session.calls[1][1]["json"]["messages"]
     assert "previous query plan was rejected" in retry_messages[-1]["content"]
     assert "violates the contract" in retry_messages[-1]["content"]
+    assert "invalid JSON at line 1, column 20" in retry_messages[-1]["content"]
+
+
+def test_planner_retries_with_field_level_contract_feedback():
+    invalid_plan = make_daily_plan().model_dump(mode="json")
+    invalid_plan["result_pipeline"] = {
+        "source_query_id": invalid_plan["queries"][0]["query_id"],
+        "output_query_id": "invalid-shift",
+        "steps": [
+            {
+                "operation": "derive",
+                "field": "close",
+                "output_field": "previous_close",
+                "arithmetic_operator": "shift",
+                "periods": 1,
+            }
+        ],
+    }
+    valid_plan = make_daily_plan()
+    session = SequenceFakeSession(
+        [
+            FakeResponse(
+                {
+                    "choices": [
+                        {"message": {"content": json.dumps(invalid_plan)}}
+                    ]
+                }
+            ),
+            FakeResponse(
+                {"choices": [{"message": {"content": valid_plan.model_dump_json()}}]}
+            ),
+        ]
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="Count stocks."),
+        [DataOperation(name="daily", description="Daily prices.")],
+    )
+
+    assert result.queries[0].operation == "daily"
+    retry_feedback = session.calls[1][1]["json"]["messages"][-1]["content"]
+    assert "result_pipeline.steps.0.arithmetic_operator" in retry_feedback
+    assert "Input should be 'add', 'subtract', 'multiply', 'divide' or" in retry_feedback
 
 
 def test_planner_retries_with_semantic_validation_feedback():

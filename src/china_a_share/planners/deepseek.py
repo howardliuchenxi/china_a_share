@@ -59,9 +59,16 @@ def build_query_plan_system_prompt(
         "specialized transforms. Pipelines may compose latest_by_group, derive, "
         "drop_missing, filter, sort, limit, quantile_filter, aggregate, rolling_mean, "
         "rolling_sum, shift, match_source, compare_fields, compare_scalar, and "
-        "match_at_offset, and summarize. Use right_source_query_id and join_on for "
-        "multi-source matching. Use match_at_offset for calendar outcome horizons; "
-        "never replace a month or year horizon with a one-row shift. "
+        "match_at_offset, and summarize. A derive step performs scalar arithmetic "
+        "only and requires field, output_field, arithmetic_operator, and numeric "
+        "value; never put shift in arithmetic_operator. A shift step requires field, "
+        "output_field, group_by, order_by, and nonzero periods. A match_source step "
+        "performs membership matching and requires right_source_query_id, join_on, "
+        "and a boolean output_field. A match_at_offset step operates within the "
+        "current pipeline frame and requires field, output_field, group_by, order_by, "
+        "offset_value, offset_unit, and matched_date_output_field. Use "
+        "match_at_offset for calendar outcome horizons; never replace a month or year "
+        "horizon with a one-row shift. "
         "For ordered calculations, provide group_by and order_by. Fetch enough source "
         "history to initialize rolling windows before filtering to the requested "
         "measurement interval. Drop rows whose required future outcome is unavailable. "
@@ -270,12 +277,44 @@ class DeepSeekQueryPlanner:
             raw_plan = json.loads(content)
             self._normalize_raw_query_defaults(raw_plan)
             plan = QueryPlan.model_validate(raw_plan)
-        except (json.JSONDecodeError, ValidationError) as exc:
+        except json.JSONDecodeError as exc:
             raise PlannerError(
                 source=self.name,
-                message="DeepSeek returned a query plan that violates the contract.",
+                message=(
+                    "DeepSeek returned a query plan that violates the contract: "
+                    f"invalid JSON at line {exc.lineno}, column {exc.colno}."
+                ),
                 http_status=response.status_code,
                 raw_response={"content": content},
+            ) from exc
+        except ValidationError as exc:
+            errors = exc.errors(include_url=False)
+            details = "; ".join(
+                (
+                    f"{'.'.join(str(part) for part in error['loc'])}: "
+                    f"{error['msg']}"
+                )
+                for error in errors
+            )
+            raise PlannerError(
+                source=self.name,
+                message=(
+                    "DeepSeek returned a query plan that violates the contract: "
+                    f"{details}"
+                ),
+                http_status=response.status_code,
+                raw_response={
+                    "content": content,
+                    "validation_errors": [
+                        {
+                            "location": ".".join(
+                                str(part) for part in error["loc"]
+                            ),
+                            "message": error["msg"],
+                        }
+                        for error in errors
+                    ],
+                },
             ) from exc
         return plan
 
