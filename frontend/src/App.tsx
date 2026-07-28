@@ -149,6 +149,51 @@ const NON_MONETARY_FINANCIAL_FIELDS = new Set([
 const IDENTIFIER_COLUMN_PATTERN = /(^|_)(code|date|year|month|type|status|flag|count|num)$/;
 const PERCENT_COLUMN_PATTERN = /(^pct_|_pct$|_pct_|_ratio$|_rate$|_yield$)/;
 
+const DATA_DICTIONARY_ENTRIES = [
+  // 估值类 (Valuation)
+  { label: "市盈率 (PE)", field: "pe", description: "估值指标，衡量股价与每股收益的比例。", formula: "总市值 / 净利润", source: "Tushare" },
+  { label: "市净率 (PB)", field: "pb", description: "估值指标，衡量股价与每股净资产的比例。", formula: "总市值 / 净资产", source: "Tushare" },
+  { label: "市销率 (PS)", field: "ps", description: "估值指标，衡量股价与每股营业收入的比例。", formula: "总市值 / 营业收入", source: "Tushare" },
+  { label: "市盈率TTM", field: "pe_ttm", description: "滚动市盈率，按过去12个月净利润计算的估值指标。", formula: "总市值 / 过去12个月净利润", source: "Tushare" },
+  { label: "市净率TTM", field: "pb_ttm", description: "滚动市净率。", formula: "总市值 / 过去12个月净资产", source: "Tushare" },
+  { label: "市销率TTM", field: "ps_ttm", description: "滚动市销率。", formula: "总市值 / 过去12个月营业收入", source: "Tushare" },
+  { label: "股息率", field: "dv_ratio", description: "衡量企业现金分红与市值的比例。", formula: "过去一年分红总额 / 总市值", source: "Tushare" },
+  { label: "股息率TTM", field: "dv_ttm", description: "滚动股息率。", formula: "过去12个月分红总额 / 总市值", source: "Tushare" },
+
+  // 流动性与市值类 (Liquidity & Market Cap)
+  { label: "换手率", field: "turnover_rate", description: "交易活跃度指标，一定时间内市场中股票转手买卖的频率。", formula: "区间成交股数 / 流通总股数", source: "Tushare" },
+  { label: "换手率变动", field: "turnover_change_pct", description: "换手率相较于基期的相对变化比例，用于衡量交易活跃度的上升或下降。", formula: "(期末换手率 - 基期换手率) / 基期换手率 * 100%", source: "A-Share Lab 衍生计算" },
+  { label: "总市值", field: "total_mv", description: "公司发行的全部股份按市场价格计算的总价值。", formula: "总股本 * 最新股价", source: "Tushare" },
+  { label: "流通市值", field: "circ_mv", description: "在二级市场可自由交易的股份总价值。", formula: "流通股本 * 最新股价", source: "Tushare" },
+  { label: "量比", field: "volume_ratio", description: "开市后平均每分钟的成交量与过去5个交易日平均每分钟成交量的比值。", formula: "当前分钟成交量 / 过去5日均分钟成交量", source: "Tushare" },
+
+  // 行情收益类 (Price Return)
+  { label: "涨跌额", field: "change", description: "当前收盘价相对前一交易日收盘价的变动金额。", formula: "当日收盘价 - 前一交易日收盘价", source: "Tushare" },
+  { label: "日度涨跌幅", field: "pct_chg", description: "股票在一个交易日内的价格变动百分比。", formula: "(当日收盘价 - 前一交易日收盘价) / 前一交易日收盘价 * 100%", source: "Tushare" },
+  { label: "区间收益率", field: "period_return_pct", description: "股票在特定日期区间的价格变动百分比。", formula: "(期末收盘价 - 期初前一交易日收盘价) / 期初前一交易日收盘价 * 100%", source: "A-Share Lab 衍生计算" },
+  { label: "收盘价", field: "close", description: "证券在该交易日的收盘价格。", formula: "-", source: "Tushare" },
+  { label: "开盘价", field: "open", description: "证券在该交易日的开盘价格。", formula: "-", source: "Tushare" },
+  { label: "最高价", field: "high", description: "证券在该交易日成交的最高价格。", formula: "-", source: "Tushare" },
+  { label: "最低价", field: "low", description: "证券在该交易日成交的最低价格。", formula: "-", source: "Tushare" },
+  
+  // 筹码与股东结构类 (Holdings & Ownership)
+  { label: "CR10 流通股集中度", field: "cr10_float_registered", description: "前十大无限售流通股东的流通股本持股比例合计，反映筹码集中度。", formula: "前十流通股东有效持股比例之和", source: "A-Share Lab 衍生计算" },
+  { label: "持股分散度代理", field: "non_top10_float_ratio", description: "100%减去CR10流通股集中度；包含散户和未进入前十的机构，不等于个人投资者持股比例。", formula: "100% - cr10_float_registered", source: "A-Share Lab 衍生计算" },
+  { label: "已知股东比例", field: "known_top_holder_float_ratio", description: "仅汇总具有有效流通股持股比例的披露股东；当源数据缺失时，不代表完整CR10。", formula: "所有有效持股比例加总", source: "A-Share Lab 衍生计算" },
+  { label: "未覆盖比例上限", field: "uncovered_float_ratio_upper_bound", description: "100%减去已知股东比例；包含缺失比例的披露股东及其他股东，不能视为散户比例。", formula: "100% - known_top_holder_float_ratio", source: "A-Share Lab 衍生计算" },
+  { label: "代理账户占比", field: "omnibus_float_ratio", description: "前十大流通股东中，香港中央结算等代理账户的流通股持股比例。其背后可能对应多个实际投资者。", formula: "识别代理账户并加总其流通股比例", source: "A-Share Lab 衍生计算" },
+  { label: "有效股东数", field: "holder_count", description: "参与本期CR10计算且名称唯一的披露股东数量，必须为10。", formula: "去重计数", source: "A-Share Lab 衍生计算" },
+  { label: "有效比例数", field: "ratio_holder_count", description: "具有可计算流通股持股比例的披露股东数量。", formula: "有效记录计数", source: "A-Share Lab 衍生计算" },
+
+  // 基础元数据 (Metadata)
+  { label: "股票代码", field: "ts_code", description: "证券在 Tushare 中使用的交易所限定代码。", formula: "-", source: "Tushare" },
+  { label: "股票名称", field: "name", description: "证券当前公开使用的简称。", formula: "-", source: "Tushare" },
+  { label: "交易日期", field: "trade_date", description: "该行行情或指标对应的交易日。", formula: "-", source: "Tushare" },
+  { label: "报告期", field: "end_date", description: "股东持股数据对应的报告期末日期。", formula: "-", source: "Tushare" },
+  { label: "公告日期", field: "ann_date", description: "该期股东数据首次对市场公开的日期。", formula: "-", source: "Tushare" },
+  { label: "计算完整性", field: "calculation_status", description: "complete表示完整计算；partial_missing_ratio表示源比例缺失，仅能给出部分统计。", formula: "-", source: "A-Share Lab 衍生计算" },
+];
+
 function formatAdaptiveNumber(value: number, unit = ""): string {
   const absoluteValue = Math.abs(value);
   if (absoluteValue >= 100_000_000) {
@@ -877,69 +922,15 @@ function ReferenceDataPage() {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td><strong>市盈率 (PE)</strong></td>
-                  <td><code>pe</code></td>
-                  <td>估值指标，衡量股价与每股收益的比例。</td>
-                  <td>总市值 / 净利润</td>
-                  <td>Tushare</td>
-                </tr>
-                <tr>
-                  <td><strong>市净率 (PB)</strong></td>
-                  <td><code>pb</code></td>
-                  <td>估值指标，衡量股价与每股净资产的比例。</td>
-                  <td>总市值 / 净资产</td>
-                  <td>Tushare</td>
-                </tr>
-                <tr>
-                  <td><strong>换手率</strong></td>
-                  <td><code>turnover_rate</code></td>
-                  <td>交易活跃度指标，一定时间内市场中股票转手买卖的频率。</td>
-                  <td>区间成交股数 / 流通总股数</td>
-                  <td>Tushare</td>
-                </tr>
-                <tr>
-                  <td><strong>换手率变动</strong></td>
-                  <td><code>turnover_change_pct</code></td>
-                  <td>换手率相较于基期的相对变化比例，用于衡量交易活跃度的上升或下降。</td>
-                  <td>(期末换手率 - 基期换手率) / 基期换手率 * 100%</td>
-                  <td>A-Share Lab 衍生计算</td>
-                </tr>
-                <tr>
-                  <td><strong>CR10 流通股集中度</strong></td>
-                  <td><code>cr10_float_registered</code></td>
-                  <td>前十大无限售流通股东的流通股本持股比例合计，反映筹码集中度。</td>
-                  <td>前十流通股东有效持股比例之和</td>
-                  <td>A-Share Lab 衍生计算</td>
-                </tr>
-                <tr>
-                  <td><strong>持股分散度代理</strong></td>
-                  <td><code>non_top10_float_ratio</code></td>
-                  <td>100%减去CR10流通股集中度；包含散户和未进入前十的机构，不等于个人投资者持股比例。</td>
-                  <td>100% - cr10_float_registered</td>
-                  <td>A-Share Lab 衍生计算</td>
-                </tr>
-                <tr>
-                  <td><strong>代理账户占比</strong></td>
-                  <td><code>omnibus_float_ratio</code></td>
-                  <td>前十大流通股东中，香港中央结算等代理账户的流通股持股比例。其背后可能对应多个实际投资者。</td>
-                  <td>识别代理账户并加总其流通股比例</td>
-                  <td>A-Share Lab 衍生计算</td>
-                </tr>
-                <tr>
-                  <td><strong>日度涨跌幅</strong></td>
-                  <td><code>pct_chg</code></td>
-                  <td>股票在一个交易日内的价格变动百分比。</td>
-                  <td>(当日收盘价 - 前一交易日收盘价) / 前一交易日收盘价 * 100%</td>
-                  <td>Tushare</td>
-                </tr>
-                <tr>
-                  <td><strong>区间收益率</strong></td>
-                  <td><code>period_return_pct</code></td>
-                  <td>股票在特定日期区间的价格变动百分比。</td>
-                  <td>(期末收盘价 - 期初前一交易日收盘价) / 期初前一交易日收盘价 * 100%</td>
-                  <td>A-Share Lab 衍生计算</td>
-                </tr>
+                {DATA_DICTIONARY_ENTRIES.map((entry) => (
+                  <tr key={entry.field}>
+                    <td><strong>{entry.label}</strong></td>
+                    <td><code>{entry.field}</code></td>
+                    <td>{entry.description}</td>
+                    <td>{entry.formula}</td>
+                    <td>{entry.source}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
