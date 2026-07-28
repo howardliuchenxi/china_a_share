@@ -92,7 +92,10 @@ export interface QueryPlan {
   /** Optional deterministic cross-query calculation. */
   result_transform:
     | "two_limit_up_next_day_probability"
+    | "consecutive_limit_up_next_day_probability"
     | null;
+  /** Consecutive limit-up sessions required by the event study. */
+  consecutive_limit_up_days?: number | null;
   /** Optional deterministic relational operations applied to one query result. */
   result_pipeline?: {
     /** Query result consumed as the pipeline input. */

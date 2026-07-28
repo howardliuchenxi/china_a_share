@@ -199,8 +199,11 @@ class ASharePlanValidator:
             return plan
         if plan.result_pipeline:
             self._validate_result_pipeline(plan)
-        if plan.result_transform == "two_limit_up_next_day_probability":
-            self._validate_two_limit_up_transform(plan)
+        if plan.result_transform in {
+            "two_limit_up_next_day_probability",
+            "consecutive_limit_up_next_day_probability",
+        }:
+            self._validate_consecutive_limit_up_transform(plan)
         orphaned_fanout_templates = [
             query.operation
             for query in plan.queries
@@ -249,8 +252,8 @@ class ASharePlanValidator:
         return plan
 
     @staticmethod
-    def _validate_two_limit_up_transform(plan: QueryPlan) -> None:
-        """Require complete, aligned inputs for the two-limit-up calculation."""
+    def _validate_consecutive_limit_up_transform(plan: QueryPlan) -> None:
+        """Require complete, aligned inputs for a consecutive-limit-up study."""
         limit_queries = [
             query for query in plan.queries if query.operation == "limit_list_d"
         ]
@@ -259,7 +262,7 @@ class ASharePlanValidator:
         ]
         if len(limit_queries) != 1 or len(daily_queries) != 1:
             raise PlanValidationError(
-                "two_limit_up_next_day_probability requires exactly one "
+                "The consecutive-limit-up transform requires exactly one "
                 "limit_list_d query and one daily query."
             )
         limit_query = limit_queries[0]
@@ -277,7 +280,7 @@ class ASharePlanValidator:
         for parameter in ("start_date", "end_date"):
             if limit_query.params.get(parameter) != daily_query.params.get(parameter):
                 raise PlanValidationError(
-                    "The two-limit-up source queries must use the same date range."
+                    "The consecutive-limit-up sources must use the same date range."
                 )
 
     @staticmethod
@@ -1199,11 +1202,12 @@ class AnalysisService:
                 error=ServiceError(source="system", message=message),
             )
 
-        if (
-            validated_plan.result_transform
-            == "two_limit_up_next_day_probability"
-        ):
-            results = self._execute_two_limit_up_sources(
+        consecutive_limit_transform = validated_plan.result_transform in {
+            "two_limit_up_next_day_probability",
+            "consecutive_limit_up_next_day_probability",
+        }
+        if consecutive_limit_transform:
+            results = self._execute_consecutive_limit_up_sources(
                 validated_plan,
                 api_route=api_route,
                 request_id=request_id,
@@ -1225,12 +1229,16 @@ class AnalysisService:
                     ),
                     validated_plan.queries
                 ))
-        if (
-            validated_plan.result_transform
-            == "two_limit_up_next_day_probability"
-            and all(result.status == QueryStatus.SUCCESS for result in results)
+        if consecutive_limit_transform and all(
+            result.status == QueryStatus.SUCCESS for result in results
         ):
-            results.insert(0, self._build_two_limit_up_next_day_result(results))
+            results.insert(
+                0,
+                self._build_consecutive_limit_up_next_day_result(
+                    results,
+                    validated_plan.consecutive_limit_up_days or 2,
+                ),
+            )
         if validated_plan.result_pipeline:
             source = next(
                 (
@@ -1689,14 +1697,15 @@ class AnalysisService:
         )
 
 
-    def _execute_two_limit_up_sources(
+    def _execute_consecutive_limit_up_sources(
         self,
         plan: QueryPlan,
         *,
         api_route: str,
         request_id: str,
     ) -> List[QueryResult]:
-        """Fetch only daily rows for securities that formed two-day limit signals."""
+        """Fetch daily rows only for securities with candidate limit-up streaks."""
+        consecutive_days = plan.consecutive_limit_up_days or 2
         limit_query = next(
             query for query in plan.queries if query.operation == "limit_list_d"
         )
@@ -1715,21 +1724,22 @@ class AnalysisService:
         candidate_codes: List[str] = []
         if {"trade_date", "ts_code"}.issubset(limit_frame.columns):
             dates = sorted(limit_frame["trade_date"].astype(str).unique())
-            pairs = {
-                (str(row.trade_date), str(row.ts_code))
-                for row in limit_frame.itertuples(index=False)
+            codes_by_date = {
+                date_value: set(
+                    limit_frame.loc[
+                        limit_frame["trade_date"].astype(str) == date_value,
+                        "ts_code",
+                    ].astype(str)
+                )
+                for date_value in dates
             }
             candidates = set()
-            for index in range(len(dates) - 1):
-                first_codes = {
-                    code for date_value, code in pairs if date_value == dates[index]
-                }
-                second_codes = {
-                    code
-                    for date_value, code in pairs
-                    if date_value == dates[index + 1]
-                }
-                candidates.update(first_codes.intersection(second_codes))
+            for index in range(len(dates) - consecutive_days + 1):
+                window_dates = dates[index:index + consecutive_days]
+                streak_codes = set(codes_by_date[window_dates[0]])
+                for date_value in window_dates[1:]:
+                    streak_codes.intersection_update(codes_by_date[date_value])
+                candidates.update(streak_codes)
             candidate_codes = sorted(candidates)
 
         if not candidate_codes:
@@ -1749,11 +1759,12 @@ class AnalysisService:
             )
         return [limit_result, daily_result]
 
-    def _build_two_limit_up_next_day_result(
+    def _build_consecutive_limit_up_next_day_result(
         self,
         source_results: List[QueryResult],
+        consecutive_days: int,
     ) -> QueryResult:
-        """Calculate third-day gains after consecutive trading-day limit-ups."""
+        """Calculate next-session gains after N consecutive limit-up sessions."""
         limit_result = next(
             result
             for result in source_results
@@ -1795,58 +1806,77 @@ class AnalysisService:
             for row in limit_frame.itertuples(index=False)
         }
         rows: List[Dict[str, Any]] = []
-        for index in range(len(trading_dates) - 2):
-            first_date, second_date, third_date = trading_dates[index:index + 3]
-            first_day_codes = {
-                code for date_value, code in limit_pairs if date_value == first_date
+        for index in range(len(trading_dates) - consecutive_days):
+            signal_dates = trading_dates[index:index + consecutive_days]
+            outcome_date = trading_dates[index + consecutive_days]
+            streak_codes = {
+                code
+                for date_value, code in limit_pairs
+                if date_value == signal_dates[0]
             }
-            second_day_codes = {
-                code for date_value, code in limit_pairs if date_value == second_date
-            }
-            for code in sorted(first_day_codes.intersection(second_day_codes)):
-                third_day_change = daily_changes.get((third_date, code))
-                if third_day_change is None or pd.isna(third_day_change):
+            for signal_date in signal_dates[1:]:
+                streak_codes.intersection_update(
+                    code
+                    for date_value, code in limit_pairs
+                    if date_value == signal_date
+                )
+            for code in sorted(streak_codes):
+                outcome_change = daily_changes.get((outcome_date, code))
+                if outcome_change is None or pd.isna(outcome_change):
                     continue
-                numeric_change = float(third_day_change)
+                numeric_change = float(outcome_change)
                 rows.append(
                     {
                         "ts_code": code,
                         "name": names.get(code),
-                        "first_limit_date": first_date,
-                        "second_limit_date": second_date,
-                        "third_trade_date": third_date,
-                        "third_day_pct_chg": numeric_change,
-                        "third_day_up": numeric_change > 0,
+                        "consecutive_limit_days": consecutive_days,
+                        "signal_start_date": signal_dates[0],
+                        "signal_end_date": signal_dates[-1],
+                        "outcome_trade_date": outcome_date,
+                        "outcome_pct_chg": numeric_change,
+                        "outcome_up": numeric_change > 0,
                     }
                 )
 
-        up_count = sum(bool(row["third_day_up"]) for row in rows)
+        up_count = sum(bool(row["outcome_up"]) for row in rows)
         sample_count = len(rows)
         probability = (
             round(up_count * 100 / sample_count, 2)
             if sample_count
             else None
         )
+        outcome_day = consecutive_days + 1
+        chinese_day = {
+            3: "第三天",
+            4: "第四天",
+            5: "第五天",
+            6: "第六天",
+            7: "第七天",
+            8: "第八天",
+            9: "第九天",
+            10: "第十天",
+        }.get(outcome_day, f"第{outcome_day}天")
         return QueryResult(
-            query_id="two-limit-up-next-day-probability",
+            query_id="consecutive-limit-up-next-day-probability",
             provider=self._provider.name,
-            operation="two_limit_up_next_day_probability",
+            operation="consecutive_limit_up_next_day_probability",
             status=QueryStatus.SUCCESS,
             columns=[
                 "ts_code",
                 "name",
-                "first_limit_date",
-                "second_limit_date",
-                "third_trade_date",
-                "third_day_pct_chg",
-                "third_day_up",
+                "consecutive_limit_days",
+                "signal_start_date",
+                "signal_end_date",
+                "outcome_trade_date",
+                "outcome_pct_chg",
+                "outcome_up",
             ],
             rows=rows,
             row_count=sample_count,
             summary={
-                "有效两连板样本": sample_count,
-                "第三天上涨样本": up_count,
-                "第三天上涨概率（%）": probability,
+                f"有效连续{consecutive_days}天涨停样本": sample_count,
+                f"{chinese_day}上涨样本": up_count,
+                f"{chinese_day}上涨概率（%）": probability,
             },
         )
 

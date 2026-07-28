@@ -498,12 +498,21 @@ class QueryPlan(BaseModel):
     result_transform: Optional[
         Literal[
             "two_limit_up_next_day_probability",
+            "consecutive_limit_up_next_day_probability",
         ]
     ] = Field(
         default=None,
         description=(
             "Optional deterministic cross-query calculation applied after all "
             "source queries succeed."
+        ),
+    )
+    consecutive_limit_up_days: Optional[int] = Field(
+        default=None,
+        ge=2,
+        le=10,
+        description=(
+            "Required consecutive limit-up trading sessions for the event study."
         ),
     )
     result_pipeline: Optional[ResultPipeline] = Field(
@@ -527,6 +536,15 @@ class QueryPlan(BaseModel):
                 raise ValueError("unsupported plans must explain their limitations")
         if self.result_transform and self.result_pipeline:
             raise ValueError("result_transform and result_pipeline are mutually exclusive")
+        if (
+            self.result_transform
+            == "consecutive_limit_up_next_day_probability"
+            and self.consecutive_limit_up_days is None
+        ):
+            raise ValueError(
+                "consecutive_limit_up_days is required for the consecutive "
+                "limit-up transform"
+            )
         return self
 
 

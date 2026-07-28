@@ -118,14 +118,15 @@ class DeepSeekQueryPlanner:
             "the native parameter limit_type='U'; request ts_code and name, and use "
             "the returned row count as the total. Do not filter the output limit_type "
             "field and do not create a conditional count over ts_code. "
-            "For requests asking for the probability that the third trading day "
-            "rises after two consecutive limit-up trading days, create exactly two "
+            "For requests asking for the probability that the next trading day "
+            "rises after N consecutive limit-up trading days, create exactly two "
             "range queries over the same requested window: limit_list_d with native "
             "limit_type='U' and fields trade_date,ts_code,name; and daily with fields "
             "trade_date,ts_code,pct_chg. Set result_transform to "
-            "two_limit_up_next_day_probability. This deterministic local transform "
+            "consecutive_limit_up_next_day_probability and set "
+            "consecutive_limit_up_days to N. This deterministic local transform "
             "joins securities across consecutive market trading dates, excludes "
-            "signals without third-day data, and computes the requested probability. "
+            "signals without next-session data, and computes the requested probability. "
             "Mark all such requirements covered. "
             "Use one range query plus a deterministic query transform for common "
             "ranking and grouping requests. Use count_by_trade_date for daily limit-up "
@@ -550,7 +551,7 @@ class DeepSeekQueryPlanner:
                 message="Planner returned non-JSON content.",
             ) from exc
         self._normalize_raw_query_defaults(raw_plan)
-        self._normalize_two_limit_up_analysis(raw_plan, prompt)
+        self._normalize_consecutive_limit_up_analysis(raw_plan, prompt)
         plan = QueryPlan.model_validate(raw_plan)
         self._finalize_plan(plan, prompt)
         return plan
@@ -909,7 +910,7 @@ class DeepSeekQueryPlanner:
         try:
             raw_plan = json.loads(content)
             self._normalize_raw_query_defaults(raw_plan)
-            self._normalize_two_limit_up_analysis(raw_plan, prompt)
+            self._normalize_consecutive_limit_up_analysis(raw_plan, prompt)
             plan = QueryPlan.model_validate(raw_plan)
         except (json.JSONDecodeError, ValidationError) as exc:
             raise PlannerError(
@@ -998,34 +999,65 @@ class DeepSeekQueryPlanner:
             raw_plan["result_transform"] = None
 
     @staticmethod
-    def _normalize_two_limit_up_analysis(
+    def _normalize_consecutive_limit_up_analysis(
         raw_plan: Any,
         prompt: str,
     ) -> None:
-        """Repair the known two-limit-up study into two deterministic range reads."""
+        """Repair a consecutive-limit-up study into deterministic range reads."""
         if not isinstance(raw_plan, dict):
             return
         normalized_prompt = re.sub(r"\s+", "", prompt).lower()
-        has_two_day_limit_signal = bool(
-            re.search(
-                r"(?:连续(?:2|两|二|两个)(?:天|日|个交易日)?涨停|"
-                r"前(?:2|两|二)(?:天|日|个交易日)连续涨停|"
-                r"(?:2|两|二)连板)",
-                normalized_prompt,
-            )
+        count_token = r"(?:\d{1,2}|两|二|三|四|五|六|七|八|九|十)"
+        signal_match = re.search(
+            rf"(?:连续{count_token}(?:天|日|个交易日)?涨停|"
+            rf"连续涨停{count_token}(?:天|日|个交易日)?|"
+            rf"前{count_token}(?:天|日|个交易日)连续涨停|"
+            rf"{count_token}连板)",
+            normalized_prompt,
         )
+        if signal_match is None:
+            return
+        count_match = re.search(
+            r"\d{1,2}|两|二|三|四|五|六|七|八|九|十",
+            signal_match.group(0),
+        )
+        if count_match is None:
+            return
+        count_value = count_match.group(0)
+        chinese_counts = {
+            "两": 2,
+            "二": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+            "十": 10,
+        }
+        consecutive_days = chinese_counts.get(
+            count_value,
+            int(count_value) if count_value.isdigit() else 0,
+        )
+        if not 2 <= consecutive_days <= 10:
+            return
+        outcome_day = consecutive_days + 1
         has_next_day_outcome = any(
             marker in normalized_prompt
             for marker in (
-                "第三天",
-                "第3天",
                 "次日",
                 "下一天",
                 "后一天",
                 "下一交易日",
+                f"第{outcome_day}天",
             )
+        ) or (
+            outcome_day <= 10
+            and f"第{'一二三四五六七八九十'[outcome_day - 1]}天"
+            in normalized_prompt
         )
-        if not has_two_day_limit_signal or not has_next_day_outcome:
+        if not has_next_day_outcome:
             return
         queries = raw_plan.get("queries")
         if not isinstance(queries, list):
@@ -1054,19 +1086,22 @@ class DeepSeekQueryPlanner:
         limit_query["filters"] = []
         limit_query["aggregations"] = []
         daily_query = {
-            "query_id": "two-limit-up-daily",
+            "query_id": "consecutive-limit-up-daily",
             "operation": "daily",
             "params": {"start_date": start_date, "end_date": end_date},
             "fields": ["trade_date", "ts_code", "pct_chg"],
             "purpose": (
-                "Provide the trading-day sequence and third-day price changes."
+                "Provide the trading-day sequence and next-session price changes."
             ),
             "filters": [],
             "aggregations": [],
         }
         raw_plan["feasibility"] = "supported"
         raw_plan["limitations"] = []
-        raw_plan["result_transform"] = "two_limit_up_next_day_probability"
+        raw_plan[
+            "result_transform"
+        ] = "consecutive_limit_up_next_day_probability"
+        raw_plan["consecutive_limit_up_days"] = consecutive_days
         raw_plan["queries"] = [limit_query, daily_query]
         for requirement in raw_plan.get("requirements", []):
             if isinstance(requirement, dict):

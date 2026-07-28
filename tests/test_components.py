@@ -660,15 +660,19 @@ def test_planner_repairs_model_generated_limit_up_filter_and_code_count():
 
 
 @pytest.mark.parametrize(
-    "prompt",
+    ("prompt", "expected_days"),
     [
-        "分析之前一个月，连续两天涨停后第三天上涨的概率。",
-        "能查到过去半年中，所有股票，前2天连续涨停的股票，第三天上涨的概率多大？",
-        "统计两连板股票下一交易日上涨的几率。",
-        "分析2连板后次日是否上涨。",
+        ("分析之前一个月，连续两天涨停后第三天上涨的概率。", 2),
+        ("能查到过去半年中，所有股票，前2天连续涨停的股票，第三天上涨的概率多大？", 2),
+        ("统计两连板股票下一交易日上涨的几率。", 2),
+        ("分析2连板后次日是否上涨。", 2),
+        ("A股过去半年连续涨停三天的情况下，第四天上涨的概率", 3),
     ],
 )
-def test_planner_repairs_unsupported_two_limit_up_probability_plan(prompt):
+def test_planner_repairs_consecutive_limit_up_probability_plan(
+    prompt,
+    expected_days,
+):
     raw_plan = {
         "market": "A_SHARE",
         "interpretation": "Analyze the probability after two limit-up days.",
@@ -710,7 +714,11 @@ def test_planner_repairs_unsupported_two_limit_up_probability_plan(prompt):
     )
 
     assert result.feasibility == "supported"
-    assert result.result_transform == "two_limit_up_next_day_probability"
+    assert (
+        result.result_transform
+        == "consecutive_limit_up_next_day_probability"
+    )
+    assert result.consecutive_limit_up_days == expected_days
     assert [query.operation for query in result.queries] == [
         "limit_list_d",
         "daily",
@@ -897,7 +905,7 @@ def test_validator_rejects_incomplete_two_limit_up_transform_inputs():
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
-def test_two_limit_up_transform_treats_empty_sources_as_valid_sample():
+def test_consecutive_limit_up_transform_treats_empty_sources_as_valid_sample():
     provider = FakeMarketDataProvider()
     service = AnalysisService(
         planner=None,
@@ -905,7 +913,7 @@ def test_two_limit_up_transform_treats_empty_sources_as_valid_sample():
         validator=ASharePlanValidator(provider),
         executor=DataQueryExecutor(provider),
     )
-    result = service._build_two_limit_up_next_day_result(
+    result = service._build_consecutive_limit_up_next_day_result(
         [
             QueryResult(
                 query_id="limit-ups",
@@ -923,15 +931,79 @@ def test_two_limit_up_transform_treats_empty_sources_as_valid_sample():
                 columns=["trade_date", "ts_code", "pct_chg"],
                 rows=[],
             ),
-        ]
+        ],
+        consecutive_days=2,
     )
 
     assert result.status == "success"
     assert result.row_count == 0
     assert result.summary == {
-        "有效两连板样本": 0,
+        "有效连续2天涨停样本": 0,
         "第三天上涨样本": 0,
         "第三天上涨概率（%）": None,
+    }
+
+
+def test_consecutive_limit_up_transform_uses_requested_streak_length():
+    provider = FakeMarketDataProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    trading_dates = ["20260105", "20260106", "20260107", "20260108"]
+    result = service._build_consecutive_limit_up_next_day_result(
+        [
+            QueryResult(
+                query_id="limit-ups",
+                provider=provider.name,
+                operation="limit_list_d",
+                status="success",
+                columns=["trade_date", "ts_code", "name"],
+                rows=[
+                    {
+                        "trade_date": trade_date,
+                        "ts_code": "000001.SZ",
+                        "name": "Test",
+                    }
+                    for trade_date in trading_dates[:3]
+                ],
+            ),
+            QueryResult(
+                query_id="daily",
+                provider=provider.name,
+                operation="daily",
+                status="success",
+                columns=["trade_date", "ts_code", "pct_chg"],
+                rows=[
+                    {
+                        "trade_date": trade_date,
+                        "ts_code": "000001.SZ",
+                        "pct_chg": 2.5 if index == 3 else 10.0,
+                    }
+                    for index, trade_date in enumerate(trading_dates)
+                ],
+            ),
+        ],
+        consecutive_days=3,
+    )
+
+    assert result.row_count == 1
+    assert result.rows[0] == {
+        "ts_code": "000001.SZ",
+        "name": "Test",
+        "consecutive_limit_days": 3,
+        "signal_start_date": "20260105",
+        "signal_end_date": "20260107",
+        "outcome_trade_date": "20260108",
+        "outcome_pct_chg": 2.5,
+        "outcome_up": True,
+    }
+    assert result.summary == {
+        "有效连续3天涨停样本": 1,
+        "第四天上涨样本": 1,
+        "第四天上涨概率（%）": 100.0,
     }
 
 
