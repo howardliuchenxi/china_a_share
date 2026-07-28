@@ -21,6 +21,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<DiscoveryTaskStatusResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAllFactors, setShowAllFactors] = useState(false);
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
@@ -124,13 +125,17 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <fieldset className="factor-selector">
             <legend>选择探索因子 (已选 {factors.length} 个)</legend>
             <div className="factor-grid">
-              {availableFactors.slice(0, 30).map(f => (
+              {(showAllFactors ? availableFactors : availableFactors.slice(0, 30)).map(f => (
                 <label key={f.field} className="factor-checkbox">
                   <input type="checkbox" checked={factors.includes(f.field)} onChange={() => toggleFactor(f.field)} />
                   {f.label} <small>({f.field})</small>
                 </label>
               ))}
-              {availableFactors.length > 30 && <span>... 及更多 {availableFactors.length - 30} 个因子。</span>}
+              {!showAllFactors && availableFactors.length > 30 && (
+                <button type="button" className="expand-factors-button" onClick={() => setShowAllFactors(true)}>
+                  ... 及更多 {availableFactors.length - 30} 个因子。点击展开
+                </button>
+              )}
             </div>
           </fieldset>
           <button type="submit" disabled={isSubmitting || taskStatus?.status === "running"}>
