@@ -109,15 +109,24 @@ class ResultPipelineExecutor:
             )
         if step.operation == "derive":
             numeric = pd.to_numeric(frame[step.field], errors="coerce")
-            scalar = float(step.value)
-            if step.arithmetic_operator == "divide" and scalar == 0:
-                raise ValueError("derive cannot divide by zero")
+            operand = (
+                pd.to_numeric(frame[step.right_field], errors="coerce")
+                if step.right_field
+                else float(step.value)
+            )
+            if step.arithmetic_operator == "divide":
+                if (
+                    (operand == 0).any()
+                    if isinstance(operand, pd.Series)
+                    else operand == 0
+                ):
+                    raise ValueError("derive cannot divide by zero")
             operations = {
-                "add": lambda: numeric + scalar,
-                "subtract": lambda: numeric - scalar,
-                "multiply": lambda: numeric * scalar,
-                "divide": lambda: numeric / scalar,
-                "constant_minus": lambda: scalar - numeric,
+                "add": lambda: numeric + operand,
+                "subtract": lambda: numeric - operand,
+                "multiply": lambda: numeric * operand,
+                "divide": lambda: numeric / operand,
+                "constant_minus": lambda: operand - numeric,
             }
             result = frame.copy()
             result[step.output_field] = operations[step.arithmetic_operator]()

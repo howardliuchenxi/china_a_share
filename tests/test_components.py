@@ -1,5 +1,6 @@
 import json
 from datetime import date, datetime
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -25,6 +26,7 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.core.errors import PlannerError
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
+from china_a_share.planners.vertex_claude import VertexClaudeQueryPlanner
 from china_a_share.registry import TushareOperationCatalog
 
 
@@ -410,6 +412,27 @@ def test_planner_retries_with_semantic_validation_feedback():
     retry_messages = session.calls[1][1]["json"]["messages"]
     assert "sort references unavailable fields: missing_field" in (
         retry_messages[-1]["content"]
+    )
+
+
+def test_vertex_planner_fallback_preserves_semantic_validation():
+    invalid_plan = make_daily_plan()
+    valid_plan = make_daily_plan()
+    planner = VertexClaudeQueryPlanner("test-key")
+    planner._plan_with_claude = Mock(return_value=invalid_plan)
+    planner._fallback = Mock()
+    planner._fallback.plan_validated.return_value = valid_plan
+    validator = Mock(side_effect=ValueError("invalid field lineage"))
+    request = AnalysisRequest(prompt="Count stocks.")
+    operations = [DataOperation(name="daily", description="Daily prices.")]
+
+    result = planner.plan_validated(request, operations, validator)
+
+    assert result is valid_plan
+    planner._fallback.plan_validated.assert_called_once_with(
+        request,
+        operations,
+        validator,
     )
 
 

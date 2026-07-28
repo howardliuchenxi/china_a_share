@@ -418,7 +418,10 @@ class ResultPipelineStep(BaseModel):
                 self.field
                 and self.output_field
                 and self.arithmetic_operator
-                and self.value is not None
+                and (
+                    (self.value is not None and not self.right_field)
+                    or (self.right_field and self.value is None)
+                )
             ),
             "drop_missing": bool(self.fields),
             "filter": bool(
@@ -483,11 +486,19 @@ class ResultPipelineStep(BaseModel):
         }
         if not required[self.operation]:
             raise ValueError(f"Missing required arguments for {self.operation}")
-        if self.operation == "derive" and (
-            isinstance(self.value, bool)
-            or not isinstance(self.value, (int, float))
-        ):
-            raise ValueError("derive requires a numeric scalar value")
+        if self.operation == "derive":
+            if self.value is not None and (
+                isinstance(self.value, bool)
+                or not isinstance(self.value, (int, float))
+            ):
+                raise ValueError("derive requires a numeric scalar value")
+            if (
+                self.right_field
+                and self.arithmetic_operator == "constant_minus"
+            ):
+                raise ValueError(
+                    "constant_minus requires a numeric scalar value"
+                )
         if (
             self.operation in {"rolling_mean", "rolling_sum"}
             and self.min_periods is not None

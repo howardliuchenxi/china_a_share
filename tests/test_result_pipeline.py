@@ -110,6 +110,51 @@ def test_result_pipeline_contract_rejects_nonnumeric_derive_scalar():
         )
 
 
+def test_result_pipeline_derives_a_return_from_two_fields():
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"close": 10.0, "one_month_close": 12.0},
+            {"close": 20.0, "one_month_close": 18.0},
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "returns",
+            "steps": [
+                {
+                    "operation": "derive",
+                    "field": "one_month_close",
+                    "right_field": "close",
+                    "output_field": "price_ratio",
+                    "arithmetic_operator": "divide",
+                },
+                {
+                    "operation": "derive",
+                    "field": "price_ratio",
+                    "output_field": "return_pct",
+                    "arithmetic_operator": "subtract",
+                    "value": 1,
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert [row["price_ratio"] for row in result.rows] == pytest.approx(
+        [1.2, 0.9]
+    )
+    assert [row["return_pct"] for row in result.rows] == pytest.approx(
+        [0.2, -0.1]
+    )
+
+
 def test_result_pipeline_composes_windowed_event_probability():
     source = QueryResult(
         query_id="daily-prices",

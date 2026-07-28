@@ -2,7 +2,7 @@
 
 import json
 from time import sleep
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from pydantic import ValidationError
 
@@ -62,6 +62,24 @@ class VertexClaudeQueryPlanner:
         except PlannerError:
             # Fall back to DeepSeek on any planner error
             return self._fallback.plan(request, candidate_operations)
+
+    def plan_validated(
+        self,
+        request: AnalysisRequest,
+        candidate_operations: Sequence[DataOperation],
+        validator: Callable[[QueryPlan], QueryPlan],
+    ) -> QueryPlan:
+        """Validate Claude output and give DeepSeek corrective retry feedback."""
+        try:
+            return validator(
+                self._plan_with_claude(request, candidate_operations)
+            )
+        except (PlannerError, ValueError):
+            return self._fallback.plan_validated(
+                request,
+                candidate_operations,
+                validator,
+            )
 
     def generate_text(self, prompt: str) -> str:
         """Generate arbitrary text using the underlying LLM."""
