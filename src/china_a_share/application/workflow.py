@@ -1217,7 +1217,7 @@ class AnalysisService:
             == "two_limit_up_next_day_probability"
             and all(result.status == QueryStatus.SUCCESS for result in results)
         ):
-            results.append(self._build_two_limit_up_next_day_result(results))
+            results.insert(0, self._build_two_limit_up_next_day_result(results))
         if validated_plan.result_pipeline:
             source = next(
                 (
@@ -1247,12 +1247,12 @@ class AnalysisService:
                         status=QueryStatus.ERROR,
                         error=ServiceError(source="system", message=str(exc)),
                     )
-                results = [
+                results = [transformed] + [
                     result
                     for result in results
                     if result.query_id
                     != validated_plan.result_pipeline.source_query_id
-                ] + [transformed]
+                ]
         decision_trace.append(
             DecisionTraceStep(
                 stage="execution",
