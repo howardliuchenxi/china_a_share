@@ -710,6 +710,129 @@ def test_requested_limit_requires_explicit_result_role(prompt, expected):
     assert DeepSeekQueryPlanner._parse_requested_limit(prompt) == expected
 
 
+def test_probability_language_is_not_rewritten_as_period_return_ranking():
+    plan = QueryPlan(
+        interpretation="Analyze the highest probability after a five-day condition.",
+        requirements=[
+            {
+                "requirement": "Analyze the requested conditional probability.",
+                "status": "covered",
+                "implementation": "Use the model-declared daily source.",
+                "evidence": "Daily rows are available.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="probability-source",
+                operation="daily",
+                params={
+                    "start_date": "20260101",
+                    "end_date": "20260630",
+                },
+                fields=["trade_date", "ts_code", "pct_chg"],
+                purpose="Retrieve the declared probability source.",
+            )
+        ],
+    )
+
+    DeepSeekQueryPlanner._normalize_market_period_returns(
+        plan,
+        "前5天满足条件后上涨概率最高的股票",
+    )
+
+    assert plan.result_pipeline is None
+    assert plan.queries[0].fields == ["trade_date", "ts_code", "pct_chg"]
+
+
+def test_prompt_heuristic_does_not_rebind_an_existing_pipeline_source():
+    plan = QueryPlan(
+        interpretation="Use a declared valuation pipeline.",
+        requirements=[
+            {
+                "requirement": "Return the declared valuation ranking.",
+                "status": "covered",
+                "implementation": "Sort the valuation source locally.",
+                "evidence": "The source provides pe.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="daily-source",
+                operation="daily",
+                params={
+                    "start_date": "20260101",
+                    "end_date": "20260630",
+                },
+                fields=["trade_date", "ts_code", "close"],
+                purpose="Retrieve daily rows.",
+            ),
+            DataQuery(
+                query_id="valuation-source",
+                operation="daily_basic",
+                params={"trade_date": "20260630"},
+                fields=["ts_code", "pe"],
+                purpose="Retrieve valuation rows.",
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "valuation-source",
+            "output_query_id": "valuation-ranking",
+            "steps": [
+                {
+                    "operation": "sort",
+                    "field": "pe",
+                    "direction": "asc",
+                }
+            ],
+        },
+    )
+
+    DeepSeekQueryPlanner._normalize_market_period_returns(
+        plan,
+        "过去半年涨幅最高且市盈率最低的股票",
+    )
+
+    assert plan.result_pipeline.source_query_id == "valuation-source"
+    assert [query.query_id for query in plan.queries] == [
+        "daily-source",
+        "valuation-source",
+    ]
+
+
+def test_amount_ranking_heuristic_does_not_change_an_unrelated_operation():
+    plan = QueryPlan(
+        interpretation="Retrieve block trades.",
+        requirements=[
+            {
+                "requirement": "Retrieve block trades.",
+                "status": "covered",
+                "implementation": "Use block_trade.",
+                "evidence": "The operation provides amount.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="block-trades",
+                operation="block_trade",
+                params={
+                    "start_date": "20260101",
+                    "end_date": "20260630",
+                },
+                fields=["ts_code", "trade_date", "amount"],
+                purpose="Retrieve block trades.",
+            )
+        ],
+    )
+
+    DeepSeekQueryPlanner._normalize_common_analytics(
+        plan,
+        "成交额排名前20",
+    )
+
+    assert plan.queries[0].operation == "block_trade"
+    assert plan.queries[0].transform is None
+
+
 def test_validator_rejects_incomplete_two_limit_up_transform_inputs():
     plan = QueryPlan(
         interpretation="Calculate the next-day probability after two limit-ups.",

@@ -932,7 +932,8 @@ class DeepSeekQueryPlanner:
 
         if "成交额排名前20" in normalized:
             for query in plan.queries:
-                query.operation = "daily"
+                if query.operation != "daily":
+                    continue
                 query.transform = "top_20_by_amount"
                 query.fields = ["ts_code", "pct_chg", "amount"]
         if "换手率最高的20" in normalized:
@@ -1018,7 +1019,10 @@ class DeepSeekQueryPlanner:
         normalized = prompt.replace(" ", "")
         asks_for_return = any(
             marker in normalized
-            for marker in ("涨幅", "跌幅", "收益率", "上涨", "下跌")
+            for marker in ("涨幅", "跌幅", "收益率")
+        ) or any(
+            marker in normalized
+            for marker in ("上涨最多", "下跌最多", "上涨最大", "下跌最大")
         )
         requested_limit = DeepSeekQueryPlanner._parse_requested_limit(normalized)
         asks_for_ranking = requested_limit is not None or any(
@@ -1037,6 +1041,13 @@ class DeepSeekQueryPlanner:
         if not candidates:
             return
         query = candidates[0].model_copy(deep=True)
+        if (
+            plan.result_pipeline is not None
+            and plan.result_pipeline.source_query_id != query.query_id
+        ):
+            # A pipeline tied to another source represents a different declared
+            # calculation and must not be rebound by a broad prompt heuristic.
+            return
         start_date = query.params.get("start_date")
         end_date = query.params.get("end_date")
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
