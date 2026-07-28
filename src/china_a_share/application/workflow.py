@@ -1645,6 +1645,25 @@ class AnalysisService:
         prompt: str,
     ) -> QueryPlan:
         """Ensure planned ranges and temporal operators preserve trusted input."""
+        normalized_prompt = prompt.lower()
+        requests_limit_up = (
+            "涨停" in prompt
+            or "limit-up" in normalized_prompt
+            or "limit up" in normalized_prompt
+        )
+        if (
+            requests_limit_up
+            and plan.feasibility == "supported"
+            and not any(
+                query.operation == "limit_list_d"
+                for query in plan.queries
+            )
+        ):
+            raise PlanValidationError(
+                "Limit-up analysis must use the native limit_list_d operation; "
+                "fixed pct_chg thresholds are not valid across A-share boards "
+                "and special-treatment securities."
+            )
         horizon = resolve_future_horizon(prompt)
         if horizon is None or plan.feasibility != "supported":
             return plan

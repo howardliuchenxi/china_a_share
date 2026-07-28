@@ -84,6 +84,10 @@ def build_query_plan_system_prompt(
         "minus 1; compare_scalar the return with 0; optionally multiply the return by "
         "100; then summarize with one aggregations array. Omit redundant sort, "
         "drop_missing on membership booleans, and latest_by_group steps. "
+        "The subtract operator means field minus value or right_field; "
+        "constant_minus means value minus field. Limit-up analysis must use the "
+        "native limit_list_d operation rather than a fixed pct_chg threshold because "
+        "price-limit rules vary across boards and special-treatment securities. "
         "For ordered calculations, provide group_by and order_by. Fetch enough source "
         "history to initialize rolling windows before filtering to the requested "
         "measurement interval. Drop rows whose required future outcome is unavailable. "
@@ -374,9 +378,25 @@ class DeepSeekQueryPlanner:
 
     @staticmethod
     def _normalize_raw_query_defaults(raw_plan: Any) -> None:
-        """Replace nullable query list fields before contract validation."""
+        """Repair unambiguous model syntax before contract validation."""
         if not isinstance(raw_plan, dict):
             return
+        pipeline = raw_plan.get("result_pipeline")
+        steps = pipeline.get("steps") if isinstance(pipeline, dict) else None
+        if isinstance(steps, list):
+            for step in steps:
+                if not isinstance(step, dict) or step.get("operation") != "derive":
+                    continue
+                comparison = step.get("arithmetic_operator")
+                if comparison not in {"gt", "ge", "eq", "le", "lt"}:
+                    continue
+                step["operation"] = (
+                    "compare_fields"
+                    if step.get("right_field")
+                    else "compare_scalar"
+                )
+                step["comparison"] = comparison
+                step.pop("arithmetic_operator", None)
         queries = raw_plan.get("queries")
         if not isinstance(queries, list):
             return

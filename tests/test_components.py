@@ -206,6 +206,19 @@ def test_validator_does_not_infer_execution_rules_from_requirement_prose():
 
 def test_future_horizon_rejects_a_next_day_substitution():
     plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="limit-ups",
+            operation="limit_list_d",
+            params={
+                "start_date": "20260101",
+                "end_date": "20260601",
+                "limit_type": "U",
+            },
+            fields=["ts_code", "trade_date"],
+            purpose="Identify native limit-up events.",
+        )
+    )
     plan.queries[0].params = {
         "start_date": "20260101",
         "end_date": "20260701",
@@ -240,6 +253,19 @@ def test_future_horizon_rejects_a_next_day_substitution():
 
 def test_future_horizon_accepts_the_exact_calendar_offset_and_data_coverage():
     plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="limit-ups",
+            operation="limit_list_d",
+            params={
+                "start_date": "20260101",
+                "end_date": "20260601",
+                "limit_type": "U",
+            },
+            fields=["ts_code", "trade_date"],
+            purpose="Identify native limit-up events.",
+        )
+    )
     plan.queries[0].params = {
         "start_date": "20260101",
         "end_date": "20260701",
@@ -270,6 +296,19 @@ def test_future_horizon_accepts_the_exact_calendar_offset_and_data_coverage():
     )
 
     assert result.result_pipeline.steps[0].offset_unit == "month"
+
+
+def test_limit_up_analysis_requires_the_native_limit_list():
+    plan = make_daily_plan()
+
+    with pytest.raises(
+        PlanValidationError,
+        match="must use the native limit_list_d operation",
+    ):
+        AnalysisService._validate_planned_time_semantics(
+            plan,
+            "Analyze stocks with three consecutive limit-up days.",
+        )
 
 
 def test_planner_parses_deepseek_json_plan():
@@ -362,6 +401,37 @@ def test_planner_retries_with_field_level_contract_feedback():
     retry_feedback = session.calls[1][1]["json"]["messages"][-1]["content"]
     assert "result_pipeline.steps.0.arithmetic_operator" in retry_feedback
     assert "Input should be 'add', 'subtract', 'multiply', 'divide' or" in retry_feedback
+
+
+def test_planner_normalizes_derive_comparison_to_compare_scalar():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["result_pipeline"] = {
+        "source_query_id": plan["queries"][0]["query_id"],
+        "output_query_id": "comparison",
+        "steps": [
+            {
+                "operation": "derive",
+                "field": "pct_chg",
+                "output_field": "is_positive",
+                "arithmetic_operator": "gt",
+                "value": 0,
+            }
+        ],
+    }
+    session = FakeSession(
+        FakeResponse(
+            {"choices": [{"message": {"content": json.dumps(plan)}}]}
+        )
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="Find positive returns."),
+        [DataOperation(name="daily", description="Daily prices.")],
+    )
+
+    step = result.result_pipeline.steps[0]
+    assert step.operation == "compare_scalar"
+    assert step.comparison == "gt"
 
 
 def test_planner_retries_with_semantic_validation_feedback():
