@@ -47,6 +47,8 @@ const RESULT_PAGE_SIZE = 100;
 const MAX_PROMPT_HISTORY_ITEMS = 20;
 const PROMPT_HISTORY_STORAGE_KEY = "china-a-share.prompt-history";
 const STOCK_PAGE_SIZE = 20;
+import { DATA_DICTIONARY_ENTRIES, resultColumnMetadata } from "./dataDictionary";
+
 const exchangeLabels: Record<StockExchange, string> = {
   SSE: "上海",
   SZSE: "深圳",
@@ -60,67 +62,6 @@ const errorSourceLabels: Record<string, string> = {
   system: "系统",
 };
 
-const resultColumnMetadata: Record<string, { label: string; description: string }> = {
-  ts_code: { label: "股票代码", description: "证券在 Tushare 中使用的交易所限定代码。" },
-  name: { label: "股票名称", description: "证券当前公开使用的简称。" },
-  change: { label: "涨跌额", description: "当前收盘价相对前一交易日收盘价的变动金额。" },
-  pct_chg: { label: "涨跌幅（%）", description: "涨跌额相对前一交易日收盘价的百分比。" },
-  close: { label: "收盘价", description: "证券在该交易日的收盘价格。" },
-  open: { label: "开盘价", description: "证券在该交易日的开盘价格。" },
-  high: { label: "最高价", description: "证券在该交易日成交的最高价格。" },
-  low: { label: "最低价", description: "证券在该交易日成交的最低价格。" },
-  pre_close: { label: "昨收价", description: "证券在上一交易日的收盘价格。" },
-  trade_date: { label: "交易日期", description: "该行行情或指标对应的交易日。" },
-  end_date: { label: "报告期", description: "股东持股数据对应的报告期末日期。" },
-  ann_date: { label: "公告日期", description: "该期股东数据首次对市场公开的日期。" },
-  pe: { label: "市盈率 (PE)", description: "估值指标，衡量股价与每股收益的比例。" },
-  pb: { label: "市净率 (PB)", description: "估值指标，衡量股价与每股净资产的比例。" },
-  ps: { label: "市销率 (PS)", description: "估值指标，衡量股价与每股营业收入的比例。" },
-  pe_ttm: { label: "市盈率TTM", description: "滚动市盈率，按过去12个月净利润计算的估值指标。" },
-  pb_ttm: { label: "市净率TTM", description: "滚动市净率。" },
-  ps_ttm: { label: "市销率TTM", description: "滚动市销率。" },
-  dv_ratio: { label: "股息率", description: "衡量企业现金分红与市值的比例。" },
-  dv_ttm: { label: "股息率TTM", description: "滚动股息率。" },
-  turnover_rate: { label: "换手率", description: "交易活跃度指标，一定时间内市场中股票转手买卖的频率。" },
-  turnover_change_pct: { label: "换手率变动", description: "换手率相较于基期的相对变化比例，用于衡量交易活跃度的上升或下降。" },
-  total_mv: { label: "总市值", description: "公司发行的全部股份按市场价格计算的总价值。" },
-  circ_mv: { label: "流通市值", description: "在二级市场可自由交易的股份总价值。" },
-  total_share: { label: "总股本", description: "公司发行的总股份数量。" },
-  float_share: { label: "流通股本", description: "在二级市场可自由交易的股份数量。" },
-  free_share: { label: "自由流通股本", description: "扣除限售股和受限大股东持股后的实际可交易股份数量。" },
-  vol: { label: "成交量", description: "该交易日成交的股票总手（通常为百股）数。" },
-  amount: { label: "成交额", description: "该交易日成交的股票总金额。" },
-  volume_ratio: { label: "量比", description: "开市后平均每分钟的成交量与过去5个交易日平均每分钟成交量的比值。" },
-  period_return_pct: { label: "区间收益率", description: "股票在特定日期区间的价格变动百分比。" },
-  cr10_float_registered: {
-    label: "CR10 流通股集中度",
-    description: "前十大无限售流通股东的流通股本持股比例合计，按证券登记账户口径计算。",
-  },
-  non_top10_float_ratio: {
-    label: "持股分散度代理",
-    description: "100%减去CR10流通股集中度；包含散户和未进入前十的机构，不等于个人投资者持股比例。",
-  },
-  known_top_holder_float_ratio: {
-    label: "已知股东比例",
-    description: "仅汇总具有有效流通股持股比例的披露股东；当源数据缺失时，不代表完整CR10。",
-  },
-  uncovered_float_ratio_upper_bound: {
-    label: "未覆盖比例上限",
-    description: "100%减去已知股东比例；包含缺失比例的披露股东及其他股东，不能视为散户比例。",
-  },
-  omnibus_float_ratio: {
-    label: "代理账户占比",
-    description: "前十大流通股东中香港中央结算等代理账户的流通股持股比例；其背后可能对应多个实际投资者。",
-  },
-  holder_count: { label: "有效股东数", description: "参与本期CR10计算且名称唯一的披露股东数量，必须为10。" },
-  ratio_holder_count: { label: "有效比例数", description: "具有可计算流通股持股比例的披露股东数量。" },
-  missing_ratio_holders: { label: "比例缺失股东", description: "源数据未提供流通股持股比例、因而未纳入已知比例合计的股东。" },
-  industry: { label: "行业", description: "上市公司在数据源中登记的所属行业分类。" },
-  area: { label: "地区", description: "上市公司在数据源中登记的所属地区。" },
-  market: { label: "市场", description: "证券挂牌交易的市场板块（如主板、创业板、科创板）。" },
-  list_date: { label: "上市日期", description: "证券首次挂牌交易的日期。" },
-  calculation_status: { label: "计算完整性", description: "complete表示完整计算；partial_missing_ratio表示源比例缺失，仅能给出部分统计。" },
-};
 const FINANCIAL_STATEMENT_OPERATIONS = new Set([
   "income",
   "balancesheet",
@@ -142,62 +83,6 @@ const NON_MONETARY_FINANCIAL_FIELDS = new Set([
 ]);
 const IDENTIFIER_COLUMN_PATTERN = /(^|_)(code|date|year|month|type|status|flag|count|num)$/;
 const PERCENT_COLUMN_PATTERN = /(^pct_|_pct$|_pct_|_ratio$|_rate$|_yield$)/;
-
-const DATA_DICTIONARY_ENTRIES = [
-  // 估值类 (Valuation)
-  { label: "市盈率 (PE)", field: "pe", description: "估值指标，衡量股价与每股收益的比例。", formula: "总市值 / 净利润", source: "Tushare" },
-  { label: "市净率 (PB)", field: "pb", description: "估值指标，衡量股价与每股净资产的比例。", formula: "总市值 / 净资产", source: "Tushare" },
-  { label: "市销率 (PS)", field: "ps", description: "估值指标，衡量股价与每股营业收入的比例。", formula: "总市值 / 营业收入", source: "Tushare" },
-  { label: "市盈率TTM", field: "pe_ttm", description: "滚动市盈率，按过去12个月净利润计算的估值指标。", formula: "总市值 / 过去12个月净利润", source: "Tushare" },
-  { label: "市净率TTM", field: "pb_ttm", description: "滚动市净率。", formula: "总市值 / 过去12个月净资产", source: "Tushare" },
-  { label: "市销率TTM", field: "ps_ttm", description: "滚动市销率。", formula: "总市值 / 过去12个月营业收入", source: "Tushare" },
-  { label: "股息率", field: "dv_ratio", description: "衡量企业现金分红与市值的比例。", formula: "过去一年分红总额 / 总市值", source: "Tushare" },
-  { label: "股息率TTM", field: "dv_ttm", description: "滚动股息率。", formula: "过去12个月分红总额 / 总市值", source: "Tushare" },
-
-  // 流动性与市值类 (Liquidity & Market Cap)
-  { label: "换手率", field: "turnover_rate", description: "交易活跃度指标，一定时间内市场中股票转手买卖的频率。", formula: "区间成交股数 / 流通总股数", source: "Tushare" },
-  { label: "换手率变动", field: "turnover_change_pct", description: "换手率相较于基期的相对变化比例，用于衡量交易活跃度的上升或下降。", formula: "(期末换手率 - 基期换手率) / 基期换手率 * 100%", source: "A-Share Lab 衍生计算" },
-  { label: "总市值", field: "total_mv", description: "公司发行的全部股份按市场价格计算的总价值。", formula: "总股本 * 最新股价", source: "Tushare" },
-  { label: "流通市值", field: "circ_mv", description: "在二级市场可自由交易的股份总价值。", formula: "流通股本 * 最新股价", source: "Tushare" },
-  { label: "总股本", field: "total_share", description: "公司发行的总股份数量。", formula: "-", source: "Tushare" },
-  { label: "流通股本", field: "float_share", description: "在二级市场可自由交易的股份数量。", formula: "-", source: "Tushare" },
-  { label: "自由流通股本", field: "free_share", description: "扣除限售股和受限大股东持股后的实际可交易股份数量。", formula: "-", source: "Tushare" },
-  { label: "成交量", field: "vol", description: "该交易日成交的股票总手（通常为百股）数。", formula: "-", source: "Tushare" },
-  { label: "成交额", field: "amount", description: "该交易日成交的股票总金额。", formula: "-", source: "Tushare" },
-  { label: "量比", field: "volume_ratio", description: "开市后平均每分钟的成交量与过去5个交易日平均每分钟成交量的比值。", formula: "当前分钟成交量 / 过去5日均分钟成交量", source: "Tushare" },
-
-  // 行情收益类 (Price Return)
-  { label: "涨跌额", field: "change", description: "当前收盘价相对前一交易日收盘价的变动金额。", formula: "当日收盘价 - 前一交易日收盘价", source: "Tushare" },
-  { label: "日度涨跌幅", field: "pct_chg", description: "股票在一个交易日内的价格变动百分比。", formula: "(当日收盘价 - 前一交易日收盘价) / 前一交易日收盘价 * 100%", source: "Tushare" },
-  { label: "区间收益率", field: "period_return_pct", description: "股票在特定日期区间的价格变动百分比。", formula: "(期末收盘价 - 期初前一交易日收盘价) / 期初前一交易日收盘价 * 100%", source: "A-Share Lab 衍生计算" },
-  { label: "收盘价", field: "close", description: "证券在该交易日的收盘价格。", formula: "-", source: "Tushare" },
-  { label: "开盘价", field: "open", description: "证券在该交易日的开盘价格。", formula: "-", source: "Tushare" },
-  { label: "最高价", field: "high", description: "证券在该交易日成交的最高价格。", formula: "-", source: "Tushare" },
-  { label: "最低价", field: "low", description: "证券在该交易日成交的最低价格。", formula: "-", source: "Tushare" },
-  { label: "昨收价", field: "pre_close", description: "证券在上一交易日的收盘价格。", formula: "-", source: "Tushare" },
-  
-  // 筹码与股东结构类 (Holdings & Ownership)
-  { label: "CR10 流通股集中度", field: "cr10_float_registered", description: "前十大无限售流通股东的流通股本持股比例合计，反映筹码集中度。", formula: "前十流通股东有效持股比例之和", source: "A-Share Lab 衍生计算" },
-  { label: "持股分散度代理", field: "non_top10_float_ratio", description: "100%减去CR10流通股集中度；包含散户和未进入前十的机构，不等于个人投资者持股比例。", formula: "100% - cr10_float_registered", source: "A-Share Lab 衍生计算" },
-  { label: "已知股东比例", field: "known_top_holder_float_ratio", description: "仅汇总具有有效流通股持股比例的披露股东；当源数据缺失时，不代表完整CR10。", formula: "所有有效持股比例加总", source: "A-Share Lab 衍生计算" },
-  { label: "未覆盖比例上限", field: "uncovered_float_ratio_upper_bound", description: "100%减去已知股东比例；包含缺失比例的披露股东及其他股东，不能视为散户比例。", formula: "100% - known_top_holder_float_ratio", source: "A-Share Lab 衍生计算" },
-  { label: "代理账户占比", field: "omnibus_float_ratio", description: "前十大流通股东中，香港中央结算等代理账户的流通股持股比例。其背后可能对应多个实际投资者。", formula: "识别代理账户并加总其流通股比例", source: "A-Share Lab 衍生计算" },
-  { label: "有效股东数", field: "holder_count", description: "参与本期CR10计算且名称唯一的披露股东数量，必须为10。", formula: "去重计数", source: "A-Share Lab 衍生计算" },
-  { label: "有效比例数", field: "ratio_holder_count", description: "具有可计算流通股持股比例的披露股东数量。", formula: "有效记录计数", source: "A-Share Lab 衍生计算" },
-  { label: "比例缺失股东", field: "missing_ratio_holders", description: "源数据未提供流通股持股比例、因而未纳入已知比例合计的股东。", formula: "-", source: "A-Share Lab 衍生计算" },
-
-  // 基础元数据 (Metadata)
-  { label: "股票代码", field: "ts_code", description: "证券在 Tushare 中使用的交易所限定代码。", formula: "-", source: "Tushare" },
-  { label: "股票名称", field: "name", description: "证券当前公开使用的简称。", formula: "-", source: "Tushare" },
-  { label: "行业", field: "industry", description: "上市公司在数据源中登记的所属行业分类。", formula: "-", source: "Tushare" },
-  { label: "地区", field: "area", description: "上市公司在数据源中登记的所属地区。", formula: "-", source: "Tushare" },
-  { label: "市场", field: "market", description: "证券挂牌交易的市场板块（如主板、创业板、科创板）。", formula: "-", source: "Tushare" },
-  { label: "上市日期", field: "list_date", description: "证券首次挂牌交易的日期。", formula: "-", source: "Tushare" },
-  { label: "交易日期", field: "trade_date", description: "该行行情或指标对应的交易日。", formula: "-", source: "Tushare" },
-  { label: "报告期", field: "end_date", description: "股东持股数据对应的报告期末日期。", formula: "-", source: "Tushare" },
-  { label: "公告日期", field: "ann_date", description: "该期股东数据首次对市场公开的日期。", formula: "-", source: "Tushare" },
-  { label: "计算完整性", field: "calculation_status", description: "complete表示完整计算；partial_missing_ratio表示源比例缺失，仅能给出部分统计。", formula: "-", source: "A-Share Lab 衍生计算" },
-];
 
 function formatAdaptiveNumber(value: number, unit = ""): string {
   const absoluteValue = Math.abs(value);
@@ -649,6 +534,9 @@ function ReferenceDataPage() {
   const [exchangeFilter, setExchangeFilter] = useState<StockExchange>("SSE");
   const [industryFilter, setIndustryFilter] = useState("");
   const [stockPage, setStockPage] = useState(1);
+  const [dictionaryPage, setDictionaryPage] = useState(1);
+  const [dictionarySearch, setDictionarySearch] = useState("");
+  const DICTIONARY_PAGE_SIZE = 50;
   const [stockResponse, setStockResponse] = useState<StockListResponse | null>(null);
   const [availableIndustries, setAvailableIndustries] = useState<string[]>([]);
   const [stockServiceError, setStockServiceError] = useState<ServiceError | null>(null);
@@ -701,6 +589,27 @@ function ReferenceDataPage() {
     setIndustryFilter(value);
     setStockPage(1);
   }
+
+  function updateDictionarySearch(value: string) {
+    setDictionarySearch(value);
+    setDictionaryPage(1);
+  }
+
+  const filteredDictionary = useMemo(() => {
+    if (!dictionarySearch.trim()) return DATA_DICTIONARY_ENTRIES;
+    const lowerSearch = dictionarySearch.toLowerCase();
+    return DATA_DICTIONARY_ENTRIES.filter(entry => 
+      entry.label.toLowerCase().includes(lowerSearch) || 
+      entry.field.toLowerCase().includes(lowerSearch) ||
+      entry.description.toLowerCase().includes(lowerSearch)
+    );
+  }, [dictionarySearch]);
+
+  const dictionaryPageCount = Math.ceil(filteredDictionary.length / DICTIONARY_PAGE_SIZE);
+  const paginatedDictionary = useMemo(() => {
+    const start = (dictionaryPage - 1) * DICTIONARY_PAGE_SIZE;
+    return filteredDictionary.slice(start, start + DICTIONARY_PAGE_SIZE);
+  }, [filteredDictionary, dictionaryPage]);
 
   return (
     <div className="reference-page" data-feedback-id="reference-page">
@@ -814,6 +723,18 @@ function ReferenceDataPage() {
         <section className="reference-panel" aria-labelledby="dictionary-heading">
           <div className="reference-view-heading">
             <h2 id="dictionary-heading">数据字典</h2>
+            <span>{dictionarySearch.trim() ? `搜索结果 ${filteredDictionary.length} 个字段` : `共 ${DATA_DICTIONARY_ENTRIES.length} 个字段`}</span>
+          </div>
+          <div className="stock-filters">
+            <label className="stock-search-field">
+              <span>搜索</span>
+              <input
+                type="search"
+                value={dictionarySearch}
+                onChange={(event) => updateDictionarySearch(event.target.value)}
+                placeholder="字段名称或标识符"
+              />
+            </label>
           </div>
           <div className="stock-table-scroll">
             <table className="stock-table">
@@ -827,7 +748,7 @@ function ReferenceDataPage() {
                 </tr>
               </thead>
               <tbody>
-                {DATA_DICTIONARY_ENTRIES.map((entry) => (
+                {paginatedDictionary.map((entry) => (
                   <tr key={entry.field}>
                     <td><strong>{entry.label}</strong></td>
                     <td><code>{entry.field}</code></td>
@@ -839,6 +760,26 @@ function ReferenceDataPage() {
               </tbody>
             </table>
           </div>
+          {dictionaryPageCount > 1 && (
+            <nav className="stock-pagination" aria-label="数据字典分页">
+              <button
+                type="button"
+                disabled={dictionaryPage === 1}
+                onClick={() => setDictionaryPage((page) => page - 1)}
+              >
+                上一页
+              </button>
+              <span>{dictionaryPage} / {dictionaryPageCount}</span>
+              <button
+                type="button"
+                disabled={dictionaryPage === dictionaryPageCount}
+                onClick={() => setDictionaryPage((page) => page + 1)}
+              >
+                下一页
+              </button>
+            </nav>
+          )}
+          {filteredDictionary.length === 0 && <p className="empty-state">没有符合当前搜索条件的字段。</p>}
         </section>
       )}
 
