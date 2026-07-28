@@ -7,17 +7,33 @@ interface DiscoveryPageProps {
 }
 
 export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
-  const [targetPool, setTargetPool] = useState("A_SHARE");
-  const [trainStart, setTrainStart] = useState("20250101");
-  const [trainEnd, setTrainEnd] = useState("20250630");
-  const [valStart, setValStart] = useState("20250701");
-  const [valEnd, setValEnd] = useState("20251231");
-  const [prompt, setPrompt] = useState("");
-  const [factors, setFactors] = useState<string[]>(["pe_ttm", "turnover_rate"]);
+  const [targetPool, setTargetPool] = useState(() => new URLSearchParams(window.location.search).get("dp_pool") || "A_SHARE");
+  const [trainStart, setTrainStart] = useState(() => new URLSearchParams(window.location.search).get("dp_ts") || "20250101");
+  const [trainEnd, setTrainEnd] = useState(() => new URLSearchParams(window.location.search).get("dp_te") || "20250630");
+  const [valStart, setValStart] = useState(() => new URLSearchParams(window.location.search).get("dp_vs") || "20250701");
+  const [valEnd, setValEnd] = useState(() => new URLSearchParams(window.location.search).get("dp_ve") || "20251231");
+  const [prompt, setPrompt] = useState(() => new URLSearchParams(window.location.search).get("dp_prompt") || "");
+  const [factors, setFactors] = useState<string[]>(() => {
+    const f = new URLSearchParams(window.location.search).get("dp_factors");
+    return f ? f.split(",") : ["pe_ttm", "turnover_rate"];
+  });
   
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<DiscoveryTaskStatusResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    p.set("page", "discovery");
+    p.set("dp_pool", targetPool);
+    p.set("dp_ts", trainStart);
+    p.set("dp_te", trainEnd);
+    p.set("dp_vs", valStart);
+    p.set("dp_ve", valEnd);
+    if (prompt) p.set("dp_prompt", prompt); else p.delete("dp_prompt");
+    if (factors.length > 0) p.set("dp_factors", factors.join(",")); else p.delete("dp_factors");
+    window.history.replaceState({}, "", `${window.location.pathname}?${p.toString()}`);
+  }, [targetPool, trainStart, trainEnd, valStart, valEnd, prompt, factors]);
 
   const availableFactors = DATA_DICTIONARY_ENTRIES.filter(e => !["ts_code", "name", "trade_date", "end_date", "ann_date", "calculation_status"].includes(e.field));
 

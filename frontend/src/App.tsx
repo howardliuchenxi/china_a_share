@@ -792,8 +792,14 @@ function ReferenceDataPage() {
 }
 
 export default function App() {
-  const [activePage, setActivePage] = useState<PageView>("analysis");
-  const [prompt, setPrompt] = useState("");
+  const [activePage, setActivePage] = useState<PageView>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return (params.get("page") as PageView) || "analysis";
+  });
+  const [prompt, setPrompt] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("prompt") || "";
+  });
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [response, setResponse] = useState<AnalysisResponse | null>(null);
   const [localError, setLocalError] = useState("");
@@ -804,6 +810,17 @@ export default function App() {
   const [analysisImageName, setAnalysisImageName] = useState("");
   const [plannerName, setPlannerName] = useState("Vertex AI Claude");
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", activePage);
+    if (prompt) {
+      params.set("prompt", prompt);
+    } else {
+      params.delete("prompt");
+    }
+    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+  }, [activePage, prompt]);
 
   useEffect(() => {
     try {
