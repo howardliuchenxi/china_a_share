@@ -1700,22 +1700,23 @@ class AnalysisService:
             source_query is None
             or not source_query.params.get("start_date")
             or not source_query.params.get("end_date")
-            or not (
-                source_query.params["start_date"]
-                <= event_start.strftime("%Y%m%d")
-                and (
-                    source_query.params["end_date"]
-                    > event_end.strftime("%Y%m%d")
-                    if required_end is None
-                    else source_query.params["end_date"]
-                    >= required_end.strftime("%Y%m%d")
-                )
-            )
         ):
             raise PlanValidationError(
-                "A source query must cover the event interval and complete "
-                "future outcome horizon."
+                "The pipeline source query must provide a complete date range."
             )
+        event_start_value = event_start.strftime("%Y%m%d")
+        if source_query.params["start_date"] > event_start_value:
+            source_query.params["start_date"] = event_start_value
+        if required_end is None:
+            if source_query.params["end_date"] <= event_end.strftime("%Y%m%d"):
+                raise PlanValidationError(
+                    "A trading-session outcome requires source data beyond "
+                    "the event interval."
+                )
+        else:
+            required_end_value = required_end.strftime("%Y%m%d")
+            if source_query.params["end_date"] < required_end_value:
+                source_query.params["end_date"] = required_end_value
         return plan
 
     def _append_resolved_time_range(self, request_id: str, prompt: str) -> str:

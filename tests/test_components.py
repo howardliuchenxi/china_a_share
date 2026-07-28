@@ -298,6 +298,54 @@ def test_future_horizon_accepts_the_exact_calendar_offset_and_data_coverage():
     assert result.result_pipeline.steps[0].offset_unit == "month"
 
 
+def test_future_horizon_expands_an_existing_source_date_range():
+    plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="limit-ups",
+            operation="limit_list_d",
+            params={
+                "start_date": "20260101",
+                "end_date": "20260601",
+                "limit_type": "U",
+            },
+            fields=["ts_code", "trade_date"],
+            purpose="Identify native limit-up events.",
+        )
+    )
+    plan.queries[0].params = {
+        "start_date": "20260115",
+        "end_date": "20260615",
+    }
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "one-month-horizon",
+            "steps": [
+                {
+                    "operation": "match_at_offset",
+                    "field": "close",
+                    "output_field": "one_month_close",
+                    "matched_date_output_field": "one_month_trade_date",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "offset_value": 1,
+                    "offset_unit": "month",
+                }
+            ],
+        }
+    )
+
+    result = AnalysisService._validate_planned_time_semantics(
+        plan,
+        "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+    )
+
+    assert result.queries[0].params["start_date"] == "20260101"
+    assert result.queries[0].params["end_date"] == "20260701"
+
+
 def test_limit_up_analysis_requires_the_native_limit_list():
     plan = make_daily_plan()
 
