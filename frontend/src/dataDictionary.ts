@@ -7,7 +7,7 @@ export interface DictionaryEntry {
 }
 
 export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
-  // 估值类 (Valuation)
+  // 核心基础指标 (Core Metrics)
   { label: "市盈率 (PE)", field: "pe", description: "估值指标，衡量股价与每股收益的比例。", formula: "总市值 / 净利润", source: "Tushare" },
   { label: "市净率 (PB)", field: "pb", description: "估值指标，衡量股价与每股净资产的比例。", formula: "总市值 / 净资产", source: "Tushare" },
   { label: "市销率 (PS)", field: "ps", description: "估值指标，衡量股价与每股营业收入的比例。", formula: "总市值 / 营业收入", source: "Tushare" },
@@ -16,8 +16,6 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "市销率TTM", field: "ps_ttm", description: "滚动市销率。", formula: "总市值 / 过去12个月营业收入", source: "Tushare" },
   { label: "股息率", field: "dv_ratio", description: "衡量企业现金分红与市值的比例。", formula: "过去一年分红总额 / 总市值", source: "Tushare" },
   { label: "股息率TTM", field: "dv_ttm", description: "滚动股息率。", formula: "过去12个月分红总额 / 总市值", source: "Tushare" },
-
-  // 流动性与市值类 (Liquidity & Market Cap)
   { label: "换手率", field: "turnover_rate", description: "交易活跃度指标，一定时间内市场中股票转手买卖的频率。", formula: "区间成交股数 / 流通总股数", source: "Tushare" },
   { label: "换手率变动", field: "turnover_change_pct", description: "换手率相较于基期的相对变化比例，用于衡量交易活跃度的上升或下降。", formula: "(期末换手率 - 基期换手率) / 基期换手率 * 100%", source: "A-Share Lab 衍生计算" },
   { label: "总市值", field: "total_mv", description: "公司发行的全部股份按市场价格计算的总价值。", formula: "总股本 * 最新股价", source: "Tushare" },
@@ -28,8 +26,6 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "成交量", field: "vol", description: "该交易日成交的股票总手（通常为百股）数。", formula: "-", source: "Tushare" },
   { label: "成交额", field: "amount", description: "该交易日成交的股票总金额。", formula: "-", source: "Tushare" },
   { label: "量比", field: "volume_ratio", description: "开市后平均每分钟的成交量与过去5个交易日平均每分钟成交量的比值。", formula: "当前分钟成交量 / 过去5日均分钟成交量", source: "Tushare" },
-
-  // 行情收益类 (Price Return)
   { label: "涨跌额", field: "change", description: "当前收盘价相对前一交易日收盘价的变动金额。", formula: "当日收盘价 - 前一交易日收盘价", source: "Tushare" },
   { label: "日度涨跌幅", field: "pct_chg", description: "股票在一个交易日内的价格变动百分比。", formula: "(当日收盘价 - 前一交易日收盘价) / 前一交易日收盘价 * 100%", source: "Tushare" },
   { label: "区间收益率", field: "period_return_pct", description: "股票在特定日期区间的价格变动百分比。", formula: "(期末收盘价 - 期初前一交易日收盘价) / 期初前一交易日收盘价 * 100%", source: "A-Share Lab 衍生计算" },
@@ -38,8 +34,6 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "最高价", field: "high", description: "证券在该交易日成交的最高价格。", formula: "-", source: "Tushare" },
   { label: "最低价", field: "low", description: "证券在该交易日成交的最低价格。", formula: "-", source: "Tushare" },
   { label: "昨收价", field: "pre_close", description: "证券在上一交易日的收盘价格。", formula: "-", source: "Tushare" },
-  
-  // 筹码与股东结构类 (Holdings & Ownership)
   { label: "CR10 流通股集中度", field: "cr10_float_registered", description: "前十大无限售流通股东的流通股本持股比例合计，反映筹码集中度。", formula: "前十流通股东有效持股比例之和", source: "A-Share Lab 衍生计算" },
   { label: "持股分散度代理", field: "non_top10_float_ratio", description: "100%减去CR10流通股集中度；包含散户和未进入前十的机构，不等于个人投资者持股比例。", formula: "100% - cr10_float_registered", source: "A-Share Lab 衍生计算" },
   { label: "已知股东比例", field: "known_top_holder_float_ratio", description: "仅汇总具有有效流通股持股比例的披露股东；当源数据缺失时，不代表完整CR10。", formula: "所有有效持股比例加总", source: "A-Share Lab 衍生计算" },
@@ -48,8 +42,6 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "有效股东数", field: "holder_count", description: "参与本期CR10计算且名称唯一的披露股东数量，必须为10。", formula: "去重计数", source: "A-Share Lab 衍生计算" },
   { label: "有效比例数", field: "ratio_holder_count", description: "具有可计算流通股持股比例的披露股东数量。", formula: "有效记录计数", source: "A-Share Lab 衍生计算" },
   { label: "比例缺失股东", field: "missing_ratio_holders", description: "源数据未提供流通股持股比例、因而未纳入已知比例合计的股东。", formula: "-", source: "A-Share Lab 衍生计算" },
-
-  // 基础元数据 (Metadata)
   { label: "股票代码", field: "ts_code", description: "证券在 Tushare 中使用的交易所限定代码。", formula: "-", source: "Tushare" },
   { label: "股票名称", field: "name", description: "证券当前公开使用的简称。", formula: "-", source: "Tushare" },
   { label: "行业", field: "industry", description: "上市公司在数据源中登记的所属行业分类。", formula: "-", source: "Tushare" },
@@ -60,6 +52,37 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "报告期", field: "end_date", description: "股东持股数据对应的报告期末日期。", formula: "-", source: "Tushare" },
   { label: "公告日期", field: "ann_date", description: "该期股东数据首次对市场公开的日期。", formula: "-", source: "Tushare" },
   { label: "计算完整性", field: "calculation_status", description: "complete表示完整计算；partial_missing_ratio表示源比例缺失，仅能给出部分统计。", formula: "-", source: "A-Share Lab 衍生计算" },
+
+  // 高频财务指标 (High-Frequency Financials)
+  { label: "Y", field: "q_ocf_to_sales", description: "衡量单季度经营活动产生的现金流量净额占营业收入的比例，反映企业核心业务的现金创造能力。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "basic_eps_yoy", description: "基本每股收益相较于上年同期的增长率，反映盈利能力的年度提升。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "dt_eps_yoy", description: "稀释每股收益相较于上年同期的增长率，考虑潜在稀释后的盈利增长情况。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "cfps_yoy", description: "每股经营活动产生的现金流量净额相较于上年同期的增长率。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "op_yoy", description: "营业利润相较于上年同期的增长率，反映主营业务的盈利增长态势。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "ebt_yoy", description: "利润总额相较于上年同期的增长率。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "netprofit_yoy", description: "归属于母公司股东的净利润相较于上年同期的增长率，是衡量公司业绩增长的核心指标。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "dt_netprofit_yoy", description: "归属母公司扣除非经常性损益的净利润相较于上年同期的增长率，真实反映主业盈利增长。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "ocf_yoy", description: "经营活动产生的现金流量净额相较于上年同期的增长率，反映造血能力的年度变化。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "roe_yoy", description: "净资产收益率相较于上年同期的增长率，反映资本回报能力的提升情况。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "bps_yoy", description: "每股净资产相较于年初的增长率，反映每股内在价值的变动。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "assets_yoy", description: "总资产相较于年初的增长率，衡量企业资产规模的扩张速度。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "eqt_yoy", description: "归属于母公司股东权益相较于年初的增长率，反映股东净资产的增值情况。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "tr_yoy", description: "营业总收入相较于上年同期的增长率，反映整体营收规模的扩大。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "or_yoy", description: "营业收入相较于上年同期的增长率，反映主营业务销售规模的扩大。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "q_sales_yoy", description: "单季度营业收入相较于上年同期的增长率。", formula: "-", source: "Tushare" },
+  { label: "Y", field: "q_op_qoq", description: "单季度营业利润相较于上一季度的环比增长率，反映短期内主营盈利能力的变化趋势。", formula: "-", source: "Tushare" },
+
+  // 其他补充财务指标 (Other Financials)
+  { label: "N", field: "q_salescash_to_or", description: "衡量单季度销售商品和提供劳务收到的现金占营业收入的比例，反映营收的现金含量。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_ocf_to_or", description: "衡量单季度经营活动产生的现金流量净额占营业总收入的比例。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_gr_yoy", description: "单季度营业总收入相较于上年同期的增长率。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_gr_qoq", description: "单季度营业总收入相较于上一季度的环比增长率。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_sales_qoq", description: "单季度营业收入相较于上一季度的环比增长率。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_op_yoy", description: "单季度营业利润相较于上年同期的增长率。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_profit_yoy", description: "单季度利润总额相较于上年同期的增长率。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_profit_qoq", description: "单季度利润总额相较于上一季度的环比增长率。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_netprofit_yoy", description: "单季度净利润相较于上年同期的增长率。", formula: "-", source: "Tushare" },
+  { label: "N", field: "q_netprofit_qoq", description: "单季度净利润相较于上一季度的环比增长率。", formula: "-", source: "Tushare" },
   { label: "N", field: "start_date", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
   { label: "N", field: "period", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
   { label: "Y", field: "basic_eps", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
@@ -530,33 +553,6 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "N", field: "q_opincome_to_ebt", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
   { label: "N", field: "q_investincome_to_ebt", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
   { label: "N", field: "q_dtprofit_to_profit", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_salescash_to_or", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "q_ocf_to_sales", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_ocf_to_or", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "basic_eps_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "dt_eps_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "cfps_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "op_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "ebt_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "netprofit_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "dt_netprofit_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "ocf_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "roe_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "bps_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "assets_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "eqt_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "tr_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "or_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_gr_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_gr_qoq", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "q_sales_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_sales_qoq", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_op_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "Y", field: "q_op_qoq", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_profit_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_profit_qoq", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_netprofit_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
-  { label: "N", field: "q_netprofit_qoq", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
   { label: "Y", field: "equity_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
 ];
 
