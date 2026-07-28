@@ -1,6 +1,6 @@
 """DeepSeek implementation of the provider-neutral query-planner port."""
 
-from datetime import datetime, time as ClockTime, timedelta
+from datetime import datetime
 import json
 import re
 from time import sleep
@@ -203,7 +203,6 @@ class DeepSeekQueryPlanner:
         """Apply deterministic normalization before semantic validation."""
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
-        self._normalize_latest_completed_date(plan)
         self._downgrade_unexecutable_plan(plan)
         self._split_multi_security_float_holder_queries(plan)
         self._append_audited_disclosures(plan)
@@ -381,38 +380,6 @@ class DeepSeekQueryPlanner:
                 for aggregation in query.aggregations
                 if aggregation.field != "ts_code"
             ]
-
-    @staticmethod
-    def _normalize_latest_completed_date(plan: QueryPlan) -> None:
-        """Keep latest end-of-day queries behind the provider publication cutoff."""
-        now = datetime.now(ZoneInfo("Asia/Shanghai"))
-        completed_date = now.date()
-        if now.time() < ClockTime(17, 10):
-            completed_date -= timedelta(days=1)
-        while completed_date.weekday() >= 5:
-            completed_date -= timedelta(days=1)
-        today = now.strftime("%Y%m%d")
-        completed = completed_date.strftime("%Y%m%d")
-        for query in plan.queries:
-            if (
-                query.operation
-                in {"daily", "daily_basic", "margin", "margin_detail"}
-                and query.params.get("trade_date") == today
-            ):
-                query.params["trade_date"] = completed
-            if query.operation == "stock_st" and (
-                query.params.get("trade_date") == today
-                or query.params.get("end_date") == today
-            ):
-                query.params = {"trade_date": completed}
-                query.fields = [
-                    field for field in query.fields if field != "status"
-                ]
-                query.filters = [
-                    row_filter
-                    for row_filter in query.filters
-                    if row_filter.field != "status"
-                ]
 
     @staticmethod
     def _downgrade_unexecutable_plan(plan: QueryPlan) -> None:

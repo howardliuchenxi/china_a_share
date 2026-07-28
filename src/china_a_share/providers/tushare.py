@@ -9,6 +9,7 @@ import pandas as pd
 from china_a_share.client import TushareTransport
 from china_a_share.core.contracts import DataOperation
 from china_a_share.core.ports import DataResponseCache
+from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
 from china_a_share.registry import STOCK_API_NAMES, TushareOperationCatalog
 
 
@@ -161,11 +162,11 @@ if PROFILED_OPERATIONS != set(STOCK_API_NAMES):
         f"missing={missing}, extra={extra}"
     )
 PUBLICATION_TIMES = {
-    "daily": time(17, 10),
-    "daily_basic": time(17, 10),
-    "adj_factor": time(17, 10),
-    "weekly": time(17, 10),
-    "monthly": time(17, 10),
+    "daily": DAILY_PUBLICATION_COMPLETION_TIME,
+    "daily_basic": DAILY_PUBLICATION_COMPLETION_TIME,
+    "adj_factor": DAILY_PUBLICATION_COMPLETION_TIME,
+    "weekly": DAILY_PUBLICATION_COMPLETION_TIME,
+    "monthly": DAILY_PUBLICATION_COMPLETION_TIME,
     "stk_limit": time(9, 10),
     "moneyflow": time(19, 10),
     "stk_holdertrade": time(19, 10),

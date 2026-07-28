@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -30,12 +30,30 @@ class FactorBacktester:
         start_obj = datetime.strptime(start_date, "%Y%m%d").date()
         end_obj = datetime.strptime(end_date, "%Y%m%d").date()
 
-        trade_dates = []
-        current = start_obj
-        while current <= end_obj:
-            if current.weekday() < 5:
-                trade_dates.append(current.strftime("%Y%m%d"))
-            current += timedelta(days=1)
+        calendar_query = DataQuery(
+            query_id="backtest-trade-calendar",
+            operation="trade_cal",
+            params={
+                "exchange": "SSE",
+                "start_date": start_date,
+                "end_date": end_date,
+                "is_open": "1",
+            },
+            fields=["cal_date", "is_open"],
+            purpose="Resolve the exact exchange sessions used by the backtest.",
+        )
+        calendar_result = self._executor.execute(
+            calendar_query,
+            api_route=api_route,
+            request_id=request_id,
+        )
+        if calendar_result.status != QueryStatus.SUCCESS:
+            raise ValueError("Backtest trading calendar could not be loaded.")
+        trade_dates = sorted(
+            str(row["cal_date"])
+            for row in calendar_result.rows
+            if str(row.get("is_open", "1")) in {"1", "1.0"}
+        )
 
         import time
         t0 = time.perf_counter()

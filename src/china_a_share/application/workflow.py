@@ -1,6 +1,6 @@
 """Provider-neutral validation, execution, and analysis orchestration."""
 
-from datetime import datetime, time as ClockTime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
@@ -23,6 +23,7 @@ from china_a_share.core.contracts import (
 from china_a_share.core.errors import DataProviderError, PlannerError, VisionError
 from china_a_share.core.ports import MarketDataProvider, QueryPlanner, VisionAnalyzer
 from china_a_share.result_pipeline import ResultPipelineExecutor
+from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
 from china_a_share.time_range import (
     add_calendar_offset,
     resolve_explicit_time_range,
@@ -546,10 +547,40 @@ class DataQueryExecutor:
                     hold_amount_sum = float(hold_amounts.sum())
                     
                     end_date_obj = datetime.strptime(str(end_date), "%Y%m%d").date()
-                    candidate = end_date_obj
                     free_share = None
-                    for _ in range(10):
-                        if candidate.weekday() < 5:
+                    if self._provider.supports("trade_cal"):
+                        calendar = self._provider.query(
+                            "trade_cal",
+                            {
+                                "exchange": "SSE",
+                                "start_date": (
+                                    end_date_obj - timedelta(days=40)
+                                ).strftime("%Y%m%d"),
+                                "end_date": end_date_obj.strftime("%Y%m%d"),
+                                "is_open": "1",
+                            },
+                            ["cal_date", "is_open"],
+                            api_route=api_route,
+                            request_id=request_id,
+                            query_id=f"{query_id}-trade-calendar",
+                        )
+                        candidate_dates = sorted(
+                            (
+                                datetime.strptime(str(value), "%Y%m%d").date()
+                                for value in calendar.get(
+                                    "cal_date",
+                                    pd.Series(dtype=str),
+                                ).dropna()
+                            ),
+                            reverse=True,
+                        )
+                    else:
+                        candidate_dates = [
+                            end_date_obj - timedelta(days=offset)
+                            for offset in range(14)
+                            if (end_date_obj - timedelta(days=offset)).weekday() < 5
+                        ]
+                    for candidate in candidate_dates[:10]:
                             trade_date_str = candidate.strftime("%Y%m%d")
                             try:
                                 db_frame = self._provider.query(
@@ -574,7 +605,6 @@ class DataQueryExecutor:
                                     break
                             except Exception:
                                 pass
-                        candidate -= timedelta(days=1)
                     
                     if free_share is not None and free_share > 0:
                         known_float_ratio = min((hold_amount_sum / free_share) * 100, 100.0)
@@ -839,6 +869,13 @@ class AnalysisService:
                 )
             else:
                 plan = self._planner.plan(planning_request, operations)
+            self._normalize_latest_plan_dates(
+                plan,
+                self._latest_completed_trading_date(
+                    request_id,
+                    datetime.now(ZoneInfo("Asia/Shanghai")),
+                ),
+            )
             planning_has_disclosures = bool(
                 plan.feasibility == "supported" and plan.limitations
             )
@@ -1421,12 +1458,15 @@ class AnalysisService:
                 api_route=api_route,
                 request_id=request_id,
             )
-        trade_dates = []
-        current_date = start_date
-        while current_date <= end_date:
-            if current_date.weekday() < 5:
-                trade_dates.append(current_date.strftime("%Y%m%d"))
-            current_date += timedelta(days=1)
+        trade_dates = [
+            value.strftime("%Y%m%d")
+            for value in self._trading_dates(
+                start_date,
+                end_date,
+                request_id=request_id,
+                api_route=api_route,
+            )
+        ]
 
         def _fetch_date(trade_date: str) -> QueryResult:
             daily_query = query.model_copy(deep=True)
@@ -1466,23 +1506,34 @@ class AnalysisService:
         """Calculate market-wide returns from the first and last available snapshots."""
         def _find_boundary(label: str, boundary: Any, direction: int) -> Optional[QueryResult]:
             result = None
-            candidate = boundary
-            for _ in range(MAX_BOUNDARY_DATE_PROBES):
-                if candidate.weekday() < 5:
-                    boundary_query = query.model_copy(deep=True)
-                    boundary_query.query_id = f"{query.query_id}-{label}"
-                    boundary_query.params = {
-                        "trade_date": candidate.strftime("%Y%m%d")
-                    }
-                    boundary_query.transform = None
-                    result = self._executor.execute(
-                        boundary_query,
-                        api_route=api_route,
-                        request_id=request_id,
-                    )
-                    if result.status != QueryStatus.SUCCESS or result.row_count:
-                        break
-                candidate += timedelta(days=direction)
+            calendar_start = boundary - timedelta(days=MAX_BOUNDARY_DATE_PROBES * 2)
+            calendar_end = boundary + timedelta(days=MAX_BOUNDARY_DATE_PROBES * 2)
+            candidates = self._trading_dates(
+                calendar_start,
+                calendar_end,
+                request_id=request_id,
+                api_route=api_route,
+            )
+            candidates = [
+                candidate
+                for candidate in candidates
+                if (candidate >= boundary if direction > 0 else candidate <= boundary)
+            ]
+            candidates.sort(reverse=direction < 0)
+            for candidate in candidates[:MAX_BOUNDARY_DATE_PROBES]:
+                boundary_query = query.model_copy(deep=True)
+                boundary_query.query_id = f"{query.query_id}-{label}"
+                boundary_query.params = {
+                    "trade_date": candidate.strftime("%Y%m%d")
+                }
+                boundary_query.transform = None
+                result = self._executor.execute(
+                    boundary_query,
+                    api_route=api_route,
+                    request_id=request_id,
+                )
+                if result.status != QueryStatus.SUCCESS or result.row_count:
+                    break
             return result
 
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -1541,7 +1592,7 @@ class AnalysisService:
         request: AnalysisRequest,
     ) -> AnalysisRequest:
         """Return the text-only request consumed by provider discovery and planning."""
-        prompt = self._append_resolved_time_range(request.prompt)
+        prompt = self._append_resolved_time_range(request_id, request.prompt)
         if request.image is None:
             return AnalysisRequest(prompt=prompt)
         if self._vision_analyzer is None:
@@ -1648,15 +1699,10 @@ class AnalysisService:
             )
         return plan
 
-    @staticmethod
-    def _append_resolved_time_range(prompt: str) -> str:
+    def _append_resolved_time_range(self, request_id: str, prompt: str) -> str:
         """Append trusted calendar boundaries for an explicit relative duration."""
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
-        end_date = now.date()
-        if now.time() < ClockTime(17, 10):
-            end_date -= timedelta(days=1)
-        while end_date.weekday() >= 5:
-            end_date -= timedelta(days=1)
+        end_date = self._latest_completed_trading_date(request_id, now)
         resolved = (
             resolve_explicit_time_range(prompt)
             or resolve_relative_time_range(prompt, end_date)
@@ -1683,3 +1729,96 @@ class AnalysisService:
             )
         context.append("</trusted_analysis_window>")
         return f"{prompt}\n\n" + "\n".join(context)
+
+    def _latest_completed_trading_date(
+        self,
+        request_id: str,
+        now: datetime,
+    ) -> date:
+        """Return the latest open SSE date whose daily publication window is complete."""
+        candidate = now.date()
+        if now.time() < DAILY_PUBLICATION_COMPLETION_TIME:
+            candidate -= timedelta(days=1)
+        if not self._provider.supports("trade_cal"):
+            while candidate.weekday() >= 5:
+                candidate -= timedelta(days=1)
+            return candidate
+        open_dates = self._trading_dates(
+            candidate - timedelta(days=40),
+            candidate,
+            request_id=request_id,
+            api_route="/api/analysis/calendar",
+        )
+        if not open_dates:
+            raise ValueError("trade_cal returned no completed trading date.")
+        return open_dates[-1]
+
+    def _trading_dates(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        request_id: str,
+        api_route: str,
+    ) -> List[date]:
+        """Return cached provider trading dates for one inclusive range."""
+        if not self._provider.supports("trade_cal"):
+            return [
+                start_date + timedelta(days=offset)
+                for offset in range((end_date - start_date).days + 1)
+                if (start_date + timedelta(days=offset)).weekday() < 5
+            ]
+        calendar = self._provider.query(
+            "trade_cal",
+            {
+                "exchange": "SSE",
+                "start_date": start_date.strftime("%Y%m%d"),
+                "end_date": end_date.strftime("%Y%m%d"),
+                "is_open": "1",
+            },
+            ["cal_date", "is_open"],
+            api_route=api_route,
+            request_id=request_id,
+            query_id=(
+                f"trade-calendar-{start_date:%Y%m%d}-{end_date:%Y%m%d}"
+            ),
+        )
+        if "cal_date" not in calendar.columns:
+            raise ValueError("trade_cal did not return cal_date.")
+        if "is_open" in calendar.columns:
+            calendar = calendar.loc[
+                pd.to_numeric(calendar["is_open"], errors="coerce") == 1
+            ]
+        return sorted(
+            datetime.strptime(str(value), "%Y%m%d").date()
+            for value in calendar["cal_date"].dropna().unique()
+            if start_date.strftime("%Y%m%d")
+            <= str(value)
+            <= end_date.strftime("%Y%m%d")
+        )
+
+    @staticmethod
+    def _normalize_latest_plan_dates(plan: QueryPlan, completed_date: date) -> None:
+        """Move current-day end-of-day reads to the latest completed trading date."""
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+        completed = completed_date.strftime("%Y%m%d")
+        for query in plan.queries:
+            if (
+                query.operation
+                in {"daily", "daily_basic", "margin", "margin_detail"}
+                and query.params.get("trade_date") == today
+            ):
+                query.params["trade_date"] = completed
+            if query.operation == "stock_st" and (
+                query.params.get("trade_date") == today
+                or query.params.get("end_date") == today
+            ):
+                query.params = {"trade_date": completed}
+                query.fields = [
+                    field for field in query.fields if field != "status"
+                ]
+                query.filters = [
+                    row_filter
+                    for row_filter in query.filters
+                    if row_filter.field != "status"
+                ]

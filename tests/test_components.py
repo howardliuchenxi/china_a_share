@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, time as ClockTime, timedelta
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -473,35 +473,47 @@ def test_planner_repairs_model_generated_limit_up_filter_and_code_count():
     assert query.aggregations == []
 
 
-@pytest.mark.parametrize(
-    "prompt",
-    [
-        "筛选最新市盈率低于十的股票。",
-        "筛选低市盈率、低市净率、高股息率的十只股票。",
-    ],
-)
-def test_planner_moves_today_daily_basic_query_to_completed_market_date(prompt):
+def test_workflow_moves_today_query_to_provider_completed_trading_date():
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
-    completed_date = now.date()
-    if now.time() < ClockTime(17, 10):
-        completed_date -= timedelta(days=1)
-    while completed_date.weekday() >= 5:
-        completed_date -= timedelta(days=1)
     plan = make_daily_plan()
     plan.queries[0].operation = "daily_basic"
     plan.queries[0].params["trade_date"] = now.strftime("%Y%m%d")
-    session = FakeSession(
-        FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
+
+    AnalysisService._normalize_latest_plan_dates(
+        plan,
+        date(2026, 7, 24),
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
-        AnalysisRequest(prompt=prompt),
-        [DataOperation(name="daily_basic", description="Daily valuation data.")],
+    assert plan.queries[0].params["trade_date"] == "20260724"
+
+
+def test_latest_completed_date_uses_the_provider_trade_calendar():
+    class CalendarProvider(FakeMarketDataProvider):
+        def supports(self, operation):
+            return operation == "trade_cal"
+
+    provider = CalendarProvider(
+        frame=pd.DataFrame(
+            [
+                {"cal_date": "20260930", "is_open": 1},
+                {"cal_date": "20261009", "is_open": 1},
+            ]
+        )
+    )
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
     )
 
-    assert result.queries[0].params["trade_date"] == completed_date.strftime(
-        "%Y%m%d"
+    result = service._latest_completed_trading_date(
+        "request-1",
+        datetime(2026, 10, 10, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
     )
+
+    assert result == date(2026, 10, 9)
+    assert provider.calls[0] == "trade_cal"
 
 
 @pytest.mark.parametrize(
