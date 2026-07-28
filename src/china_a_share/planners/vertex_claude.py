@@ -19,7 +19,7 @@ from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 
 VERTEX_PROJECT = "china-a-share-lab"
 VERTEX_REGION = "asia-east2"
-VERTEX_MODEL = "claude-sonnet-4@20250514"
+VERTEX_MODEL = "claude-3-5-sonnet-v20241022"
 VERTEX_API_URL = (
     f"https://{VERTEX_REGION}-aiplatform.googleapis.com/v1/projects/"
     f"{VERTEX_PROJECT}/locations/{VERTEX_REGION}/publishers/anthropic/models/"
@@ -70,40 +70,7 @@ class VertexClaudeQueryPlanner:
 
     def generate_text(self, prompt: str) -> str:
         """Generate arbitrary text using the underlying LLM."""
-        import google.auth
-        import google.auth.transport.requests
-        import requests as http_requests
-
-        credentials, _ = google.auth.default()
-        auth_req = google.auth.transport.requests.Request()
-        credentials.refresh(auth_req)
-        access_token = credentials.token
-
-        payload = {
-            "anthropic_version": "vertex-2023-10-16",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "max_tokens": VERTEX_MAX_OUTPUT_TOKENS,
-        }
-
-        response = http_requests.post(
-            VERTEX_API_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json; charset=utf-8",
-            },
-            json=payload,
-            timeout=VERTEX_TIMEOUT_SECONDS,
-        )
-        if response.status_code != 200:
-            raise PlannerError(
-                source=self.name,
-                message=f"Vertex AI returned HTTP {response.status_code}",
-                http_status=response.status_code,
-                raw_response={"text": response.text},
-            )
-        data = response.json()
-        return data["content"][0]["text"]
+        return self._fallback.generate_text(prompt)
 
     def _plan_with_claude(
         self,
