@@ -21,7 +21,7 @@ import type {
   StockListResponse,
 } from "./contracts";
 
-type ReferenceView = "stocks" | "calendar" | "dictionary";
+type ReferenceView = "stocks" | "dictionary";
 type PageView = "analysis" | "reference";
 
 const workflowSteps = [
@@ -52,36 +52,6 @@ const exchangeLabels: Record<StockExchange, string> = {
   SZSE: "深圳",
   BSE: "北京",
 };
-const calendarWeekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-
-interface CalendarDay {
-  day: number;
-  isWeekend: boolean;
-  isToday: boolean;
-}
-
-function computeCalendarMonth(year: number, month: number): CalendarDay[] {
-  const firstDay = new Date(year, month - 1, 1);
-  const offset = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1; // Mon=0 … Sun=6
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const today = new Date();
-  const isCurrentMonth =
-    today.getFullYear() === year && today.getMonth() + 1 === month;
-  const todayDate = today.getDate();
-  const totalCells = Math.ceil((offset + daysInMonth) / 7) * 7;
-  return Array.from({ length: totalCells }, (_, index) => {
-    const day = index - offset + 1;
-    if (day < 1 || day > daysInMonth) {
-      return { day: 0, isWeekend: false, isToday: false };
-    }
-    const dayOfWeek = new Date(year, month - 1, day).getDay();
-    return {
-      day,
-      isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
-      isToday: isCurrentMonth && day === todayDate,
-    };
-  });
-}
 
 const errorSourceLabels: Record<string, string> = {
   tushare: "Tushare",
@@ -644,28 +614,6 @@ function ReferenceDataPage() {
   const [exchangeFilter, setExchangeFilter] = useState<StockExchange>("SSE");
   const [industryFilter, setIndustryFilter] = useState("");
   const [stockPage, setStockPage] = useState(1);
-  const [calendarExchange, setCalendarExchange] = useState<StockExchange | "">("");
-  const [calendarMonth, setCalendarMonth] = useState(() => {
-    const now = new Date();
-    return { year: now.getFullYear(), month: now.getMonth() + 1 };
-  });
-  const calendarDays = useMemo(
-    () => computeCalendarMonth(calendarMonth.year, calendarMonth.month),
-    [calendarMonth],
-  );
-  const calendarHeading = `${calendarMonth.year}年${calendarMonth.month}月`;
-
-  function previousMonth() {
-    setCalendarMonth(({ year, month }) =>
-      month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 },
-    );
-  }
-
-  function nextMonth() {
-    setCalendarMonth(({ year, month }) =>
-      month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 },
-    );
-  }
   const [stockResponse, setStockResponse] = useState<StockListResponse | null>(null);
   const [availableIndustries, setAvailableIndustries] = useState<string[]>([]);
   const [stockServiceError, setStockServiceError] = useState<ServiceError | null>(null);
@@ -724,7 +672,6 @@ function ReferenceDataPage() {
       <nav className="reference-tabs" aria-label="基础信息分类" role="tablist">
         {([
           ["stocks", "股票列表"],
-          ["calendar", "交易日历"],
           ["dictionary", "数据字典"],
         ] as const).map(([view, label]) => (
           <button
@@ -825,83 +772,6 @@ function ReferenceDataPage() {
             </nav>
           </>}
           {stockResponse?.items.length === 0 && <p className="empty-state">没有符合当前条件的股票。</p>}
-        </section>
-      )}
-
-      {activeView === "calendar" && (
-        <section className="reference-panel" aria-labelledby="calendar-heading">
-          <div className="calendar-header">
-            <div>
-              <label className="calendar-exchange-field">
-                <span>市场</span>
-                <select
-                  value={calendarExchange}
-                  onChange={(event) => setCalendarExchange(event.target.value as StockExchange | "")}
-                >
-                  <option value="">上海 · 深圳 · 北京</option>
-                  <option value="SSE">上海</option>
-                  <option value="SZSE">深圳</option>
-                  <option value="BSE">北京</option>
-                </select>
-              </label>
-              <div className="calendar-month-nav">
-                <button
-                  type="button"
-                  className="calendar-nav-button"
-                  onClick={previousMonth}
-                  aria-label="上一月"
-                >
-                  ‹
-                </button>
-                <h2 id="calendar-heading">{calendarHeading}</h2>
-                <button
-                  type="button"
-                  className="calendar-nav-button"
-                  onClick={nextMonth}
-                  aria-label="下一月"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
-            <div className="calendar-legend" aria-label="日历图例">
-              <span><i className="open-day-dot" />交易日</span>
-              <span><i className="closed-day-dot" />休市日</span>
-              <span><i className="today-dot" />今天</span>
-            </div>
-          </div>
-          <div className="market-calendar" aria-label={`${calendarHeading} A股交易日历`}>
-            {calendarWeekdays.map((weekday) => (
-              <div className="calendar-weekday" key={weekday}>{weekday}</div>
-            ))}
-            {calendarDays.map((cell, index) => {
-              const isEmpty = cell.day === 0;
-              const dayClassName = [
-                "calendar-day",
-                isEmpty ? "is-empty" : cell.isWeekend ? "is-closed" : "is-open",
-                cell.isToday ? "is-today" : "",
-              ].filter(Boolean).join(" ");
-              const monthLabel = `${calendarMonth.month}月`;
-              return (
-                <div
-                  className={dayClassName}
-                  key={`${index}-${cell.day || "empty"}`}
-                  aria-label={
-                    isEmpty
-                      ? undefined
-                      : `${monthLabel}${cell.day}日，${cell.isWeekend ? "休市日" : "交易日"}${cell.isToday ? "，今天" : ""}`
-                  }
-                >
-                  {!isEmpty && (
-                    <>
-                      <strong>{cell.day}</strong>
-                      <span>{cell.isWeekend ? "休" : "开"}</span>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
         </section>
       )}
 

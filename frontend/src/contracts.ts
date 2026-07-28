@@ -304,59 +304,6 @@ export interface StockListErrorResponse {
   error: ServiceError;
 }
 
-export interface TradingCalendarQuery {
-  /** Requested calendar month formatted as YYYY-MM. */
-  month: string;
-  /** Exchange scope used for both trading status and breadth counts. */
-  exchange: "ALL" | "SSE" | "SZSE" | "BSE";
-}
-
-export interface TradingCalendarBreadth {
-  /** Securities with a positive daily percentage change. */
-  advanced: number;
-  /** Securities with a negative daily percentage change. */
-  declined: number;
-  /** Securities with a zero daily percentage change. */
-  unchanged: number;
-  /** Securities with valid daily market data included in the counts. */
-  traded: number;
-  /** Advanced divided by declined, or null when no security declined. */
-  advance_decline_ratio: number | null;
-}
-
-export interface TradingCalendarDay {
-  /** Calendar date formatted as an ISO date. */
-  date: string;
-  /** Whether the reference exchange is open for trading on this date. */
-  is_open: boolean;
-  /** Most recent preceding open trading date when supplied by Tushare. */
-  previous_trading_date: string | null;
-  /** End-of-day breadth, unavailable on closed, future, or unpopulated dates. */
-  breadth: TradingCalendarBreadth | null;
-}
-
-export interface TradingCalendarResponse {
-  /** Identifier used to correlate client requests and server logs. */
-  request_id: string;
-  /** Fixed mainland A-share market boundary represented by this calendar. */
-  market: "A_SHARE";
-  /** Requested calendar month formatted as YYYY-MM. */
-  month: string;
-  /** Exchange scope selected for the calendar and breadth counts. */
-  exchange: "ALL" | "SSE" | "SZSE" | "BSE";
-  /** Exchange calendars and securities included in this response. */
-  source_exchanges: Array<"SSE" | "SZSE" | "BSE">;
-  /** Chronological trading status for every calendar date in the month. */
-  days: TradingCalendarDay[];
-}
-
-export interface TradingCalendarErrorResponse {
-  /** Identifier used to correlate client requests and server logs. */
-  request_id: string;
-  /** Safe provider or application error details. */
-  error: ServiceError;
-}
-
 export interface UiFeedbackConfig {
   /** Whether every private administrator feedback dependency is configured. */
   enabled: boolean;
