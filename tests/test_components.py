@@ -252,6 +252,7 @@ def test_future_horizon_accepts_the_exact_calendar_offset_and_data_coverage():
                     "operation": "match_at_offset",
                     "field": "close",
                     "output_field": "one_month_close",
+                    "matched_date_output_field": "one_month_trade_date",
                     "group_by": ["ts_code"],
                     "order_by": "trade_date",
                     "offset_value": 1,

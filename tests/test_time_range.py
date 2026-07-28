@@ -41,3 +41,26 @@ def test_complex_event_study_keeps_event_window_and_outcome_horizon_separate():
         date(2026, 6, 1),
     )
     assert resolve_future_horizon(prompt) == (1, "month")
+
+
+def test_date_formats_chinese_numbers_and_trading_sessions_are_structured():
+    assert resolve_explicit_time_range("2026-01-01至2026-06-01") == (
+        date(2026, 1, 1),
+        date(2026, 6, 1),
+    )
+    assert resolve_explicit_time_range("2026年1月1日至2026年6月1日") == (
+        date(2026, 1, 1),
+        date(2026, 6, 1),
+    )
+    assert resolve_future_horizon("未来十二个月") == (12, "month")
+    assert resolve_future_horizon("接下来二十个交易日") == (
+        20,
+        "trading_session",
+    )
+
+
+def test_trading_day_lookback_is_not_misrepresented_as_calendar_days():
+    assert resolve_relative_time_range(
+        "过去30个交易日",
+        date(2026, 7, 27),
+    ) is None

@@ -264,6 +264,8 @@ class ASharePlanValidator:
                 "compare_scalar",
             }:
                 available_fields.add(step.output_field)
+                if step.operation == "match_at_offset":
+                    available_fields.add(step.matched_date_output_field)
             elif step.operation == "aggregate":
                 available_fields = set(step.group_by)
                 available_fields.update(
@@ -1610,16 +1612,35 @@ class AnalysisService:
         if event_range is None:
             return plan
         event_start, event_end = event_range
-        required_end = add_calendar_offset(event_end, *horizon)
-        range_queries = [
-            query
-            for query in plan.queries
-            if query.params.get("start_date") and query.params.get("end_date")
-        ]
-        if not range_queries or not any(
-            query.params["start_date"] <= event_start.strftime("%Y%m%d")
-            and query.params["end_date"] >= required_end.strftime("%Y%m%d")
-            for query in range_queries
+        required_end = (
+            None
+            if horizon[1] == "trading_session"
+            else add_calendar_offset(event_end, *horizon)
+        )
+        source_query = next(
+            (
+                query
+                for query in plan.queries
+                if plan.result_pipeline
+                and query.query_id == plan.result_pipeline.source_query_id
+            ),
+            None,
+        )
+        if (
+            source_query is None
+            or not source_query.params.get("start_date")
+            or not source_query.params.get("end_date")
+            or not (
+                source_query.params["start_date"]
+                <= event_start.strftime("%Y%m%d")
+                and (
+                    source_query.params["end_date"]
+                    > event_end.strftime("%Y%m%d")
+                    if required_end is None
+                    else source_query.params["end_date"]
+                    >= required_end.strftime("%Y%m%d")
+                )
+            )
         ):
             raise PlanValidationError(
                 "A source query must cover the event interval and complete "

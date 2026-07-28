@@ -108,6 +108,7 @@ export interface QueryPlan {
         | "summarize";
       field?: string | null;
       output_field?: string | null;
+      matched_date_output_field?: string | null;
       right_field?: string | null;
       right_source_query_id?: string | null;
       join_on?: string[];
@@ -130,7 +131,7 @@ export interface QueryPlan {
       min_periods?: number | null;
       periods?: number | null;
       offset_value?: number | null;
-      offset_unit?: "day" | "week" | "month" | "year" | null;
+      offset_unit?: "day" | "week" | "month" | "year" | "trading_session" | null;
       require_consecutive?: boolean;
       aggregations?: Array<{
         output_field: string;

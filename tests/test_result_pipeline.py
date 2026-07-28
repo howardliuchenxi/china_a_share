@@ -448,6 +448,7 @@ def test_pipeline_matches_the_next_available_observation_after_calendar_offset()
                     "operation": "match_at_offset",
                     "field": "close",
                     "output_field": "one_month_close",
+                    "matched_date_output_field": "one_month_trade_date",
                     "group_by": ["ts_code"],
                     "order_by": "trade_date",
                     "offset_value": 1,
@@ -460,4 +461,48 @@ def test_pipeline_matches_the_next_available_observation_after_calendar_offset()
     result = ResultPipelineExecutor().execute(pipeline, source)
 
     assert result.rows[0]["one_month_close"] == 12.0
-    assert result.rows[2]["one_month_close"] == 18.0
+    assert result.rows[2]["one_month_close"] is None
+    assert result.rows[0]["one_month_trade_date"] == "20260205"
+    assert result.rows[2]["one_month_trade_date"] is None
+
+
+def test_pipeline_matches_a_global_trading_session_offset():
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": code, "trade_date": trade_date, "close": close}
+            for code, values in {
+                "A": [("20260105", 10.0), ("20260106", 11.0)],
+                "B": [("20260105", 20.0)],
+            }.items()
+            for trade_date, close in values
+        ],
+        row_count=3,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "next-session",
+            "steps": [
+                {
+                    "operation": "match_at_offset",
+                    "field": "close",
+                    "output_field": "next_close",
+                    "matched_date_output_field": "next_trade_date",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "offset_value": 1,
+                    "offset_unit": "trading_session",
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows[0]["next_close"] == 11.0
+    assert result.rows[0]["next_trade_date"] == "20260106"
+    assert result.rows[2]["next_close"] is None

@@ -258,30 +258,56 @@ class ResultPipelineExecutor:
                 format="%Y%m%d",
                 errors="coerce",
             )
-            offsets = {
-                "day": pd.DateOffset(days=step.offset_value),
-                "week": pd.DateOffset(weeks=step.offset_value),
-                "month": pd.DateOffset(months=step.offset_value),
-                "year": pd.DateOffset(years=step.offset_value),
-            }
-            ordered["_target_date"] = ordered_dates + offsets[step.offset_unit]
+            market_dates = pd.Index(sorted(ordered_dates.dropna().unique()))
+            if step.offset_unit == "trading_session":
+                market_ranks = ordered_dates.map(
+                    {value: index for index, value in enumerate(market_dates)}
+                )
+                target_ranks = market_ranks + step.offset_value
+                ordered["_target_date"] = target_ranks.map(
+                    {
+                        index: value
+                        for index, value in enumerate(market_dates)
+                    }
+                )
+            else:
+                offsets = {
+                    "day": pd.DateOffset(days=step.offset_value),
+                    "week": pd.DateOffset(weeks=step.offset_value),
+                    "month": pd.DateOffset(months=step.offset_value),
+                    "year": pd.DateOffset(years=step.offset_value),
+                }
+                requested_dates = ordered_dates + offsets[step.offset_unit]
+                ordered["_target_date"] = requested_dates.map(
+                    lambda value: next(
+                        (candidate for candidate in market_dates if candidate >= value),
+                        pd.NaT,
+                    )
+                )
             ordered[step.output_field] = None
+            ordered[step.matched_date_output_field] = None
             for _, indexes in ordered.groupby(
                 step.group_by,
                 sort=False,
                 dropna=False,
             ).groups.items():
                 group_indexes = list(indexes)
-                group_dates = ordered_dates.loc[group_indexes]
+                group_date_indexes = {
+                    value: index
+                    for index, value in ordered_dates.loc[group_indexes].items()
+                }
                 for row_index in group_indexes:
                     target = ordered.at[row_index, "_target_date"]
-                    candidates = group_dates.loc[group_dates >= target]
-                    if not candidates.empty:
-                        match_index = candidates.index[0]
+                    match_index = group_date_indexes.get(target)
+                    if match_index is not None:
                         ordered.at[row_index, step.output_field] = ordered.at[
                             match_index,
                             step.field,
                         ]
+                        ordered.at[
+                            row_index,
+                            step.matched_date_output_field,
+                        ] = target.strftime("%Y%m%d")
             return ordered.drop(columns=["_target_date"]).reset_index(drop=True)
         if step.operation == "compare_fields":
             result = frame.copy()

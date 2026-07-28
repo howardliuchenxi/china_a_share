@@ -306,6 +306,11 @@ class ResultPipelineStep(BaseModel):
         pattern=OPERATION_NAME_PATTERN,
         description="New field produced by a derive operation.",
     )
+    matched_date_output_field: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Actual market trading date selected by a temporal match.",
+    )
     right_field: Optional[str] = Field(
         default=None,
         pattern=OPERATION_NAME_PATTERN,
@@ -387,7 +392,9 @@ class ResultPipelineStep(BaseModel):
         le=1_000,
         description="Positive calendar offset applied by a temporal match.",
     )
-    offset_unit: Optional[Literal["day", "week", "month", "year"]] = Field(
+    offset_unit: Optional[
+        Literal["day", "week", "month", "year", "trading_session"]
+    ] = Field(
         default=None,
         description="Calendar unit applied by a temporal match.",
     )
@@ -453,6 +460,7 @@ class ResultPipelineStep(BaseModel):
                 and self.order_by
                 and self.offset_value
                 and self.offset_unit
+                and self.matched_date_output_field
             ),
             "match_source": bool(
                 self.right_source_query_id
