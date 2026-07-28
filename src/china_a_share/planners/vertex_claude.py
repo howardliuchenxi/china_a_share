@@ -56,6 +56,12 @@ class VertexClaudeQueryPlanner:
         candidate_operations: Sequence[DataOperation],
     ) -> QueryPlan:
         """Build a query plan using Vertex AI Claude, falling back to DeepSeek."""
+        audited_plan = DeepSeekQueryPlanner.build_audited_time_series_plan(
+            request.prompt,
+            candidate_operations,
+        )
+        if audited_plan is not None:
+            return audited_plan
         try:
             return self._plan_with_claude(request, candidate_operations)
         except PlannerError:
@@ -260,8 +266,19 @@ def _build_system_prompt(guidance: str, allowed_operations: str) -> str:
         "(holder_num). Combine with daily_basic.float_share to compute average "
         "holding per shareholder: lower shareholder count and higher average "
         "holding suggest institutional concentration regardless of CR10. For "
-        "generic retail-ranking requests, include both data sources so the "
-        "consumer can apply a composite score."
+            "generic retail-ranking requests, include both data sources so the "
+            "consumer can apply a composite score."
+        "For deterministic post-query calculations, prefer result_pipeline. A result "
+        "pipeline may compose latest_by_group, derive, drop_missing, filter, sort, "
+        "limit, quantile_filter, aggregate, rolling_mean, shift, compare_fields, "
+        "compare_scalar, and summarize steps. For ordered time-series analysis, use "
+        "rolling_mean and shift with group_by security identifiers and order_by "
+        "trade_date. Positive shift periods read prior rows and negative periods read "
+        "future rows. Use comparisons to create event fields, filter the event cohort, "
+        "drop outcomes without a future row, and summarize count and mean for event "
+        "probabilities. Fetch enough observations before the measurement window to "
+        "initialize rolling calculations, then filter event dates to the requested "
+        "window. "
         "Decompose every user request "
         "into atomic requirements and provide concrete catalog evidence for each "
         "one. Mark feasibility as supported only when every requirement maps to "

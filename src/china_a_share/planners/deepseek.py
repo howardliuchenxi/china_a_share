@@ -85,6 +85,14 @@ class DeepSeekQueryPlanner:
         validator: Optional[Callable[[QueryPlan], QueryPlan]],
     ) -> QueryPlan:
         """Retry planning with concrete validation feedback before audited fallback."""
+        audited_time_series_plan = self.build_audited_time_series_plan(
+            request.prompt,
+            candidate_operations,
+        )
+        if audited_time_series_plan is not None:
+            if validator is not None:
+                validator(audited_time_series_plan)
+            return audited_time_series_plan
         guidance = "\n".join(
             f"- {operation.name}: {operation.description}"
             for operation in candidate_operations
@@ -167,9 +175,18 @@ class DeepSeekQueryPlanner:
             "For deterministic post-query calculations, prefer result_pipeline over "
             "inventing a specialized transform. A result pipeline consumes exactly one "
             "query result and may compose latest_by_group, derive, drop_missing, filter, "
-            "sort, limit, quantile_filter, and aggregate steps. Use sort followed by "
+            "sort, limit, quantile_filter, aggregate, rolling_mean, shift, "
+            "compare_fields, compare_scalar, and summarize steps. Use sort followed by "
             "limit for Top N. Use quantile_filter with a quantile between 0 and 1 for "
-            "percentile requests. For a full-market retail-proxy ranking, query "
+            "percentile requests. For ordered time-series analysis, use rolling_mean "
+            "and shift with group_by security identifiers and order_by trade_date. "
+            "Positive shift periods read prior rows and negative periods read future "
+            "rows. Use compare_fields or compare_scalar to create boolean event fields, "
+            "filter to the requested event cohort, drop outcomes without a future row, "
+            "and summarize count and mean to calculate an event probability. Fetch "
+            "enough observations before the requested measurement window to initialize "
+            "rolling calculations, then filter event dates to the requested window. "
+            "For a full-market retail-proxy ranking, query "
             "stock_basic as the universe, add one top10_floatholders template without "
             "ts_code using transform=cr10_float_trend, then apply latest_by_group on "
             "ts_code ordered by end_date, drop missing non_top10_float_ratio, and apply "
@@ -280,6 +297,234 @@ class DeepSeekQueryPlanner:
                 f"{DEEPSEEK_MAX_ATTEMPTS} attempts: {last_error}"
             ),
         ) from last_error
+
+    @staticmethod
+    def build_audited_time_series_plan(
+        prompt: str,
+        candidate_operations: Sequence[DataOperation],
+    ) -> Optional[QueryPlan]:
+        """Build a deterministic market-wide moving-average event study."""
+        normalized = prompt.replace(" ", "")
+        window_match = re.search(r"(\d{1,3})日均线", normalized)
+        has_market_scope = any(
+            marker in normalized for marker in ("A股", "大A", "全市场")
+        )
+        direction = (
+            "down"
+            if "跌破" in normalized
+            else "up"
+            if "突破" in normalized
+            else None
+        )
+        outcome = (
+            "up"
+            if "上涨概率" in normalized
+            else "down"
+            if "下跌概率" in normalized
+            else None
+        )
+        next_day_requested = any(
+            marker in normalized
+            for marker in ("下一个交易日", "接下来一个交易日", "次日")
+        )
+        available_operations = {
+            operation.name for operation in candidate_operations
+        }
+        if not (
+            window_match
+            and has_market_scope
+            and direction
+            and outcome
+            and next_day_requested
+            and "daily" in available_operations
+        ):
+            return None
+
+        window = int(window_match.group(1))
+        if not 2 <= window <= 250:
+            return None
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        measurement_end = now.date()
+        if now.time() < ClockTime(17, 10):
+            measurement_end -= timedelta(days=1)
+        while measurement_end.weekday() >= 5:
+            measurement_end -= timedelta(days=1)
+        if any(marker in normalized for marker in ("过去半年", "近半年")):
+            measurement_days = 183
+        elif any(marker in normalized for marker in ("过去一年", "近一年")):
+            measurement_days = 365
+        else:
+            month_match = re.search(r"(?:过去|近)(\d{1,2})个月", normalized)
+            if not month_match:
+                return None
+            measurement_days = int(month_match.group(1)) * 30
+        measurement_start = measurement_end - timedelta(days=measurement_days)
+        fetch_start = measurement_start - timedelta(days=window * 2)
+        current_comparison = "lt" if direction == "down" else "gt"
+        previous_comparison = "ge" if direction == "down" else "le"
+        outcome_comparison = "gt" if outcome == "up" else "lt"
+
+        return QueryPlan.model_validate(
+            {
+                "interpretation": (
+                    f"Measure the probability of a next-market-session {outcome} "
+                    f"move after an A-share {direction} cross of the {window}-day "
+                    "moving average, using unadjusted daily close."
+                ),
+                "requirements": [
+                    {
+                        "requirement": (
+                            f"Identify {direction} crosses of the {window}-day "
+                            "moving average during the requested period."
+                        ),
+                        "status": "covered",
+                        "implementation": (
+                            "Calculate a grouped rolling mean and compare current "
+                            "and prior observations deterministically."
+                        ),
+                        "evidence": (
+                            "The daily operation provides ts_code, trade_date, and "
+                            "unadjusted close; the audited pipeline supplies rolling "
+                            "and ordered window operations."
+                        ),
+                    },
+                    {
+                        "requirement": (
+                            f"Calculate the probability that the next market "
+                            f"trading session moves {outcome}."
+                        ),
+                        "status": "covered",
+                        "implementation": (
+                            "Require a consecutive global trading-date observation, "
+                            "exclude unavailable outcomes, and aggregate event count "
+                            "and the boolean outcome mean."
+                        ),
+                        "evidence": (
+                            "Daily pct_chg supplies the outcome and the audited shift "
+                            "rejects suspended securities without a next-session row."
+                        ),
+                    },
+                ],
+                "limitations": [
+                    (
+                        "The moving average uses unadjusted daily close because the "
+                        "current single-source pipeline cannot join adjustment factors."
+                    )
+                ],
+                "queries": [
+                    {
+                        "query_id": "market-moving-average-source",
+                        "operation": "daily",
+                        "params": {
+                            "start_date": fetch_start.strftime("%Y%m%d"),
+                            "end_date": measurement_end.strftime("%Y%m%d"),
+                        },
+                        "fields": ["ts_code", "trade_date", "close", "pct_chg"],
+                        "purpose": (
+                            "Retrieve the measurement period plus rolling-window "
+                            "warm-up observations."
+                        ),
+                    }
+                ],
+                "result_pipeline": {
+                    "source_query_id": "market-moving-average-source",
+                    "output_query_id": "moving-average-event-probability",
+                    "steps": [
+                        {
+                            "operation": "rolling_mean",
+                            "field": "close",
+                            "output_field": "moving_average",
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "window": window,
+                        },
+                        {
+                            "operation": "shift",
+                            "field": "close",
+                            "output_field": "previous_close",
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "periods": 1,
+                        },
+                        {
+                            "operation": "shift",
+                            "field": "moving_average",
+                            "output_field": "previous_moving_average",
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "periods": 1,
+                        },
+                        {
+                            "operation": "shift",
+                            "field": "pct_chg",
+                            "output_field": "next_pct_chg",
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "periods": -1,
+                            "require_consecutive": True,
+                        },
+                        {
+                            "operation": "compare_fields",
+                            "field": "close",
+                            "right_field": "moving_average",
+                            "output_field": "current_cross_side",
+                            "comparison": current_comparison,
+                        },
+                        {
+                            "operation": "compare_fields",
+                            "field": "previous_close",
+                            "right_field": "previous_moving_average",
+                            "output_field": "previous_cross_side",
+                            "comparison": previous_comparison,
+                        },
+                        {
+                            "operation": "compare_scalar",
+                            "field": "next_pct_chg",
+                            "output_field": "next_day_outcome",
+                            "comparison": outcome_comparison,
+                            "value": 0,
+                        },
+                        {
+                            "operation": "filter",
+                            "field": "current_cross_side",
+                            "comparison": "eq",
+                            "value": 1,
+                        },
+                        {
+                            "operation": "filter",
+                            "field": "previous_cross_side",
+                            "comparison": "eq",
+                            "value": 1,
+                        },
+                        {
+                            "operation": "filter",
+                            "field": "trade_date",
+                            "comparison": "ge",
+                            "value": measurement_start.strftime("%Y%m%d"),
+                        },
+                        {
+                            "operation": "drop_missing",
+                            "fields": ["next_pct_chg"],
+                        },
+                        {
+                            "operation": "summarize",
+                            "aggregations": [
+                                {
+                                    "output_field": "event_count",
+                                    "field": "next_day_outcome",
+                                    "function": "count",
+                                },
+                                {
+                                    "output_field": "outcome_probability",
+                                    "field": "next_day_outcome",
+                                    "function": "mean",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            }
+        )
 
     def _finalize_plan(self, plan: QueryPlan, prompt: str) -> None:
         """Apply deterministic normalization before semantic validation."""

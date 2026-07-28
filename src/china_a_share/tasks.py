@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 import json
 import logging
 from threading import Lock
+import time
 from typing import Dict, Optional, Union
 from uuid import uuid4
 
 import google.auth
+from google.api_core.retry import Retry
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
 
@@ -34,6 +36,16 @@ ASYNC_REQUEST_MARKERS = (
     "\u4e0a\u6da8",
 )
 GOOGLE_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+MIN_OBJECT_WRITE_INTERVAL_SECONDS = 1.0
+STORAGE_RETRY_INITIAL_SECONDS = 1.0
+STORAGE_RETRY_MAXIMUM_SECONDS = 8.0
+STORAGE_RETRY_DEADLINE_SECONDS = 30.0
+STORAGE_WRITE_RETRY = Retry(
+    initial=STORAGE_RETRY_INITIAL_SECONDS,
+    maximum=STORAGE_RETRY_MAXIMUM_SECONDS,
+    multiplier=2.0,
+    deadline=STORAGE_RETRY_DEADLINE_SECONDS,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +116,8 @@ class CloudStorageAnalysisTaskStore:
         storage_client: Optional[storage.Client] = None,
     ) -> None:
         self._bucket = (storage_client or storage.Client()).bucket(bucket_name)
+        self._write_schedule: Dict[str, float] = {}
+        self._write_schedule_lock = Lock()
 
     def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
         """Return one persisted task when its object exists."""
@@ -117,11 +131,31 @@ class CloudStorageAnalysisTaskStore:
 
     def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
         """Replace one complete task record."""
-        blob = self._bucket.blob(self._object_name(task.task_id))
+        object_name = self._object_name(task.task_id)
+        self._wait_for_write_slot(object_name)
+        blob = self._bucket.blob(object_name)
         blob.upload_from_string(
             task.model_dump_json(),
             content_type="application/json",
+            retry=STORAGE_WRITE_RETRY,
         )
+
+    def _wait_for_write_slot(self, object_name: str) -> None:
+        """Reserve a per-object write slot without throttling unrelated tasks."""
+        now = time.monotonic()
+        with self._write_schedule_lock:
+            write_at = max(now, self._write_schedule.get(object_name, now))
+            self._write_schedule[object_name] = (
+                write_at + MIN_OBJECT_WRITE_INTERVAL_SECONDS
+            )
+        delay = write_at - now
+        if delay > 0:
+            logger.info(
+                "analysis_task_storage_write_throttled object_name=%s delay_seconds=%.3f",
+                object_name,
+                delay,
+            )
+            time.sleep(delay)
 
     @staticmethod
     def _object_name(task_id: str) -> str:
@@ -254,12 +288,21 @@ class AnalysisTaskCoordinator:
         task.updated_at = datetime.now(timezone.utc)
         task.error = None
         self._store.put(task)
+        last_progress_write_at = time.monotonic()
 
         def report_progress(completed_items: int, total_items: int) -> None:
+            nonlocal last_progress_write_at
             task.completed_items = completed_items
             task.total_items = total_items
             task.updated_at = datetime.now(timezone.utc)
+            now = time.monotonic()
+            if (
+                now - last_progress_write_at
+                < MIN_OBJECT_WRITE_INTERVAL_SECONDS
+            ):
+                return
             self._store.put(task)
+            last_progress_write_at = now
 
         try:
             response = service.analyze(

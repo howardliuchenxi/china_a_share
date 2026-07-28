@@ -305,7 +305,9 @@ class ASharePlanValidator:
         for step in pipeline.steps:
             required_fields = set(step.fields + step.group_by)
             required_fields.update(
-                field for field in (step.field, step.order_by) if field
+                field
+                for field in (step.field, step.right_field, step.order_by)
+                if field
             )
             required_fields.update(
                 aggregation.field for aggregation in step.aggregations
@@ -316,7 +318,13 @@ class ASharePlanValidator:
                     f"{step.operation} references unavailable fields: "
                     + ", ".join(sorted(missing_fields))
                 )
-            if step.operation == "derive":
+            if step.operation in {
+                "derive",
+                "rolling_mean",
+                "shift",
+                "compare_fields",
+                "compare_scalar",
+            }:
                 available_fields.add(step.output_field)
             elif step.operation == "aggregate":
                 available_fields = set(step.group_by)
@@ -324,6 +332,11 @@ class ASharePlanValidator:
                     aggregation.output_field
                     for aggregation in step.aggregations
                 )
+            elif step.operation == "summarize":
+                available_fields = {
+                    aggregation.output_field
+                    for aggregation in step.aggregations
+                }
 
     def _validate_params(self, operation: str, params: Dict[str, Any]) -> None:
         """Reject parameters that escape the A-share market boundary."""

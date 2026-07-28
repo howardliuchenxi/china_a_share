@@ -290,6 +290,11 @@ class ResultPipelineStep(BaseModel):
         "limit",
         "quantile_filter",
         "aggregate",
+        "rolling_mean",
+        "shift",
+        "compare_fields",
+        "compare_scalar",
+        "summarize",
     ] = Field(description="Allowlisted relational operation executed by the backend.")
     field: Optional[str] = Field(
         default=None,
@@ -300,6 +305,11 @@ class ResultPipelineStep(BaseModel):
         default=None,
         pattern=OPERATION_NAME_PATTERN,
         description="New field produced by a derive operation.",
+    )
+    right_field: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Right-hand input field used by a field comparison.",
     )
     fields: List[str] = Field(
         default_factory=list,
@@ -344,6 +354,30 @@ class ResultPipelineStep(BaseModel):
         le=1,
         description="Quantile threshold between zero and one.",
     )
+    window: Optional[int] = Field(
+        default=None,
+        ge=2,
+        le=250,
+        description="Bounded trailing row window used by a rolling operation.",
+    )
+    min_periods: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=250,
+        description="Minimum observations required for a rolling result.",
+    )
+    periods: Optional[int] = Field(
+        default=None,
+        ge=-250,
+        le=250,
+        description="Signed row offset used within an ordered group.",
+    )
+    require_consecutive: bool = Field(
+        default=False,
+        description=(
+            "Whether shifted rows must be adjacent in the global order sequence."
+        ),
+    )
     aggregations: List[ResultAggregation] = Field(
         default_factory=list,
         description="Named grouped aggregations executed in one aggregate step.",
@@ -372,6 +406,33 @@ class ResultPipelineStep(BaseModel):
                 and self.quantile is not None
             ),
             "aggregate": bool(self.group_by and self.aggregations),
+            "rolling_mean": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+            ),
+            "shift": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.periods
+            ),
+            "compare_fields": bool(
+                self.field
+                and self.right_field
+                and self.output_field
+                and self.comparison
+            ),
+            "compare_scalar": bool(
+                self.field
+                and self.output_field
+                and self.comparison
+                and self.value is not None
+            ),
+            "summarize": bool(self.aggregations),
         }
         if not required[self.operation]:
             raise ValueError(f"Missing required arguments for {self.operation}")
@@ -380,6 +441,12 @@ class ResultPipelineStep(BaseModel):
             or not isinstance(self.value, (int, float))
         ):
             raise ValueError("derive requires a numeric scalar value")
+        if (
+            self.operation == "rolling_mean"
+            and self.min_periods is not None
+            and self.min_periods > self.window
+        ):
+            raise ValueError("min_periods cannot exceed the rolling window")
         return self
 
 

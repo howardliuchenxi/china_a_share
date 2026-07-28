@@ -203,6 +203,36 @@ def test_validator_downgrades_undeclared_derived_calculation():
     assert "no deterministic local transform" in result.limitations[0]
 
 
+def test_planner_builds_audited_moving_average_probability_without_model_call():
+    session = FakeSession()
+    planner = DeepSeekQueryPlanner("test-key", session=session)
+
+    plan = planner.plan_validated(
+        AnalysisRequest(
+            prompt="A股过去半年跌破30日均线那天，接下来一个交易日出现上涨概率"
+        ),
+        [DataOperation(name="daily", description="Daily prices.")],
+        ASharePlanValidator(FakeMarketDataProvider()).validate,
+    )
+
+    assert session.calls == []
+    assert plan.feasibility == "supported"
+    assert plan.queries[0].operation == "daily"
+    assert plan.queries[0].fields == [
+        "ts_code",
+        "trade_date",
+        "close",
+        "pct_chg",
+    ]
+    assert len(plan.result_pipeline.steps) == 12
+    assert plan.result_pipeline.steps[0].operation == "rolling_mean"
+    assert plan.result_pipeline.steps[0].window == 30
+    assert plan.result_pipeline.steps[3].operation == "shift"
+    assert plan.result_pipeline.steps[3].require_consecutive is True
+    assert plan.result_pipeline.steps[-1].operation == "summarize"
+    assert "unadjusted daily close" in plan.limitations[0]
+
+
 def test_validator_preserves_covered_requirements_when_ranking_is_unsupported():
     plan = make_daily_plan()
     plan.queries[0].aggregations = []

@@ -63,7 +63,9 @@ class ResultPipelineExecutor:
         """Execute one validated relational operation."""
         required_fields = set(step.fields + step.group_by)
         required_fields.update(
-            field for field in (step.field, step.order_by) if field
+            field
+            for field in (step.field, step.right_field, step.order_by)
+            if field
         )
         missing_fields = required_fields.difference(frame.columns)
         if missing_fields:
@@ -137,4 +139,80 @@ class ResultPipelineExecutor:
                 .agg(**named_aggregations)
                 .reset_index()
             )
+        if step.operation == "rolling_mean":
+            ordered = frame.sort_values(
+                step.group_by + [step.order_by],
+                kind="mergesort",
+            ).copy()
+            numeric = pd.to_numeric(ordered[step.field], errors="coerce")
+            ordered[step.output_field] = (
+                numeric.groupby(
+                    [ordered[field] for field in step.group_by],
+                    sort=False,
+                    dropna=False,
+                )
+                .rolling(
+                    window=step.window,
+                    min_periods=step.min_periods or step.window,
+                )
+                .mean()
+                .reset_index(level=list(range(len(step.group_by))), drop=True)
+            )
+            return ordered.reset_index(drop=True)
+        if step.operation == "shift":
+            ordered = frame.sort_values(
+                step.group_by + [step.order_by],
+                kind="mergesort",
+            ).copy()
+            grouped = ordered.groupby(
+                step.group_by,
+                sort=False,
+                dropna=False,
+            )
+            shifted = grouped[step.field].shift(step.periods)
+            if step.require_consecutive:
+                order_values = sorted(ordered[step.order_by].dropna().unique())
+                order_ranks = ordered[step.order_by].map(
+                    {value: rank for rank, value in enumerate(order_values)}
+                )
+                shifted_ranks = order_ranks.groupby(
+                    [ordered[field] for field in step.group_by],
+                    sort=False,
+                    dropna=False,
+                ).shift(step.periods)
+                shifted = shifted.where(
+                    shifted_ranks - order_ranks == -step.periods
+                )
+            ordered[step.output_field] = shifted
+            return ordered.reset_index(drop=True)
+        if step.operation == "compare_fields":
+            result = frame.copy()
+            left = pd.to_numeric(result[step.field], errors="coerce")
+            right = pd.to_numeric(result[step.right_field], errors="coerce")
+            result[step.output_field] = COMPARISONS[step.comparison](left, right)
+            return result
+        if step.operation == "compare_scalar":
+            result = frame.copy()
+            series = result[step.field]
+            value: object = step.value
+            if isinstance(step.value, (int, float)):
+                series = pd.to_numeric(series, errors="coerce")
+                value = float(step.value)
+            result[step.output_field] = COMPARISONS[step.comparison](
+                series,
+                value,
+            )
+            return result
+        if step.operation == "summarize":
+            row = {
+                aggregation.output_field: getattr(
+                    pd.to_numeric(
+                        frame[aggregation.field],
+                        errors="coerce",
+                    ),
+                    aggregation.function,
+                )()
+                for aggregation in step.aggregations
+            }
+            return pd.DataFrame([row])
         raise ValueError(f"Unsupported result pipeline operation: {step.operation}")

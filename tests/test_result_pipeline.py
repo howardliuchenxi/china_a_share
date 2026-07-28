@@ -108,3 +108,201 @@ def test_result_pipeline_contract_rejects_nonnumeric_derive_scalar():
                 ],
             }
         )
+
+
+def test_result_pipeline_composes_windowed_event_probability():
+    source = QueryResult(
+        query_id="daily-prices",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        columns=["ts_code", "trade_date", "close", "pct_chg"],
+        rows=[
+            {
+                "ts_code": "000001.SZ",
+                "trade_date": f"2026010{index}",
+                "close": close,
+                "pct_chg": pct_chg,
+            }
+            for index, (close, pct_chg) in enumerate(
+                [
+                    (10.0, 0.0),
+                    (10.0, 0.0),
+                    (10.0, 0.0),
+                    (8.0, -20.0),
+                    (9.0, 12.5),
+                ],
+                start=1,
+            )
+        ],
+        row_count=5,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily-prices",
+            "output_query_id": "event-probability",
+            "steps": [
+                {
+                    "operation": "rolling_mean",
+                    "field": "close",
+                    "output_field": "moving_average",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "window": 3,
+                },
+                {
+                    "operation": "shift",
+                    "field": "close",
+                    "output_field": "previous_close",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "periods": 1,
+                },
+                {
+                    "operation": "shift",
+                    "field": "moving_average",
+                    "output_field": "previous_moving_average",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "periods": 1,
+                },
+                {
+                    "operation": "shift",
+                    "field": "pct_chg",
+                    "output_field": "next_pct_chg",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "periods": -1,
+                },
+                {
+                    "operation": "compare_fields",
+                    "field": "close",
+                    "right_field": "moving_average",
+                    "output_field": "below_average",
+                    "comparison": "lt",
+                },
+                {
+                    "operation": "compare_fields",
+                    "field": "previous_close",
+                    "right_field": "previous_moving_average",
+                    "output_field": "previously_above",
+                    "comparison": "ge",
+                },
+                {
+                    "operation": "compare_scalar",
+                    "field": "next_pct_chg",
+                    "output_field": "next_day_up",
+                    "comparison": "gt",
+                    "value": 0,
+                },
+                {
+                    "operation": "filter",
+                    "field": "below_average",
+                    "comparison": "eq",
+                    "value": 1,
+                },
+                {
+                    "operation": "filter",
+                    "field": "previously_above",
+                    "comparison": "eq",
+                    "value": 1,
+                },
+                {
+                    "operation": "filter",
+                    "field": "trade_date",
+                    "comparison": "ge",
+                    "value": "20260104",
+                },
+                {"operation": "drop_missing", "fields": ["next_pct_chg"]},
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "event_count",
+                            "field": "next_day_up",
+                            "function": "count",
+                        },
+                        {
+                            "output_field": "rise_probability",
+                            "field": "next_day_up",
+                            "function": "mean",
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows == [{"event_count": 1, "rise_probability": 1.0}]
+
+
+def test_result_pipeline_rejects_invalid_rolling_minimum():
+    with pytest.raises(ValueError, match="min_periods cannot exceed"):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "source",
+                "output_query_id": "invalid",
+                "steps": [
+                    {
+                        "operation": "rolling_mean",
+                        "field": "close",
+                        "output_field": "ma",
+                        "group_by": ["ts_code"],
+                        "order_by": "trade_date",
+                        "window": 3,
+                        "min_periods": 4,
+                    }
+                ],
+            }
+        )
+
+
+def test_shift_can_require_the_next_global_order_value():
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "A", "trade_date": "20260101", "pct_chg": 1.0},
+            {"ts_code": "A", "trade_date": "20260103", "pct_chg": 3.0},
+            {"ts_code": "B", "trade_date": "20260101", "pct_chg": 1.0},
+            {"ts_code": "B", "trade_date": "20260102", "pct_chg": 2.0},
+            {"ts_code": "B", "trade_date": "20260103", "pct_chg": 3.0},
+        ],
+        row_count=5,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "next-session",
+            "steps": [
+                {
+                    "operation": "shift",
+                    "field": "pct_chg",
+                    "output_field": "next_pct_chg",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "periods": -1,
+                    "require_consecutive": True,
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    first_a = next(
+        row
+        for row in result.rows
+        if row["ts_code"] == "A" and row["trade_date"] == "20260101"
+    )
+    first_b = next(
+        row
+        for row in result.rows
+        if row["ts_code"] == "B" and row["trade_date"] == "20260101"
+    )
+    assert first_a["next_pct_chg"] is None
+    assert first_b["next_pct_chg"] == 2.0

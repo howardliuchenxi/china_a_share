@@ -11,6 +11,7 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
+    CloudStorageAnalysisTaskStore,
     CloudRunJobDispatcher,
     MemoryAnalysisTaskStore,
     requires_async_analysis,
@@ -69,6 +70,16 @@ class FakeAnalysisService:
         )
 
 
+class CountingMemoryAnalysisTaskStore(MemoryAnalysisTaskStore):
+    def __init__(self):
+        super().__init__()
+        self.put_count = 0
+
+    def put(self, task):
+        self.put_count += 1
+        super().put(task)
+
+
 class FakeHttpResponse:
     status_code = 200
     text = "{}"
@@ -81,6 +92,30 @@ class FakeAuthorizedSession:
     def post(self, url, **kwargs):
         self.calls.append((url, kwargs))
         return FakeHttpResponse()
+
+
+class FakeStorageBlob:
+    def __init__(self):
+        self.uploads = []
+
+    def upload_from_string(self, payload, *, content_type, retry):
+        self.uploads.append((payload, content_type, retry))
+
+
+class FakeStorageBucket:
+    def __init__(self):
+        self.blobs = {}
+
+    def blob(self, object_name):
+        return self.blobs.setdefault(object_name, FakeStorageBlob())
+
+
+class FakeStorageClient:
+    def __init__(self):
+        self.bucket_instance = FakeStorageBucket()
+
+    def bucket(self, bucket_name):
+        return self.bucket_instance
 
 
 def test_original_complex_prompt_requires_async_analysis():
@@ -136,6 +171,20 @@ def test_task_coordinator_dispatches_each_submission_as_a_new_task():
     assert coordinator.get(second.task_id).status == AnalysisTaskStatus.SUCCEEDED
 
 
+def test_task_coordinator_coalesces_rapid_progress_updates(monkeypatch):
+    store = CountingMemoryAnalysisTaskStore()
+    coordinator = AnalysisTaskCoordinator(store, FakeDispatcher())
+    submission = coordinator.submit(AnalysisRequest(prompt=ORIGINAL_COMPLEX_PROMPT))
+    monkeypatch.setattr("china_a_share.tasks.time.monotonic", lambda: 10.0)
+
+    completed = coordinator.run(submission.task_id, FakeAnalysisService())
+
+    assert store.put_count == 3
+    assert completed.status == AnalysisTaskStatus.SUCCEEDED
+    assert completed.completed_items == 4
+    assert completed.total_items == 4
+
+
 def test_cloud_run_dispatcher_sends_only_task_id_override():
     session = FakeAuthorizedSession()
     dispatcher = CloudRunJobDispatcher(
@@ -182,3 +231,51 @@ def test_memory_store_returns_isolated_task_copies():
     loaded.status = AnalysisTaskStatus.FAILED
 
     assert store.get("task").status == AnalysisTaskStatus.QUEUED
+
+
+def test_cloud_storage_store_spaces_writes_to_the_same_object(monkeypatch):
+    client = FakeStorageClient()
+    store = CloudStorageAnalysisTaskStore("bucket", storage_client=client)
+    clock = iter([10.0, 10.2])
+    sleeps = []
+    monkeypatch.setattr("china_a_share.tasks.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("china_a_share.tasks.time.sleep", sleeps.append)
+    now = datetime.now(timezone.utc)
+    task = AnalysisTask(
+        task_id="task",
+        status=AnalysisTaskStatus.QUEUED,
+        request=AnalysisRequest(prompt="Prompt"),
+        created_at=now,
+        updated_at=now,
+    )
+
+    store.put(task)
+    store.put(task)
+
+    blob = client.bucket_instance.blobs["analysis-jobs/task.json"]
+    assert len(blob.uploads) == 2
+    assert sleeps == [pytest.approx(0.8)]
+    assert all(upload[1] == "application/json" for upload in blob.uploads)
+    assert all(upload[2] is not None for upload in blob.uploads)
+
+
+def test_cloud_storage_store_does_not_throttle_different_objects(monkeypatch):
+    client = FakeStorageClient()
+    store = CloudStorageAnalysisTaskStore("bucket", storage_client=client)
+    monkeypatch.setattr("china_a_share.tasks.time.monotonic", lambda: 10.0)
+    sleeps = []
+    monkeypatch.setattr("china_a_share.tasks.time.sleep", sleeps.append)
+    now = datetime.now(timezone.utc)
+
+    for task_id in ("first", "second"):
+        store.put(
+            AnalysisTask(
+                task_id=task_id,
+                status=AnalysisTaskStatus.QUEUED,
+                request=AnalysisRequest(prompt="Prompt"),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    assert sleeps == []
