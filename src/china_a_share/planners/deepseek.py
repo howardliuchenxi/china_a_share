@@ -1151,13 +1151,30 @@ class DeepSeekQueryPlanner:
 
     @staticmethod
     def _parse_requested_limit(prompt: str) -> Optional[int]:
-        """Return an explicit Top-N limit from Arabic or common Chinese numerals."""
-        match = re.search(
-            r"(?<!之)前(\d{1,4}|[一二三四五六七八九十百两]+)",
-            prompt,
+        """Return Top N only when the number has an explicit result-limit role."""
+        number_pattern = r"(\d{1,4}|[一二三四五六七八九十百两]+)"
+        contextual_patterns = (
+            # The entity or ranking noun before 前N makes the requested output
+            # cardinality explicit, including common suffix forms like 股票前十.
+            rf"(?:股票|个股|公司|企业|标的|排名|排行|榜单)"
+            rf"(?:中|里|的)?(?:排名|排行)?前{number_pattern}",
+            # A result-unit immediately after 前N distinguishes output limits
+            # from temporal phrases such as 前2天 and 前6个月.
+            rf"前{number_pattern}(?:名|只|支|家|个股票|个股|家公司)",
+            # A named ranking metric also gives 前N an unambiguous output role.
+            rf"(?:涨幅|跌幅|收益率|成交额|换手率|市盈率|市净率|"
+            rf"股息率|散户比例|持股比例)前{number_pattern}",
         )
-        if not match:
-            match = re.search(r"top\s*(\d{1,4})", prompt, re.IGNORECASE)
+        match = next(
+            (
+                candidate
+                for pattern in contextual_patterns
+                if (candidate := re.search(pattern, prompt))
+            ),
+            None,
+        )
+        if match is None:
+            match = re.search(r"top\s*(\d{1,4})(?!\d)", prompt, re.IGNORECASE)
         if not match:
             return None
         token = match.group(1)

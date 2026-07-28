@@ -691,6 +691,25 @@ def test_planner_repairs_unsupported_two_limit_up_probability_plan(prompt):
     )
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("前2天连续涨停后第三天上涨的概率", None),
+        ("最近10个交易日上涨的股票", None),
+        ("过去6个月涨幅最大的股票", None),
+        ("上涨超过5%的股票", None),
+        ("查询前10", None),
+        ("涨幅前10名", 10),
+        ("上涨最多的股票前十", 10),
+        ("股票排名前二十", 20),
+        ("市盈率最低的前5只股票", 5),
+        ("Find the top 25 A-share stocks", 25),
+    ],
+)
+def test_requested_limit_requires_explicit_result_role(prompt, expected):
+    assert DeepSeekQueryPlanner._parse_requested_limit(prompt) == expected
+
+
 def test_validator_rejects_incomplete_two_limit_up_transform_inputs():
     plan = QueryPlan(
         interpretation="Calculate the next-day probability after two limit-ups.",
