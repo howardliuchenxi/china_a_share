@@ -391,6 +391,9 @@ class DataQueryExecutor:
                         "period" not in query.params
                         and "start_date" not in query.params
                     ),
+                    api_route=api_route,
+                    request_id=request_id,
+                    query_id=query.query_id,
                 )
             if query.transform == "period_return_by_ts_code":
                 frame = self._apply_tabular_transform(frame, query.transform)
@@ -584,11 +587,14 @@ class DataQueryExecutor:
             return pd.DataFrame(rows)
         return frame
 
-    @staticmethod
     def _build_cr10_float_trend(
+        self,
         frame: pd.DataFrame,
         *,
         latest_only: bool = False,
+        api_route: str,
+        request_id: str,
+        query_id: str,
     ) -> pd.DataFrame:
         """Build honest concentration results from disclosed float-holder snapshots."""
         required_fields = {
@@ -635,6 +641,50 @@ class DataQueryExecutor:
             missing_ratio_holders = snapshot.loc[
                 snapshot["hold_float_ratio"].isna(), "holder_name"
             ].tolist()
+
+            if "hold_amount" in snapshot.columns:
+                hold_amounts = pd.to_numeric(snapshot["hold_amount"], errors="coerce")
+                if hold_amounts.notna().sum() == len(snapshot):
+                    hold_amount_sum = float(hold_amounts.sum())
+                    
+                    end_date_obj = datetime.strptime(str(end_date), "%Y%m%d").date()
+                    candidate = end_date_obj
+                    free_share = None
+                    for _ in range(10):
+                        if candidate.weekday() < 5:
+                            trade_date_str = candidate.strftime("%Y%m%d")
+                            try:
+                                db_frame = self._provider.query(
+                                    "daily_basic",
+                                    {"trade_date": trade_date_str},
+                                    ["ts_code", "free_share", "float_share"],
+                                    api_route=api_route,
+                                    request_id=request_id,
+                                    query_id=f"{query_id}-db-{trade_date_str}",
+                                )
+                                if not db_frame.empty:
+                                    ts_code = snapshot["ts_code"].iloc[0]
+                                    row = db_frame.loc[db_frame["ts_code"] == ts_code]
+                                    if not row.empty:
+                                        fs = row.iloc[0].get("free_share")
+                                        if pd.notna(fs) and fs > 0:
+                                            free_share = float(fs) * 10000
+                                        else:
+                                            fls = row.iloc[0].get("float_share")
+                                            if pd.notna(fls) and fls > 0:
+                                                free_share = float(fls) * 10000
+                                    break
+                            except Exception:
+                                pass
+                        candidate -= timedelta(days=1)
+                    
+                    if free_share is not None and free_share > 0:
+                        known_float_ratio = min((hold_amount_sum / free_share) * 100, 100.0)
+                        snapshot = snapshot.copy()
+                        snapshot["hold_float_ratio"] = (hold_amounts / free_share) * 100
+                        missing_ratio_holders = []
+                        known_ratios = snapshot["hold_float_ratio"]
+
             if missing_ratio_holders:
                 rows.append(
                     {

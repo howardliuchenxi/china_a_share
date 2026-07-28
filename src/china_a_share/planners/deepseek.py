@@ -474,6 +474,7 @@ class DeepSeekQueryPlanner:
                             "ann_date",
                             "end_date",
                             "holder_name",
+                            "hold_amount",
                             "hold_float_ratio",
                         ],
                         "purpose": (
