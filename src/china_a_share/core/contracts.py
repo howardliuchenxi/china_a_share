@@ -499,6 +499,17 @@ class ResultPipelineStep(BaseModel):
                 raise ValueError(
                     "constant_minus requires a numeric scalar value"
                 )
+            if self.right_field == self.field:
+                raise ValueError(
+                    "derive requires different left and right fields"
+                )
+        if (
+            self.operation == "match_at_offset"
+            and self.field == self.order_by
+        ):
+            raise ValueError(
+                "match_at_offset value field must differ from order_by"
+            )
         if (
             self.operation in {"rolling_mean", "rolling_sum"}
             and self.min_periods is not None
@@ -523,7 +534,7 @@ class ResultPipeline(BaseModel):
     )
     steps: List[ResultPipelineStep] = Field(
         min_length=1,
-        max_length=12,
+        max_length=16,
         description="Ordered allowlisted relational operations.",
     )
 

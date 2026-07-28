@@ -155,6 +155,53 @@ def test_result_pipeline_derives_a_return_from_two_fields():
     )
 
 
+def test_result_pipeline_rejects_same_field_division():
+    with pytest.raises(
+        ValueError,
+        match="derive requires different left and right fields",
+    ):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "daily",
+                "output_query_id": "invalid-return",
+                "steps": [
+                    {
+                        "operation": "derive",
+                        "field": "close",
+                        "right_field": "close",
+                        "output_field": "return_ratio",
+                        "arithmetic_operator": "divide",
+                    }
+                ],
+            }
+        )
+
+
+def test_result_pipeline_rejects_matching_a_date_as_the_outcome_value():
+    with pytest.raises(
+        ValueError,
+        match="match_at_offset value field must differ from order_by",
+    ):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "daily",
+                "output_query_id": "invalid-outcome",
+                "steps": [
+                    {
+                        "operation": "match_at_offset",
+                        "field": "trade_date",
+                        "output_field": "future_trade_date",
+                        "matched_date_output_field": "matched_trade_date",
+                        "group_by": ["ts_code"],
+                        "order_by": "trade_date",
+                        "offset_value": 1,
+                        "offset_unit": "month",
+                    }
+                ],
+            }
+        )
+
+
 def test_result_pipeline_composes_windowed_event_probability():
     source = QueryResult(
         query_id="daily-prices",
