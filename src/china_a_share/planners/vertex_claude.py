@@ -1,10 +1,8 @@
 """Vertex AI Claude implementation of the provider-neutral query-planner port."""
 
-from datetime import datetime
 import json
 from time import sleep
 from typing import Any, Optional, Sequence
-from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
@@ -14,7 +12,10 @@ from china_a_share.core.contracts import (
     QueryPlan,
 )
 from china_a_share.core.errors import PlannerError
-from china_a_share.planners.deepseek import DeepSeekQueryPlanner
+from china_a_share.planners.deepseek import (
+    DeepSeekQueryPlanner,
+    build_query_plan_system_prompt,
+)
 
 
 VERTEX_PROJECT = "china-a-share-lab"
@@ -83,7 +84,10 @@ class VertexClaudeQueryPlanner:
         allowed_operations = ",".join(
             operation.name for operation in candidate_operations
         )
-        system_prompt = _build_system_prompt(guidance, allowed_operations)
+        system_prompt = build_query_plan_system_prompt(
+            guidance,
+            allowed_operations,
+        )
 
         credentials, _ = google.auth.default()
         auth_req = google.auth.transport.requests.Request()
@@ -133,9 +137,7 @@ class VertexClaudeQueryPlanner:
                     )
 
                 # Delegate normalization to the DeepSeek planner
-                plan = self._fallback.normalize_and_validate_plan(
-                    content, request.prompt
-                )
+                plan = self._fallback.normalize_and_validate_plan(content)
                 return plan
 
             except (http_requests.RequestException, json.JSONDecodeError) as exc:
@@ -157,101 +159,3 @@ class VertexClaudeQueryPlanner:
             source=self.name,
             message=f"Vertex AI failed after {VERTEX_MAX_ATTEMPTS} attempts: {last_exception}",
         )
-
-
-def _build_system_prompt(guidance: str, allowed_operations: str) -> str:
-    """Build the same system prompt used by the DeepSeek planner."""
-    from china_a_share.planners.deepseek import DeepSeekQueryPlanner
-
-    # Reuse the system prompt building logic from DeepSeek planner
-    return (
-        "You plan read-only market-data queries for mainland China A-shares. "
-        "Return one valid JSON object matching the supplied schema. Use only "
-        "operations from the active provider catalog. Resolve relative or partial "
-        "dates using the current date "
-        f"{datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()} and "
-        "Asia/Shanghai semantics. For 'latest' end-of-day data, use the latest "
-        "completed trading day rather than an uncompleted current date. "
-        "Security codes must end in .SH, .SZ, or .BJ. "
-        "Follow each operation's native parameter semantics. For requests that "
-        "count advancing or declining stocks, use the full-market daily operation "
-        "for one trade date, include ts_code, change, and pct_chg in fields, and "
-        "add local conditional "
-        "counts for change gt 0, lt 0, and eq 0. Decompose every user request "
-        "For requests asking which stocks hit limit up, use limit_list_d with "
-        "the native parameter limit_type='U'; request ts_code and name, and use "
-        "the returned row count as the total. Do not filter the output limit_type "
-        "field and do not create a conditional count over ts_code. "
-        "For requests asking for the probability that the next trading day "
-        "rises after N consecutive limit-up trading days, create exactly two "
-        "range queries over the same requested window: limit_list_d with native "
-        "limit_type='U' and fields trade_date,ts_code,name; and daily with fields "
-        "trade_date,ts_code,pct_chg. Build a result_pipeline sourced from daily: "
-        "match limit_list_d on trade_date and ts_code, apply a rolling_sum window "
-        "of N, shift the outcome, filter complete streaks, and summarize. This "
-        "deterministic pipeline "
-        "joins securities across consecutive market trading dates, excludes "
-        "signals without third-day data, and computes the requested probability. "
-        "Mark all such requirements covered. "
-        "Use one range query plus result_pipeline for common ranking and grouping "
-        "requests. Compose aggregate, sort, and limit with the exact requested count; "
-        "never encode Top N into a transform name. Group by trade_date, ts_code, or "
-        "industry as requested. Sort amount or turnover_rate and apply limit for "
-        "rankings. Aggregate block-trade amount by ts_code before sorting and limiting. "
-        "period_return_by_ts_code for multi-security period return comparisons. "
-        "For dividend rankings, apply filters, sort dv_ratio, and limit to the exact "
-        "requested count. "
-        "When a user asks for retail ownership, retail holding ratio, retail trend, "
-        "shareholding dispersion, or CR10, treat retail ratio as the project's "
-        "fixed non_top10_float_ratio proxy: 100% minus the sum of the disclosed "
-        "top ten unrestricted float-holder ratios. Use top10_floatholders with "
-        "transform=cr10_float_trend. Describe non_top10_float_ratio as a holding "
-        "dispersion proxy that includes both retail holders and institutions outside "
-        "the top ten; never describe it as a verified account-level percentage held "
-        "by individual investors. This proxy is explicitly approved for retail-ratio "
-        "requests and must not by itself make a plan unsupported. For "
-        "top10_floatholders, period must be a reporting quarter end "
-        "(YYYY0331, YYYY0630, YYYY0930, or YYYY1231). When the user supplies an "
-        "arbitrary date, interpret it as an as-of date and use end_date without "
-        "period so the latest disclosed snapshot can be selected. The transformation "
-        "requires ten unique disclosed holders per reporting snapshot and returns "
-        "an explicitly partial result when a source ratio is missing. "
-        "Create one top10_floatholders query per security. Never combine multiple "
-        "security codes in one top10_floatholders ts_code parameter. "
-        "For newly listed stocks (IPO within 6 months), CR10 concentration ratios "
-        "are unreliable due to lockup periods. In those cases, pair "
-        "top10_floatholders with stk_holdernumber to retrieve shareholder count "
-        "(holder_num). Combine with daily_basic.float_share to compute average "
-        "holding per shareholder: lower shareholder count and higher average "
-        "holding suggest institutional concentration regardless of CR10. For "
-            "generic retail-ranking requests, include both data sources so the "
-            "consumer can apply a composite score."
-        "For deterministic post-query calculations, prefer result_pipeline. A result "
-        "pipeline may compose latest_by_group, derive, drop_missing, filter, sort, "
-        "limit, quantile_filter, aggregate, rolling_mean, shift, compare_fields, "
-        "compare_scalar, and summarize steps. For ordered time-series analysis, use "
-        "rolling_mean and shift with group_by security identifiers and order_by "
-        "trade_date. Positive shift periods read prior rows and negative periods read "
-        "future rows. Use comparisons to create event fields, filter the event cohort, "
-        "drop outcomes without a future row, and summarize count and mean for event "
-        "probabilities. Fetch enough observations before the measurement window to "
-        "initialize rolling calculations, then filter event dates to the requested "
-        "window. "
-        "Decompose every user request "
-        "into atomic requirements and provide concrete catalog evidence for each "
-        "one. Mark feasibility as supported only when every requirement maps to "
-        "an explicitly documented provider parameter or field, or to a deterministic "
-        "local filter or aggregation in the schema. Use filters when the user asks "
-        "to find, screen, or return only rows matching a numeric condition. Never "
-        "place a row-filter threshold in provider params unless the catalog explicitly "
-        "documents that native parameter. If any required field, operation, join, "
-        "calculation, or filter cannot be verified from the supplied catalog, mark "
-        "feasibility as unsupported, include at least one unsupported requirement "
-        "and a concrete limitation, and return no queries. Do not substitute a similar "
-        "metric, infer unavailable values, or claim support based on general knowledge. "
-        "Do not invent data.\n\n"
-        f"Operation catalog:\n{guidance}\n\n"
-        f"Allowed operation names:\n{allowed_operations}\n\n"
-        f"You must respond with ONLY valid JSON. No other text.\n"
-        f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}"
-    )

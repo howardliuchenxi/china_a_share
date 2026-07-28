@@ -59,19 +59,6 @@ DATE_PARAM_NAMES = {
     "float_date",
     "period",
 }
-DERIVED_CALCULATION_MARKERS = (
-    "local join",
-    "local aggregation",
-    "join locally",
-    "本地关联",
-    "本地分组",
-    "本地排序",
-    "本地后处理",
-    "取前",
-    "累计",
-    "平均",
-    "连续",
-)
 TRANSFORM_OUTPUT_FIELDS = {
     "cr10_float_trend": {
         "ts_code",
@@ -146,49 +133,6 @@ class ASharePlanValidator:
             raise PlanValidationError(
                 f"A query plan may contain at most {MAX_QUERIES_PER_ANALYSIS} calls."
             )
-        derived_requirements = [
-            requirement
-            for requirement in plan.requirements
-            if any(
-                marker
-                in " ".join(
-                    filter(
-                        None,
-                        (
-                            requirement.requirement,
-                            requirement.implementation,
-                            requirement.evidence,
-                        ),
-                    )
-                ).lower()
-                for marker in DERIVED_CALCULATION_MARKERS
-            )
-        ]
-        claims_derived_calculation = bool(derived_requirements)
-        has_declared_calculation = bool(plan.result_pipeline) or any(
-            query.transform or query.aggregations for query in plan.queries
-        )
-        # Fan-out plans retrieve raw data for client-side processing; they do not
-        # need a declared transform for derived calculations like sorting or ranking.
-        needs_dynamic_fanout = (
-            any(q.operation in UNIVERSE_OPERATIONS for q in plan.queries)
-            and any(
-                q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
-                for q in plan.queries
-            )
-        )
-        if claims_derived_calculation and not has_declared_calculation and not needs_dynamic_fanout:
-            plan.feasibility = "unsupported"
-            plan.limitations = [
-                "The requested derived calculation has no deterministic local "
-                "transform or aggregation."
-            ]
-            plan.queries = []
-            # Preserve independently verified capabilities. Only requirements
-            # that actually claim the missing derived calculation are unsupported.
-            for requirement in derived_requirements:
-                requirement.status = "unsupported"
-            return plan
         if plan.result_pipeline:
             self._validate_result_pipeline(plan)
         orphaned_fanout_templates = [

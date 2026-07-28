@@ -4,7 +4,7 @@ import logging
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Literal, Optional, Union
+from typing import Literal, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
@@ -37,7 +37,7 @@ from .core.contracts import (
 from .core.errors import DataProviderError
 from .feedback import UiFeedbackAuthenticationError, UiFeedbackService
 from .observability import log_event
-from .tasks import AnalysisTaskCoordinator, requires_async_analysis
+from .tasks import AnalysisTaskCoordinator
 
 
 FRONTEND_DIST = Path(
@@ -301,24 +301,14 @@ def create_app(
 
     @application.post(
         ANALYSIS_API_ROUTE,
-        response_model=Union[AnalysisResponse, AnalysisTaskSubmission],
+        response_model=AnalysisResponse,
     )
     def analyze(
         request: AnalysisRequest,
         http_request: Request,
     ):
         """Accept a natural-language request for A-share data."""
-        nonlocal active_service, active_task_coordinator
-        if requires_async_analysis(request):
-            if active_task_coordinator is None:
-                active_task_coordinator = create_analysis_task_coordinator(
-                    Settings.from_env()
-                )
-            submission = active_task_coordinator.submit(request)
-            return JSONResponse(
-                status_code=status.HTTP_202_ACCEPTED,
-                content=submission.model_dump(mode="json"),
-            )
+        nonlocal active_service
         if active_service is None:
             active_service = create_analysis_service()
         try:

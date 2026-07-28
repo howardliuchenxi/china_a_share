@@ -35,6 +35,45 @@ RETAIL_PROXY_DISCLOSURE = (
 )
 
 
+def build_query_plan_system_prompt(
+    guidance: str,
+    allowed_operations: str,
+) -> str:
+    """Build provider-neutral planning instructions shared by every LLM."""
+    return (
+        "You plan read-only market-data queries for mainland China A-shares. "
+        "Return one valid JSON object matching the supplied schema and use only "
+        "operations from the active provider catalog. Resolve relative or partial "
+        "dates using the current date "
+        f"{datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()} and "
+        "Asia/Shanghai semantics. Use the latest completed trading day for end-of-day "
+        "data. Security codes must end in .SH, .SZ, or .BJ. Follow every operation's "
+        "documented parameters and fields exactly. "
+        "Decompose the request into atomic requirements and provide catalog evidence "
+        "for each requirement. Preserve every numeric value and comparison direction "
+        "from the user request; do not replace them with fixed thresholds or counts. "
+        "Use result_pipeline for deterministic calculations instead of inventing "
+        "specialized transforms. Pipelines may compose latest_by_group, derive, "
+        "drop_missing, filter, sort, limit, quantile_filter, aggregate, rolling_mean, "
+        "rolling_sum, shift, match_source, compare_fields, compare_scalar, and "
+        "summarize. Use right_source_query_id and join_on for multi-source matching. "
+        "For ordered calculations, provide group_by and order_by. Fetch enough source "
+        "history to initialize rolling windows before filtering to the requested "
+        "measurement interval. Drop rows whose required future outcome is unavailable. "
+        "Use filters only for row conditions and provider params only for parameters "
+        "explicitly documented by the catalog. "
+        "Mark feasibility as supported only when every requirement maps to a documented "
+        "provider field or parameter, a declared transform, or a valid result_pipeline "
+        "step. Otherwise mark the unsupported requirements, state a concrete limitation, "
+        "and return no queries. Do not substitute a similar metric or proxy unless the "
+        "user explicitly requested that metric. Never infer unavailable values or "
+        "invent data.\n\n"
+        f"Operation catalog:\n{guidance}\n\n"
+        f"Allowed operation names:\n{allowed_operations}\n\n"
+        f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}"
+    )
+
+
 class DeepSeekQueryPlanner:
     """Convert natural language into a query plan using DeepSeek."""
 
@@ -87,112 +126,9 @@ class DeepSeekQueryPlanner:
         allowed_operations = ",".join(
             operation.name for operation in candidate_operations
         )
-        system_prompt = (
-            "You plan read-only market-data queries for mainland China A-shares. "
-            "Return one valid JSON object matching the supplied schema. Use only "
-            "operations from the active provider catalog. Resolve relative or partial "
-            "dates using the current date "
-            f"{datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()} and "
-            "Asia/Shanghai semantics. For 'latest' end-of-day data, use the latest "
-            "completed trading day rather than an uncompleted current date. "
-            "Security codes must end in .SH, .SZ, or .BJ. "
-            "Follow each operation's native parameter semantics. For requests that "
-            "count advancing or declining stocks, use the full-market daily operation "
-            "for one trade date, include ts_code, change, and pct_chg in fields, and "
-            "add local conditional "
-            "counts for change gt 0, lt 0, and eq 0. Decompose every user request "
-            "For requests asking which stocks hit limit up, use limit_list_d with "
-            "the native parameter limit_type='U'; request ts_code and name, and use "
-            "the returned row count as the total. Do not filter the output limit_type "
-            "field and do not create a conditional count over ts_code. "
-            "For requests asking for the probability that the next trading day "
-            "rises after N consecutive limit-up trading days, create exactly two "
-            "range queries over the same requested window: limit_list_d with native "
-            "limit_type='U' and fields trade_date,ts_code,name; and daily with fields "
-            "trade_date,ts_code,pct_chg. Build a result_pipeline sourced from daily: "
-            "match limit_list_d on trade_date and ts_code, apply a rolling_sum window "
-            "of N, shift the outcome, filter complete streaks, and summarize. This "
-            "deterministic pipeline "
-            "joins securities across consecutive market trading dates, excludes "
-            "signals without next-session data, and computes the requested probability. "
-            "Mark all such requirements covered. "
-            "Use one range query plus result_pipeline for common ranking and grouping "
-            "requests. Compose aggregate, sort, and limit with the exact user-requested "
-            "count; never encode Top N into a transform name. Group by trade_date for "
-            "daily limit-up trends, by ts_code for security counts, and by industry for "
-            "industry counts. Sort amount or turnover_rate and apply limit for rankings. "
-            "For block-trade totals, aggregate amount by ts_code, sort total_amount, "
-            "and apply the requested limit. "
-            "period_return_by_ts_code for multi-security period return comparisons. "
-            "For a market-wide or industry-wide return ranking over a month, year, "
-            "or arbitrary date range, use daily with start_date and end_date, request "
-            "ts_code,trade_date,close, and set transform=period_return_by_ts_code. "
-            "The executor reads only the first and last available full-market trading "
-            "day snapshots and calculates returns locally. Never use monthly or weekly "
-            "without ts_code or trade_date. "
-            "For dividend rankings, apply valuation filters, sort dv_ratio, and limit "
-            "to the exact requested count. "
-            "Never expand a date range into one query per day. "
-            "When a user asks for retail ownership, retail holding ratio, retail trend, "
-            "shareholding dispersion, or CR10, treat retail ratio as the project's "
-            "fixed non_top10_float_ratio proxy: 100% minus the sum of the disclosed "
-            "top ten unrestricted float-holder ratios. Use top10_floatholders with "
-            "transform=cr10_float_trend. Describe non_top10_float_ratio as a holding "
-            "dispersion proxy that includes both retail holders and institutions outside "
-            "the top ten; never describe it as a verified account-level percentage held "
-            "by individual investors. This proxy is explicitly approved for retail-ratio "
-            "requests and must not by itself make a plan unsupported. For "
-            "top10_floatholders, period must be a reporting quarter end "
-            "(YYYY0331, YYYY0630, YYYY0930, or YYYY1231). When the user supplies an "
-            "arbitrary date, interpret it as an as-of date and use end_date without "
-            "period so the latest disclosed snapshot can be selected. The transformation "
-            "requires ten unique disclosed holders per reporting snapshot and returns "
-            "an explicitly partial result when a source ratio is missing. "
-            "Create one top10_floatholders query per security. Never combine multiple "
-            "security codes in one top10_floatholders ts_code parameter. "
-            "For newly listed stocks (IPO within 6 months), CR10 concentration ratios "
-            "are unreliable due to lockup periods. In those cases, pair "
-            "top10_floatholders with stk_holdernumber to retrieve shareholder count "
-            "(holder_num). Combine with daily_basic.float_share to compute average "
-            "holding per shareholder: lower shareholder count and higher average "
-            "holding suggest institutional concentration regardless of CR10. For "
-            "generic retail-ranking requests, include both data sources so the "
-            "consumer can apply a composite score."
-            "For deterministic post-query calculations, prefer result_pipeline over "
-            "inventing a specialized transform. A result pipeline consumes exactly one "
-            "query result and may compose latest_by_group, derive, drop_missing, filter, "
-            "sort, limit, quantile_filter, aggregate, rolling_mean, shift, "
-            "compare_fields, compare_scalar, and summarize steps. Use sort followed by "
-            "limit for Top N. Use quantile_filter with a quantile between 0 and 1 for "
-            "percentile requests. For ordered time-series analysis, use rolling_mean "
-            "and shift with group_by security identifiers and order_by trade_date. "
-            "Positive shift periods read prior rows and negative periods read future "
-            "rows. Use compare_fields or compare_scalar to create boolean event fields, "
-            "filter to the requested event cohort, drop outcomes without a future row, "
-            "and summarize count and mean to calculate an event probability. Fetch "
-            "enough observations before the requested measurement window to initialize "
-            "rolling calculations, then filter event dates to the requested window. "
-            "For a full-market retail-proxy ranking, query "
-            "stock_basic as the universe, add one top10_floatholders template without "
-            "ts_code using transform=cr10_float_trend, then apply latest_by_group on "
-            "ts_code ordered by end_date, drop missing non_top10_float_ratio, and apply "
-            "the requested sort/limit or quantile_filter steps. "
-            "Decompose every user request "
-            "into atomic requirements and provide concrete catalog evidence for each "
-            "one. Mark feasibility as supported only when every requirement maps to "
-            "an explicitly documented provider parameter or field, or to a deterministic "
-            "local filter or aggregation in the schema. Use filters when the user asks "
-            "to find, screen, or return only rows matching a numeric condition. Never "
-            "place a row-filter threshold in provider params unless the catalog explicitly "
-            "documents that native parameter. If any required field, operation, join, "
-            "calculation, or filter cannot be verified from the supplied catalog, mark "
-            "feasibility as unsupported, include at least one unsupported requirement "
-            "and a concrete limitation, and return no queries. Do not substitute a similar "
-            "metric, infer unavailable values, or claim support based on general knowledge. "
-            "Do not invent data.\n\n"
-            f"Operation catalog:\n{guidance}\n\n"
-            f"Allowed operation names:\n{allowed_operations}\n\n"
-            f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}"
+        system_prompt = build_query_plan_system_prompt(
+            guidance,
+            allowed_operations,
         )
         feedback = None
         last_error: Optional[Exception] = None
@@ -223,7 +159,7 @@ class DeepSeekQueryPlanner:
             }
             try:
                 response = self._request_once(request_payload)
-                plan = self._decode_plan_response(response, request.prompt)
+                plan = self._decode_plan_response(response)
             except PlannerError as exc:
                 if exc.http_status in {400, 401, 403, 404}:
                     raise
@@ -234,7 +170,7 @@ class DeepSeekQueryPlanner:
                     continue
                 break
 
-            self._finalize_plan(plan, request.prompt)
+            self._finalize_plan(plan)
             if validator is not None:
                 try:
                     validator(plan)
@@ -258,18 +194,16 @@ class DeepSeekQueryPlanner:
             ),
         ) from last_error
 
-    def _finalize_plan(self, plan: QueryPlan, prompt: str) -> None:
+    def _finalize_plan(self, plan: QueryPlan) -> None:
         """Apply deterministic normalization before semantic validation."""
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
-        self._normalize_latest_completed_date(plan, prompt)
-        self._downgrade_unexecutable_plan(plan, prompt)
+        self._normalize_latest_completed_date(plan)
+        self._downgrade_unexecutable_plan(plan)
         self._split_multi_security_float_holder_queries(plan)
-        self._append_audited_disclosures(plan, prompt)
+        self._append_audited_disclosures(plan)
 
-    def normalize_and_validate_plan(
-        self, raw_content: str, prompt: str
-    ) -> QueryPlan:
+    def normalize_and_validate_plan(self, raw_content: str) -> QueryPlan:
         """Parse, normalize, and validate a raw plan JSON from an external planner."""
         import json
         try:
@@ -281,46 +215,22 @@ class DeepSeekQueryPlanner:
             ) from exc
         self._normalize_raw_query_defaults(raw_plan)
         plan = QueryPlan.model_validate(raw_plan)
-        self._finalize_plan(plan, prompt)
+        self._finalize_plan(plan)
         return plan
 
     @staticmethod
-    def _append_audited_disclosures(plan: QueryPlan, prompt: str) -> None:
-        """Attach user-visible caveats for approved approximations and assumptions."""
+    def _append_audited_disclosures(plan: QueryPlan) -> None:
+        """Attach user-visible caveats for declared approximation transforms."""
         if plan.feasibility != "supported":
             return
 
-        disclosures = []
         if any(
             query.transform == "cr10_float_trend"
             for query in plan.queries
-        ):
-            disclosures.append(RETAIL_PROXY_DISCLOSURE)
+        ) and RETAIL_PROXY_DISCLOSURE not in plan.limitations:
+            plan.limitations.append(RETAIL_PROXY_DISCLOSURE)
 
-        normalized = prompt.replace(" ", "")
-        month_match = re.search(r"(?:(\d{4})年)?(\d{1,2})月", normalized)
-        if month_match and month_match.group(1) is None:
-            period_query = next(
-                (
-                    query
-                    for query in plan.queries
-                    if query.transform == "period_return_by_ts_code"
-                    and isinstance(query.params.get("start_date"), str)
-                ),
-                None,
-            )
-            if period_query is not None:
-                resolved_year = period_query.params["start_date"][:4]
-                disclosures.append(
-                    "The omitted year was resolved to "
-                    f"{resolved_year} using Asia/Shanghai semantics."
-                )
-
-        for disclosure in disclosures:
-            if disclosure not in plan.limitations:
-                plan.limitations.append(disclosure)
-
-    def _decode_plan_response(self, response: Any, prompt: str) -> QueryPlan:
+    def _decode_plan_response(self, response: Any) -> QueryPlan:
         """Validate one planner response before any deterministic normalization."""
         try:
             payload = response.json()
@@ -468,7 +378,7 @@ class DeepSeekQueryPlanner:
             ]
 
     @staticmethod
-    def _normalize_latest_completed_date(plan: QueryPlan, prompt: str) -> None:
+    def _normalize_latest_completed_date(plan: QueryPlan) -> None:
         """Keep latest end-of-day queries behind the provider publication cutoff."""
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
         completed_date = now.date()
@@ -488,8 +398,6 @@ class DeepSeekQueryPlanner:
             if query.operation == "stock_st" and (
                 query.params.get("trade_date") == today
                 or query.params.get("end_date") == today
-                or "当前" in prompt
-                or "最新" in prompt
             ):
                 query.params = {"trade_date": completed}
                 query.fields = [
@@ -502,7 +410,7 @@ class DeepSeekQueryPlanner:
                 ]
 
     @staticmethod
-    def _downgrade_unexecutable_plan(plan: QueryPlan, prompt: str) -> None:
+    def _downgrade_unexecutable_plan(plan: QueryPlan) -> None:
         """Turn known missing native parameters and guessed proxies into limitations."""
         limitation = None
         for query in plan.queries:
@@ -554,30 +462,6 @@ class DeepSeekQueryPlanner:
                 )
                 break
 
-        if (
-            "股票" in prompt
-            and any(query.operation == "margin" for query in plan.queries)
-            and not any(query.operation == "margin_detail" for query in plan.queries)
-        ):
-            limitation = (
-                "margin is market-level data and cannot rank individual securities."
-            )
-        if (
-            "且" in prompt
-            and any(query.operation == "daily" for query in plan.queries)
-            and any(query.operation == "daily_basic" for query in plan.queries)
-        ):
-            limitation = (
-                "The requested intersection requires an unsupported cross-operation "
-                "join between daily and daily_basic."
-            )
-
-        limitation_text = " ".join(plan.limitations)
-        if plan.feasibility == "supported" and any(
-            marker in limitation_text
-            for marker in ("无法", "不提供", "缺少", "不可用", "未明确")
-        ):
-            limitation = limitation_text
         if limitation is None:
             if (
                 len(plan.queries) > 1

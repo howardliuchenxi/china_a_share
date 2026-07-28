@@ -14,7 +14,6 @@ from china_a_share.tasks import (
     CloudStorageAnalysisTaskStore,
     CloudRunJobDispatcher,
     MemoryAnalysisTaskStore,
-    requires_async_analysis,
 )
 
 
@@ -116,34 +115,6 @@ class FakeStorageClient:
 
     def bucket(self, bucket_name):
         return self.bucket_instance
-
-
-def test_original_complex_prompt_requires_async_analysis():
-    assert requires_async_analysis(AnalysisRequest(prompt=ORIGINAL_COMPLEX_PROMPT))
-    assert requires_async_analysis(AnalysisRequest(prompt=POWER_COMPLEX_PROMPT))
-    assert requires_async_analysis(AnalysisRequest(prompt=PHONE_COMPLEX_PROMPT))
-    assert requires_async_analysis(AnalysisRequest(prompt=FULL_MARKET_COMPLEX_PROMPT))
-    assert not requires_async_analysis(AnalysisRequest(prompt="List A-share stocks."))
-
-
-@pytest.mark.parametrize(
-    "prompt",
-    [
-        "查找散户比例最高的10只A股股票",
-        "筛选全市场散户比例前10%分位的股票",
-        "大A在6月散户最多的股票前十",
-        "找到散户比例top10的股票",
-        "找到散户比例 Top 10 的股票",
-    ],
-)
-def test_full_market_retail_rankings_require_async_analysis(prompt):
-    assert requires_async_analysis(AnalysisRequest(prompt=prompt))
-
-
-def test_single_security_retail_request_stays_synchronous():
-    assert not requires_async_analysis(
-        AnalysisRequest(prompt="分析贵州茅台的散户比例")
-    )
 
 
 def test_task_coordinator_dispatches_each_submission_as_a_new_task():

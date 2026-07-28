@@ -17,24 +17,11 @@ from china_a_share.core.contracts import (
     UiFeedbackStatus,
     UiFeedbackSubmission,
 )
-from china_a_share.tasks import AnalysisTaskCoordinator, MemoryAnalysisTaskStore
-
-
 ORIGINAL_COMPLEX_PROMPT = (
     "\u8fc7\u53bb\u4e00\u4e2a\u6708\uff0c\u533b\u7597\u884c\u4e1a\uff0c"
     "\u6309\u7167\u6563\u6237\u6bd4\u4f8b\u5206\u4e24\u534a\uff0c"
     "\u54ea\u4e00\u534a\u516c\u53f8\u4e0a\u6da8\u7684\u591a\uff1f"
 )
-
-
-class FakeDispatcher:
-    def __init__(self):
-        self.task_ids = []
-
-    def dispatch(self, task_id):
-        self.task_ids.append(task_id)
-
-
 class FakeAnalysisService:
     def __init__(self):
         self.calls = []
@@ -300,31 +287,16 @@ def test_analysis_endpoint_returns_structured_error_for_unexpected_failure(caplo
     assert event.structured_fields["request_id"] == payload["request_id"]
 
 
-def test_complex_analysis_returns_pollable_async_task():
-    coordinator = AnalysisTaskCoordinator(
-        MemoryAnalysisTaskStore(),
-        FakeDispatcher(),
-    )
-    client = TestClient(
-        create_app(
-            FakeAnalysisService(),
-            task_coordinator=coordinator,
-        )
-    )
+def test_analysis_prompt_does_not_select_a_special_delivery_mode():
+    client = TestClient(create_app(FakeAnalysisService()))
 
-    submission_response = client.post(
+    response = client.post(
         "/api/analysis",
         json={"prompt": ORIGINAL_COMPLEX_PROMPT},
     )
 
-    assert submission_response.status_code == 202
-    submission = submission_response.json()
-    assert submission["status"] == "queued"
-    task_response = client.get(submission["status_url"])
-    assert task_response.status_code == 200
-    assert task_response.json()["task_id"] == submission["task_id"]
-    assert task_response.json()["status"] == "queued"
-    assert "request" not in task_response.json()
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
 
 
 def test_stock_endpoint_returns_paginated_catalog():

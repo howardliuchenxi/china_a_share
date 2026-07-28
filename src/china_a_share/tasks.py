@@ -29,12 +29,6 @@ from china_a_share.core.ports import AnalysisTaskDispatcher, AnalysisTaskStore
 
 
 ANALYSIS_TASK_PREFIX = "analysis-jobs"
-ASYNC_REQUEST_MARKERS = (
-    "\u6563\u6237\u6bd4\u4f8b",
-    "\u5206\u4e24\u534a",
-    "\u8fc7\u53bb\u4e00\u4e2a\u6708",
-    "\u4e0a\u6da8",
-)
 GOOGLE_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 MIN_OBJECT_WRITE_INTERVAL_SECONDS = 1.0
 STORAGE_RETRY_INITIAL_SECONDS = 1.0
@@ -47,45 +41,6 @@ STORAGE_WRITE_RETRY = Retry(
     deadline=STORAGE_RETRY_DEADLINE_SECONDS,
 )
 logger = logging.getLogger(__name__)
-
-
-def requires_async_analysis(request: AnalysisRequest) -> bool:
-    """Return whether a request needs durable security-specific fan-out."""
-    normalized_prompt = request.prompt.replace(" ", "").lower()
-    requests_full_market_retail_ranking = (
-        "\u6563\u6237" in normalized_prompt
-        and any(
-            marker in normalized_prompt
-            for marker in (
-                "\u80a1\u7968",
-                "a\u80a1",
-                "\u5927a",
-                "\u5168\u5e02\u573a",
-            )
-        )
-        and any(
-            marker in normalized_prompt
-            for marker in (
-                "\u524d10",
-                "\u524d\u5341",
-                "top10",
-                "\u5206\u4f4d",
-                "\u6700\u591a",
-                "\u6700\u5c11",
-                "\u6700\u9ad8",
-                "\u6700\u4f4e",
-            )
-        )
-    )
-    if requests_full_market_retail_ranking:
-        return True
-    has_universe = any(
-        marker in normalized_prompt
-        for marker in ("\u884c\u4e1a", "\u80a1\u7968")
-    )
-    return has_universe and all(
-        marker in normalized_prompt for marker in ASYNC_REQUEST_MARKERS
-    )
 
 
 class MemoryAnalysisTaskStore:

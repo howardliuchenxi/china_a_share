@@ -188,7 +188,7 @@ def test_validator_rejects_invalid_or_reversed_date_ranges():
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
-def test_validator_downgrades_undeclared_derived_calculation():
+def test_validator_does_not_infer_execution_rules_from_requirement_prose():
     plan = make_daily_plan()
     plan.queries[0].aggregations = []
     plan.requirements[0].implementation = (
@@ -197,51 +197,9 @@ def test_validator_downgrades_undeclared_derived_calculation():
 
     result = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
-    assert result.feasibility == "unsupported"
-    assert result.queries == []
-    assert result.requirements[0].status == "unsupported"
-    assert "no deterministic local transform" in result.limitations[0]
-
-
-def test_validator_preserves_covered_requirements_when_ranking_is_unsupported():
-    plan = make_daily_plan()
-    plan.queries[0].aggregations = []
-    plan.requirements = [
-        RequirementCoverage.model_validate(
-            {
-                "requirement": "Retrieve the complete A-share security universe.",
-                "status": "covered",
-                "implementation": "Use stock_basic.",
-                "evidence": "stock_basic returns A-share security codes.",
-            }
-        ),
-        RequirementCoverage.model_validate(
-            {
-                "requirement": "Calculate the approved retail holding proxy.",
-                "status": "covered",
-                "implementation": "Use top10_floatholders with cr10_float_trend.",
-                "evidence": "The transform returns non_top10_float_ratio.",
-            }
-        ),
-        RequirementCoverage.model_validate(
-            {
-                "requirement": "Rank securities and return the top ten.",
-                "status": "covered",
-                "implementation": "Apply local aggregation and ranking.",
-                "evidence": "Sort the calculated ratios locally and take the top ten.",
-            }
-        ),
-    ]
-
-    result = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
-
-    assert result.feasibility == "unsupported"
-    assert [requirement.status for requirement in result.requirements] == [
-        "covered",
-        "covered",
-        "unsupported",
-    ]
-    assert result.queries == []
+    assert result.feasibility == "supported"
+    assert result.queries
+    assert result.requirements[0].status == "covered"
 
 
 def test_planner_parses_deepseek_json_plan():
@@ -263,7 +221,9 @@ def test_planner_parses_deepseek_json_plan():
     assert "Mark feasibility as supported only when every requirement maps" in system_prompt
     assert "return no queries" in system_prompt
     assert "Do not substitute a similar metric" in system_prompt
-    assert "limit_list_d with the native parameter limit_type='U'" in system_prompt
+    assert "Preserve every numeric value" in system_prompt
+    assert "rolling_sum" in system_prompt
+    assert "match_source" in system_prompt
 
 
 def test_planner_retries_one_contract_invalid_response():

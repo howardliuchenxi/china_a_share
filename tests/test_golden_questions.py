@@ -2,9 +2,7 @@
 
 from collections import Counter
 
-from china_a_share.core.contracts import AnalysisRequest
 from china_a_share.registry import STOCK_API_NAMES
-from china_a_share.tasks import requires_async_analysis
 
 from golden_questions import GOLDEN_QUESTION_FAMILIES
 
@@ -45,16 +43,3 @@ def test_golden_question_matrix_uses_known_contract_values():
     assert tier_counts["supported"] > tier_counts["unsupported"]
     assert tier_counts["approximation"] >= 3
     assert tier_counts["unsupported"] >= 9
-
-
-def test_golden_question_delivery_modes_are_enforced_by_the_router():
-    prompt_expectations = [
-        (prompt, family["delivery"] == "async")
-        for family in GOLDEN_QUESTION_FAMILIES
-        for prompt in family["prompts"]
-    ]
-
-    assert all(
-        requires_async_analysis(AnalysisRequest(prompt=prompt)) == expected
-        for prompt, expected in prompt_expectations
-    )
