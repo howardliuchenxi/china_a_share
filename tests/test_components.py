@@ -541,6 +541,87 @@ def test_planner_normalizes_event_summary_syntax():
     assert summary_step.aggregations[1].function == "mean"
 
 
+def test_planner_compiles_event_study_to_a_deterministic_pipeline():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["queries"].append(
+        {
+            "query_id": "limit-ups",
+            "operation": "limit_list_d",
+            "params": {
+                "start_date": "20260101",
+                "end_date": "20260601",
+                "limit_type": "U",
+            },
+            "fields": ["ts_code", "trade_date"],
+            "purpose": "Identify native limit-up events.",
+            "filters": [],
+            "aggregations": [],
+        }
+    )
+    plan["result_pipeline"] = {
+        "source_query_id": plan["queries"][0]["query_id"],
+        "output_query_id": "event-study",
+        "steps": [
+            {
+                "operation": "match_source",
+                "right_source_query_id": "limit-ups",
+                "join_on": ["ts_code", "trade_date"],
+                "output_field": "is_limit_up",
+            },
+            {
+                "operation": "rolling_sum",
+                "field": "is_limit_up",
+                "output_field": "streak_count",
+                "group_by": ["ts_code"],
+                "order_by": "trade_date",
+                "window": 3,
+                "min_periods": 1,
+            },
+            {
+                "operation": "compare_scalar",
+                "field": "streak_count",
+                "comparison": "eq",
+                "value": 3,
+            },
+            {
+                "operation": "match_at_offset",
+                "field": "close",
+                "output_field": "future_close",
+                "matched_date_output_field": "future_date",
+                "group_by": ["ts_code"],
+                "order_by": "trade_date",
+                "offset_value": 1,
+                "offset_unit": "month",
+            },
+            {"operation": "summarize", "aggregations": []},
+        ],
+    }
+    planner = DeepSeekQueryPlanner("test-key")
+
+    result = planner.normalize_and_validate_plan(json.dumps(plan))
+
+    steps = result.result_pipeline.steps
+    assert [step.operation for step in steps] == [
+        "match_source",
+        "rolling_sum",
+        "filter",
+        "match_at_offset",
+        "drop_missing",
+        "derive",
+        "derive",
+        "compare_scalar",
+        "derive",
+        "summarize",
+    ]
+    assert steps[1].min_periods == 3
+    assert steps[2].field == "streak_count"
+    assert steps[5].field == "future_close"
+    assert steps[5].right_field == "close"
+    assert steps[6].arithmetic_operator == "subtract"
+    assert steps[-1].aggregations[2].field == "outcome_is_positive"
+    assert steps[-1].aggregations[2].function == "mean"
+
+
 def test_planner_retries_with_semantic_validation_feedback():
     invalid_plan = make_daily_plan()
     invalid_plan.result_pipeline = ResultPipeline.model_validate(

@@ -384,6 +384,137 @@ class DeepSeekQueryPlanner:
         pipeline = raw_plan.get("result_pipeline")
         steps = pipeline.get("steps") if isinstance(pipeline, dict) else None
         if isinstance(steps, list):
+            event_membership = next(
+                (
+                    step
+                    for step in steps
+                    if isinstance(step, dict)
+                    and step.get("operation") == "match_source"
+                ),
+                None,
+            )
+            streak = next(
+                (
+                    step
+                    for step in steps
+                    if isinstance(step, dict)
+                    and step.get("operation") == "rolling_sum"
+                ),
+                None,
+            )
+            outcome = next(
+                (
+                    step
+                    for step in steps
+                    if isinstance(step, dict)
+                    and step.get("operation") == "match_at_offset"
+                ),
+                None,
+            )
+            summary = next(
+                (
+                    step
+                    for step in steps
+                    if isinstance(step, dict)
+                    and step.get("operation") == "summarize"
+                ),
+                None,
+            )
+            if (
+                event_membership
+                and streak
+                and outcome
+                and summary
+                and streak.get("window")
+                and streak.get("output_field")
+                and outcome.get("field")
+                and outcome.get("output_field")
+            ):
+                streak["min_periods"] = streak["window"]
+                steps = [
+                    event_membership,
+                    streak,
+                    {
+                        "operation": "filter",
+                        "field": streak["output_field"],
+                        "comparison": "eq",
+                        "value": streak["window"],
+                    },
+                    outcome,
+                    {
+                        "operation": "drop_missing",
+                        "fields": [outcome["output_field"]],
+                    },
+                    {
+                        "operation": "derive",
+                        "field": outcome["output_field"],
+                        "right_field": outcome["field"],
+                        "output_field": "outcome_ratio",
+                        "arithmetic_operator": "divide",
+                    },
+                    {
+                        "operation": "derive",
+                        "field": "outcome_ratio",
+                        "output_field": "outcome_return",
+                        "arithmetic_operator": "subtract",
+                        "value": 1,
+                    },
+                    {
+                        "operation": "compare_scalar",
+                        "field": "outcome_return",
+                        "output_field": "outcome_is_positive",
+                        "comparison": "gt",
+                        "value": 0,
+                    },
+                    {
+                        "operation": "derive",
+                        "field": "outcome_return",
+                        "output_field": "outcome_return_pct",
+                        "arithmetic_operator": "multiply",
+                        "value": 100,
+                    },
+                    {
+                        "operation": "summarize",
+                        "aggregations": [
+                            {
+                                "output_field": "event_count",
+                                "label": "Event count",
+                                "field": "outcome_return",
+                                "function": "count",
+                            },
+                            {
+                                "output_field": "positive_event_count",
+                                "label": "Positive event count",
+                                "field": "outcome_is_positive",
+                                "function": "sum",
+                            },
+                            {
+                                "output_field": "positive_event_ratio",
+                                "label": "Positive event ratio",
+                                "field": "outcome_is_positive",
+                                "function": "mean",
+                            },
+                            {
+                                "output_field": "average_return_pct",
+                                "label": "Average return (%)",
+                                "field": "outcome_return_pct",
+                                "function": "mean",
+                            },
+                            {
+                                "output_field": "minimum_return_pct",
+                                "label": "Minimum return (%)",
+                                "field": "outcome_return_pct",
+                                "function": "min",
+                            },
+                            {
+                                "output_field": "maximum_return_pct",
+                                "label": "Maximum return (%)",
+                                "field": "outcome_return_pct",
+                                "function": "max",
+                            },
+                        ],
+                    },
+                ]
             normalized_steps = []
             condition_outputs = {}
             for step in steps:
