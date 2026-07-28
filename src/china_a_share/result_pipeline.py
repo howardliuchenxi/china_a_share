@@ -192,10 +192,29 @@ class ResultPipelineExecutor:
                 if step.operation == "rolling_mean"
                 else rolling.sum()
             )
-            ordered[step.output_field] = aggregated.reset_index(
+            aggregated = aggregated.reset_index(
                 level=list(range(len(step.group_by))),
                 drop=True,
             )
+            if step.require_consecutive:
+                # A complete row window is not necessarily a consecutive market
+                # window when one security has a missing or suspended session.
+                market_order = sorted(ordered[step.order_by].dropna().unique())
+                order_ranks = ordered[step.order_by].map(
+                    {value: rank for rank, value in enumerate(market_order)}
+                )
+                group_keys = [
+                    ordered[field] for field in step.group_by
+                ]
+                first_window_rank = order_ranks.groupby(
+                    group_keys,
+                    sort=False,
+                    dropna=False,
+                ).shift(step.window - 1)
+                aggregated = aggregated.where(
+                    order_ranks - first_window_rank == step.window - 1
+                )
+            ordered[step.output_field] = aggregated
             return ordered.reset_index(drop=True)
         if step.operation == "match_source":
             right_source = sources.get(step.right_source_query_id)

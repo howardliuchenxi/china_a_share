@@ -31,6 +31,19 @@ REGRESSION_PROMPT = (
     "A股20260101～20260601连续涨停三天的情况下，"
     "接下来一个月的上涨情况数据分析"
 )
+STREAK_PROMPTS = [
+    (REGRESSION_PROMPT, 1),
+    (
+        "A股20260101～20260601连续涨停四个交易日的情况下，"
+        "接下来一个月的上涨情况数据分析",
+        0,
+    ),
+    (
+        "A股20260101～20260601连续涨停一周（明确按五个连续交易日）的情况下，"
+        "接下来一个月的上涨情况数据分析",
+        0,
+    ),
+]
 
 pytestmark = [
     pytest.mark.live,
@@ -44,8 +57,9 @@ pytestmark = [
 ]
 
 
-def test_live_limit_up_event_study_completes() -> None:
-    """Run the production regression prompt through real upstream APIs locally."""
+@pytest.fixture(scope="module")
+def live_analysis_service() -> AnalysisService:
+    """Build one real service so repeated prompts share only local market-data cache."""
     settings = Settings.from_env()
     response_cache = LayeredDataResponseCache(
         memory_store=MemoryDataCacheStore(
@@ -60,22 +74,37 @@ def test_live_limit_up_event_study_completes() -> None:
         token=settings.tushare_token,
         response_cache=response_cache,
     )
-    service = AnalysisService(
+    return AnalysisService(
         planner=DeepSeekQueryPlanner(settings.deepseek_api_key),
         provider=provider,
         validator=ASharePlanValidator(provider),
         executor=DataQueryExecutor(provider),
     )
 
-    response = service.analyze(
+
+@pytest.mark.parametrize(("prompt", "minimum_rows"), STREAK_PROMPTS)
+def test_live_limit_up_event_study_completes(
+    live_analysis_service,
+    prompt,
+    minimum_rows,
+) -> None:
+    """Run parameterized streak prompts through real upstream APIs locally."""
+    response = live_analysis_service.analyze(
         request_id=f"local-live-{uuid4()}",
-        request=AnalysisRequest(prompt=REGRESSION_PROMPT),
+        request=AnalysisRequest(prompt=prompt),
         api_route="/local-live-analysis",
     )
 
-    assert response.status is AnalysisStatus.SUCCESS, response.model_dump_json(
-        indent=2
+    failure = (
+        response.error.message
+        if response.error
+        else "; ".join(
+            result.error.message
+            for result in response.results
+            if result.error is not None
+        )
     )
+    assert response.status is AnalysisStatus.SUCCESS, failure
     assert response.error is None
     assert response.plan is not None
     assert response.plan.result_pipeline is not None
@@ -84,4 +113,4 @@ def test_live_limit_up_event_study_completes() -> None:
         result for result in response.results if result.query_id == pipeline_output_id
     )
     assert pipeline_result.status.value == "success"
-    assert pipeline_result.row_count > 0
+    assert pipeline_result.row_count >= minimum_rows

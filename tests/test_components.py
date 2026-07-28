@@ -482,6 +482,37 @@ def test_planner_normalizes_derive_comparison_to_compare_scalar():
     assert step.comparison == "gt"
 
 
+def test_planner_normalizes_pipeline_syntax_across_operations():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["result_pipeline"] = {
+        "source_query_id": plan["queries"][0]["query_id"],
+        "output_query_id": "normalized",
+        "steps": [
+            {
+                "operation": "sort",
+                "order_by": "trade_date",
+                "direction": "asc",
+                "purpose": "Order observations before analysis.",
+            },
+            {
+                "operation": "compare_scalar",
+                "field": "pct_chg",
+                "operator": "gt",
+                "value": 0,
+                "description": "Mark positive sessions.",
+            },
+        ],
+    }
+    planner = DeepSeekQueryPlanner("test-key")
+
+    result = planner.normalize_and_validate_plan(json.dumps(plan))
+
+    sort_step, comparison_step = result.result_pipeline.steps
+    assert sort_step.field == "trade_date"
+    assert comparison_step.comparison == "gt"
+    assert comparison_step.output_field == "condition_1"
+
+
 def test_planner_normalizes_event_summary_syntax():
     plan = make_daily_plan().model_dump(mode="json")
     plan["result_pipeline"] = {
@@ -543,6 +574,11 @@ def test_planner_normalizes_event_summary_syntax():
 
 def test_planner_compiles_event_study_to_a_deterministic_pipeline():
     plan = make_daily_plan().model_dump(mode="json")
+    plan["queries"][0]["params"] = {
+        "start_date": "20260105",
+        "end_date": "20260601",
+    }
+    plan["queries"][0]["fields"] = ["ts_code", "trade_date", "close"]
     plan["queries"].append(
         {
             "query_id": "limit-ups",
@@ -559,7 +595,7 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
         }
     )
     plan["result_pipeline"] = {
-        "source_query_id": plan["queries"][0]["query_id"],
+        "source_query_id": "limit-ups",
         "output_query_id": "event-study",
         "steps": [
             {
@@ -582,6 +618,16 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
                 "field": "streak_count",
                 "comparison": "eq",
                 "value": 3,
+            },
+            {
+                "operation": "match_at_offset",
+                "field": "trade_date",
+                "output_field": "future_date",
+                "matched_date_output_field": "matched_date",
+                "group_by": ["ts_code"],
+                "order_by": "trade_date",
+                "offset_value": 1,
+                "offset_unit": "month",
             },
             {
                 "operation": "match_at_offset",
@@ -624,12 +670,19 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
         "summarize",
     ]
     assert steps[1].min_periods == 3
+    assert steps[1].require_consecutive is True
     assert steps[2].field == "streak_count"
     assert steps[5].field == "future_close"
     assert steps[5].right_field == "close"
     assert steps[6].arithmetic_operator == "subtract"
     assert steps[-1].aggregations[2].field == "outcome_is_positive"
     assert steps[-1].aggregations[2].function == "mean"
+    assert result.result_pipeline.source_query_id == "market_direction"
+    source_query = next(
+        query for query in result.queries if query.query_id == "market_direction"
+    )
+    assert source_query.params["start_date"] == "20260101"
+    assert source_query.params["end_date"] == "20260701"
 
 
 def test_planner_retries_with_semantic_validation_feedback():

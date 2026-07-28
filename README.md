@@ -350,17 +350,18 @@ Run backend tests:
 pytest
 ```
 
-Run the original limit-up event-study regression against the real DeepSeek and
-Tushare APIs:
+Run parameterized limit-up event-study regressions against the real DeepSeek
+and Tushare APIs:
 
 ```bash
 make live-check
 ```
 
-This opt-in check loads `DEEPSEEK_API_KEY` and `TUSHARE_TOKEN` from `.env`,
-uses an in-process cache without Google Cloud credentials, and consumes real
-upstream API quota. The default test suite skips it so routine tests remain
-deterministic and offline.
+This opt-in check covers three, four, and five consecutive trading sessions. It
+loads `DEEPSEEK_API_KEY` and `TUSHARE_TOKEN` from `.env`, uses an in-process
+cache without Google Cloud credentials, and consumes real upstream API quota.
+The default test suite skips it so routine tests remain deterministic and
+offline.
 
 Validate the frontend production build:
 

@@ -1,6 +1,7 @@
 """DeepSeek implementation of the provider-neutral query-planner port."""
 
-from datetime import datetime
+import calendar
+from datetime import datetime, timedelta
 import json
 import re
 from time import sleep
@@ -78,6 +79,7 @@ def build_query_plan_system_prompt(
         "last. Do not use latest_by_group before sequence detection. A canonical "
         "streak outcome pipeline is: match_source to create an event boolean; "
         "rolling_sum over that boolean using the requested window, group, and order; "
+        "set require_consecutive to true so missing market sessions break the streak; "
         "compare_scalar the streak count to the requested length; filter the match; "
         "match_at_offset the numeric outcome field such as close; drop the missing "
         "future value; derive future value divided by event value; derive the ratio "
@@ -229,6 +231,8 @@ class DeepSeekQueryPlanner:
         """Apply deterministic normalization before semantic validation."""
         self._normalize_fields(plan)
         self._normalize_limit_list_queries(plan)
+        self._normalize_event_study_source(plan)
+        self._normalize_pipeline_query_windows(plan)
         self._downgrade_unexecutable_plan(plan)
         self._split_multi_security_float_holder_queries(plan)
         self._append_audited_disclosures(plan)
@@ -384,6 +388,7 @@ class DeepSeekQueryPlanner:
         pipeline = raw_plan.get("result_pipeline")
         steps = pipeline.get("steps") if isinstance(pipeline, dict) else None
         if isinstance(steps, list):
+            DeepSeekQueryPlanner._normalize_pipeline_step_syntax(steps)
             event_membership = next(
                 (
                     step
@@ -408,6 +413,7 @@ class DeepSeekQueryPlanner:
                     for step in steps
                     if isinstance(step, dict)
                     and step.get("operation") == "match_at_offset"
+                    and step.get("field") != step.get("order_by")
                 ),
                 None,
             )
@@ -431,6 +437,7 @@ class DeepSeekQueryPlanner:
                 and outcome.get("output_field")
             ):
                 streak["min_periods"] = streak["window"]
+                streak["require_consecutive"] = True
                 steps = [
                     event_membership,
                     streak,
@@ -594,6 +601,50 @@ class DeepSeekQueryPlanner:
                 query["aggregations"] = []
 
     @staticmethod
+    def _normalize_pipeline_step_syntax(steps: list) -> None:
+        """Canonicalize only unambiguous aliases across every pipeline operation."""
+        comparison_operators = {"gt", "ge", "eq", "le", "lt"}
+        arithmetic_operators = {
+            "add",
+            "subtract",
+            "multiply",
+            "divide",
+            "constant_minus",
+        }
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            # Explanatory model text is not executable pipeline state.
+            for field in ("purpose", "description", "reason", "label"):
+                step.pop(field, None)
+            operation = step.get("operation")
+            operator = step.get("operator")
+            if (
+                operation
+                in {"filter", "quantile_filter", "compare_fields", "compare_scalar"}
+                and not step.get("comparison")
+                and operator in comparison_operators
+            ):
+                step["comparison"] = step.pop("operator")
+            elif (
+                operation == "derive"
+                and not step.get("arithmetic_operator")
+                and operator in arithmetic_operators
+            ):
+                step["arithmetic_operator"] = step.pop("operator")
+            if operation == "sort" and not step.get("field"):
+                for alias in ("order_by", "by", "column"):
+                    value = step.pop(alias, None)
+                    if value:
+                        step["field"] = value
+                        break
+            if (
+                operation in {"compare_fields", "compare_scalar"}
+                and not step.get("output_field")
+            ):
+                step["output_field"] = f"condition_{index}"
+
+    @staticmethod
     def _normalize_fields(plan: QueryPlan) -> None:
         """Move a model-generated reserved fields parameter into the contract slot."""
         for query in plan.queries:
@@ -610,6 +661,133 @@ class DeepSeekQueryPlanner:
                 isinstance(field, str) for field in misplaced_fields
             ):
                 query.fields = misplaced_fields
+
+    @staticmethod
+    def _normalize_pipeline_query_windows(plan: QueryPlan) -> None:
+        """Cover referenced event ranges and calendar outcomes in the source query."""
+        pipeline = plan.result_pipeline
+        if pipeline is None:
+            return
+        source = next(
+            (
+                query
+                for query in plan.queries
+                if query.query_id == pipeline.source_query_id
+            ),
+            None,
+        )
+        if source is None:
+            return
+        query_by_id = {query.query_id: query for query in plan.queries}
+        referenced_queries = [
+            query_by_id[step.right_source_query_id]
+            for step in pipeline.steps
+            if step.operation == "match_source"
+            and step.right_source_query_id in query_by_id
+        ]
+        referenced_starts = [
+            query.params.get("start_date")
+            for query in referenced_queries
+            if query.params.get("start_date")
+        ]
+        if referenced_starts:
+            earliest_start = min(referenced_starts)
+            current_start = source.params.get("start_date")
+            if not current_start or current_start > earliest_start:
+                source.params["start_date"] = earliest_start
+
+        referenced_ends = [
+            query.params.get("end_date")
+            for query in referenced_queries
+            if query.params.get("end_date")
+        ]
+        if not referenced_ends:
+            return
+        event_end = max(referenced_ends)
+        required_ends = [
+            DeepSeekQueryPlanner._add_calendar_offset(
+                event_end,
+                step.offset_value,
+                step.offset_unit,
+            )
+            for step in pipeline.steps
+            if step.operation == "match_at_offset"
+            and step.offset_unit != "trading_session"
+        ]
+        required_ends = [value for value in required_ends if value]
+        if not required_ends:
+            return
+        required_end = max(required_ends)
+        current_end = source.params.get("end_date")
+        if not current_end or current_end < required_end:
+            source.params["end_date"] = required_end
+
+    @staticmethod
+    def _normalize_event_study_source(plan: QueryPlan) -> None:
+        """Use a dense value series when event membership references itself."""
+        pipeline = plan.result_pipeline
+        if pipeline is None:
+            return
+        membership = next(
+            (
+                step
+                for step in pipeline.steps
+                if step.operation == "match_source"
+            ),
+            None,
+        )
+        outcome = next(
+            (
+                step
+                for step in pipeline.steps
+                if step.operation == "match_at_offset"
+            ),
+            None,
+        )
+        if (
+            membership is None
+            or outcome is None
+            or membership.right_source_query_id != pipeline.source_query_id
+        ):
+            return
+        required_fields = set(membership.join_on)
+        required_fields.update(
+            (outcome.field, outcome.order_by)
+        )
+        source = next(
+            (
+                query
+                for query in plan.queries
+                if query.query_id != membership.right_source_query_id
+                and required_fields.issubset(query.fields)
+            ),
+            None,
+        )
+        if source is not None:
+            pipeline.source_query_id = source.query_id
+
+    @staticmethod
+    def _add_calendar_offset(
+        value: str,
+        amount: int,
+        unit: str,
+    ) -> Optional[str]:
+        """Return one bounded calendar offset using standard date semantics."""
+        current = datetime.strptime(value, "%Y%m%d")
+        if unit == "day":
+            target = current + timedelta(days=amount)
+        elif unit == "week":
+            target = current + timedelta(weeks=amount)
+        elif unit in {"month", "year"}:
+            month_delta = amount if unit == "month" else amount * 12
+            month_index = current.month - 1 + month_delta
+            year = current.year + month_index // 12
+            month = month_index % 12 + 1
+            day = min(current.day, calendar.monthrange(year, month)[1])
+            target = current.replace(year=year, month=month, day=day)
+        else:
+            return None
+        return target.strftime("%Y%m%d")
 
     @staticmethod
     def _normalize_limit_list_queries(plan: QueryPlan) -> None:

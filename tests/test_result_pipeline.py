@@ -517,6 +517,95 @@ def test_pipeline_matches_another_source_and_summarizes_a_parameterized_streak()
     }
 
 
+@pytest.mark.parametrize("streak_length", [3, 4, 5])
+def test_pipeline_supports_any_consecutive_trading_session_window(
+    streak_length,
+):
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {
+                "ts_code": "A",
+                "trade_date": f"202601{session:02d}",
+                "is_event": True,
+            }
+            for session in range(1, streak_length + 1)
+        ],
+        row_count=streak_length,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "streaks",
+            "steps": [
+                {
+                    "operation": "rolling_sum",
+                    "field": "is_event",
+                    "output_field": "streak_count",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "window": streak_length,
+                    "min_periods": streak_length,
+                    "require_consecutive": True,
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows[-1]["streak_count"] == streak_length
+    assert all(row["streak_count"] is None for row in result.rows[:-1])
+
+
+def test_rolling_window_rejects_a_security_gap_in_the_market_calendar():
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "A", "trade_date": "20260101", "is_event": True},
+            {"ts_code": "A", "trade_date": "20260103", "is_event": True},
+            {"ts_code": "A", "trade_date": "20260104", "is_event": True},
+            {"ts_code": "B", "trade_date": "20260101", "is_event": False},
+            {"ts_code": "B", "trade_date": "20260102", "is_event": False},
+            {"ts_code": "B", "trade_date": "20260103", "is_event": False},
+            {"ts_code": "B", "trade_date": "20260104", "is_event": False},
+        ],
+        row_count=7,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "streaks",
+            "steps": [
+                {
+                    "operation": "rolling_sum",
+                    "field": "is_event",
+                    "output_field": "streak_count",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "window": 3,
+                    "require_consecutive": True,
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    last_a = next(
+        row
+        for row in result.rows
+        if row["ts_code"] == "A" and row["trade_date"] == "20260104"
+    )
+    assert last_a["streak_count"] is None
+
+
 def test_pipeline_matches_the_next_available_observation_after_calendar_offset():
     source = QueryResult(
         query_id="daily",

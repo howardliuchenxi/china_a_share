@@ -1,4 +1,5 @@
 import pandas as pd
+import requests
 
 from china_a_share.client import TushareTransport
 from china_a_share.providers.tushare import TushareDataProvider
@@ -47,6 +48,30 @@ class FakeResponseCache:
         return pd.DataFrame([{"ts_code": "000001.SZ", "close": 10.5}])
 
 
+class SuccessfulResponse:
+    status_code = 200
+
+    def json(self):
+        return {
+            "code": 0,
+            "data": {
+                "fields": ["ts_code", "close"],
+                "items": [["000001.SZ", 10.5]],
+            },
+        }
+
+
+class TransientSession:
+    def __init__(self):
+        self.calls = 0
+
+    def post(self, *args, **kwargs):
+        self.calls += 1
+        if self.calls < 3:
+            raise requests.ConnectionError("connection interrupted")
+        return SuccessfulResponse()
+
+
 def test_daily_forwards_query_parameters():
     api = FakeProApi()
     client = TushareTransport("test-token", pro_api=api)
@@ -75,6 +100,27 @@ def test_stock_basic_requests_analysis_fields():
     assert result.iloc[0]["name"] == "Ping An Bank"
     assert api.calls[0][1]["exchange"] == "SSE"
     assert "industry" in api.calls[0][1]["fields"]
+
+
+def test_tushare_transport_retries_transient_connection_failures(monkeypatch):
+    session = TransientSession()
+    monkeypatch.setattr("china_a_share.client.sleep", lambda _: None)
+    client = TushareTransport(
+        "test-token",
+        pro_api=FakeProApi(),
+        session=session,
+    )
+
+    result = client.query(
+        "daily",
+        {"trade_date": "20260717"},
+        ["ts_code", "close"],
+    )
+
+    assert session.calls == 3
+    assert result.to_dict(orient="records") == [
+        {"ts_code": "000001.SZ", "close": 10.5}
+    ]
 
 
 def test_tushare_provider_delegates_to_provider_aware_cache():

@@ -401,7 +401,8 @@ class ResultPipelineStep(BaseModel):
     require_consecutive: bool = Field(
         default=False,
         description=(
-            "Whether shifted rows must be adjacent in the global order sequence."
+            "Whether rolling or shifted rows must be adjacent in the global "
+            "market order sequence."
         ),
     )
     aggregations: List[ResultAggregation] = Field(

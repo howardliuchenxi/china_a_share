@@ -1,5 +1,7 @@
 """Low-level Tushare transport with raw upstream error preservation."""
 
+import logging
+from time import sleep
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
@@ -11,6 +13,11 @@ from .core.errors import DataProviderError
 
 TUSHARE_API_BASE_URL = "http://api.waditu.com/dataapi"
 TUSHARE_REQUEST_TIMEOUT_SECONDS = 60
+TUSHARE_MAX_ATTEMPTS = 3
+TUSHARE_RETRY_DELAY_SECONDS = 1
+
+
+logger = logging.getLogger(__name__)
 
 
 class TushareApiError(DataProviderError):
@@ -97,14 +104,29 @@ class TushareTransport:
             "params": params,
             "fields": ",".join(fields),
         }
-        try:
-            response = self.session.post(
-                f"{TUSHARE_API_BASE_URL}/{api_name}",
-                json=request_body,
-                timeout=TUSHARE_REQUEST_TIMEOUT_SECONDS,
-            )
-        except requests.RequestException as exc:
-            raise TushareApiError(message=str(exc)) from exc
+        response = None
+        for attempt in range(TUSHARE_MAX_ATTEMPTS):
+            try:
+                response = self.session.post(
+                    f"{TUSHARE_API_BASE_URL}/{api_name}",
+                    json=request_body,
+                    timeout=TUSHARE_REQUEST_TIMEOUT_SECONDS,
+                )
+                break
+            except requests.RequestException as exc:
+                logger.warning(
+                    "tushare_request_failed api_name=%s attempt=%s max_attempts=%s "
+                    "error=%s",
+                    api_name,
+                    attempt + 1,
+                    TUSHARE_MAX_ATTEMPTS,
+                    exc,
+                )
+                if attempt + 1 == TUSHARE_MAX_ATTEMPTS:
+                    raise TushareApiError(message=str(exc)) from exc
+                sleep(TUSHARE_RETRY_DELAY_SECONDS)
+        if response is None:
+            raise RuntimeError("Tushare request loop completed without a response.")
 
         try:
             payload = response.json()
