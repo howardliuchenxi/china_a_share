@@ -61,7 +61,7 @@ def build_query_plan_system_prompt(
         "drop_missing, filter, sort, limit, quantile_filter, aggregate, rolling_mean, "
         "rolling_sum, shift, match_source, compare_fields, compare_scalar, and "
         "match_at_offset, and summarize. A derive step requires field, output_field, "
-        "arithmetic_operator, and exactly one of numeric value or right_field; never "
+        "arithmetic_operator, and exactly one of value or right_field; never "
         "put shift or a comparison in arithmetic_operator. A shift step requires field, "
         "output_field, group_by, order_by, and nonzero periods. A match_source step "
         "performs membership matching and requires right_source_query_id, join_on, "
