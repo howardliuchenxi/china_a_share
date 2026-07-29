@@ -292,6 +292,8 @@ class ResultPipelineStep(BaseModel):
         "shift",
         "match_at_offset",
         "match_source",
+        "exists_in_source",
+        "join_fields",
         "compare_fields",
         "compare_scalar",
         "summarize",
@@ -325,9 +327,13 @@ class ResultPipelineStep(BaseModel):
         default_factory=list,
         description="Shared key fields used to match another planned query.",
     )
-    fields: List[str] = Field(
+    fields: Union[List[str], Dict[str, str]] = Field(
         default_factory=list,
-        description="Input fields required to be non-null.",
+        description="Input fields required to be non-null, or rename mapping dictionary for join_fields.",
+    )
+    cardinality: Optional[Literal["one_to_one", "many_to_one"]] = Field(
+        default=None,
+        description="Expected cardinality constraint for join_fields.",
     )
     group_by: List[str] = Field(
         default_factory=list,
@@ -471,6 +477,17 @@ class ResultPipelineStep(BaseModel):
                 and self.join_on
                 and self.output_field
             ),
+            "exists_in_source": bool(
+                self.right_source_query_id
+                and self.join_on
+                and self.output_field
+            ),
+            "join_fields": bool(
+                self.right_source_query_id
+                and self.join_on
+                and self.fields
+                and self.cardinality
+            ),
             "compare_fields": bool(
                 self.field
                 and self.right_field
@@ -540,6 +557,78 @@ class ResultPipeline(BaseModel):
     )
 
 
+class AnalysisUniverse(BaseModel):
+    """Target universe for high-level semantic analysis intent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    market: Literal["A_SHARE"] = Field(
+        default="A_SHARE",
+        description="Target market universe.",
+    )
+
+
+class DateWindow(BaseModel):
+    """Exclusive or inclusive calendar date range window."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: str = Field(
+        pattern=r"^\d{8}$",
+        description="Start date of the window in YYYYMMDD format.",
+    )
+    end: str = Field(
+        pattern=r"^\d{8}$",
+        description="End date of the window in YYYYMMDD format.",
+    )
+
+
+class AnalysisMetric(BaseModel):
+    """Metric properties and window configurations for high-level intent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["period_return"] = Field(
+        default="period_return",
+        description="Derived analysis metric type.",
+    )
+    window: DateWindow = Field(description="Target date range window for metric calculation.")
+
+
+class AnalysisRanking(BaseModel):
+    """Sorting and size boundaries for intent ranking."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    direction: Literal["asc", "desc"] = Field(
+        default="asc",
+        description="Rank sort direction.",
+    )
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Total top rows retained.",
+    )
+
+
+class AnalysisIntent(BaseModel):
+    """High-level analysis intent parsed by the LLM planner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    analysis_type: Literal["rank_metric"] = Field(
+        default="rank_metric",
+        description="Categorized analysis intent type.",
+    )
+    universe: AnalysisUniverse = Field(
+        default_factory=AnalysisUniverse,
+        description="Universe boundaries.",
+    )
+    metric: AnalysisMetric = Field(description="Target calculation metric.")
+    ranking: AnalysisRanking = Field(description="Ranking sorting and count constraints.")
+
+
 class QueryPlan(BaseModel):
     """Structured A-share retrieval plan produced from one user request."""
 
@@ -552,6 +641,10 @@ class QueryPlan(BaseModel):
     interpretation: str = Field(
         min_length=1,
         description="Concise interpretation of the user's data request.",
+    )
+    intent: Optional[AnalysisIntent] = Field(
+        default=None,
+        description="High-level intent when compiling deterministic execution paths.",
     )
     feasibility: Literal["supported", "unsupported"] = Field(
         default="supported",

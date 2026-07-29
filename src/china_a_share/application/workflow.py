@@ -19,6 +19,8 @@ from china_a_share.core.contracts import (
     QueryResult,
     QueryStatus,
     ServiceError,
+    ResultPipeline,
+    ResultPipelineStep,
 )
 from china_a_share.core.errors import DataProviderError, PlannerError, VisionError
 from china_a_share.core.ports import MarketDataProvider, QueryPlanner, VisionAnalyzer
@@ -143,6 +145,7 @@ class ASharePlanValidator:
             )
         if plan.result_pipeline:
             self._validate_result_pipeline(plan)
+            self._validate_semantic_constraints(plan)
         orphaned_fanout_templates = [
             query.operation
             for query in plan.queries
@@ -228,7 +231,7 @@ class ASharePlanValidator:
                     f"{step.operation} references unavailable fields: "
                     + ", ".join(sorted(missing_fields))
                 )
-            if step.operation == "match_source":
+            if step.operation in {"match_source", "exists_in_source"}:
                 right_query = next(
                     (
                         query
@@ -239,7 +242,7 @@ class ASharePlanValidator:
                 )
                 if right_query is None:
                     raise PlanValidationError(
-                        "match_source right_source_query_id does not match "
+                        f"{step.operation} right_source_query_id does not match "
                         "a planned query."
                     )
                 right_fields = set(
@@ -251,9 +254,50 @@ class ASharePlanValidator:
                 missing_right = set(step.join_on).difference(right_fields)
                 if missing_right:
                     raise PlanValidationError(
-                        "match_source references unavailable right fields: "
+                        f"{step.operation} references unavailable right fields: "
                         + ", ".join(sorted(missing_right))
                     )
+            if step.operation == "join_fields":
+                right_query = next(
+                    (
+                        query
+                        for query in plan.queries
+                        if query.query_id == step.right_source_query_id
+                    ),
+                    None,
+                )
+                if right_query is None:
+                    raise PlanValidationError(
+                        "join_fields right_source_query_id does not match "
+                        "a planned query."
+                    )
+                right_fields = set(
+                    TRANSFORM_RESULT_FIELDS.get(
+                        right_query.transform,
+                        set(right_query.fields),
+                    )
+                )
+                missing_right = set(step.join_on).difference(right_fields)
+                if missing_right:
+                    raise PlanValidationError(
+                        "join_fields references unavailable right keys: "
+                        + ", ".join(sorted(missing_right))
+                    )
+                fields_map = step.fields if isinstance(step.fields, dict) else {}
+                if not fields_map:
+                    raise PlanValidationError(
+                        "join_fields operation requires a non-empty dictionary mapping in fields."
+                    )
+                for right_col, out_col in fields_map.items():
+                    if right_col not in right_fields:
+                        raise PlanValidationError(
+                            f"join_fields references unavailable right field: {right_col}"
+                        )
+                    if out_col in available_fields:
+                        raise PlanValidationError(
+                            f"join_fields output field already exists: {out_col}"
+                        )
+                    available_fields.add(out_col)
             if step.operation in {
                 "derive",
                 "rolling_mean",
@@ -261,6 +305,7 @@ class ASharePlanValidator:
                 "shift",
                 "match_at_offset",
                 "match_source",
+                "exists_in_source",
                 "compare_fields",
                 "compare_scalar",
             }:
@@ -278,6 +323,52 @@ class ASharePlanValidator:
                     aggregation.output_field
                     for aggregation in step.aggregations
                 }
+
+    @staticmethod
+    def _validate_semantic_constraints(plan: QueryPlan) -> None:
+        """Perform deep semantic contract validation to prevent logical/mathematical plan defects."""
+        pipeline = plan.result_pipeline
+        if not pipeline:
+            return
+
+        source_query = next(
+            (q for q in plan.queries if q.query_id == pipeline.source_query_id),
+            None,
+        )
+
+        steps = pipeline.steps
+        limit_idx = -1
+        sort_idx = -1
+        for i, s in enumerate(steps):
+            if s.operation == "limit":
+                limit_idx = i
+            elif s.operation == "sort":
+                sort_idx = i
+
+        # 1. limit step must never occur before sort step in ranking pipelines.
+        if limit_idx != -1 and sort_idx != -1 and limit_idx < sort_idx:
+            raise PlanValidationError(
+                "Relational limit operation cannot be executed before sort in ranking pipelines."
+            )
+
+        # 2. Prevent deriving multiple closes (start/end close) from the same source query's field close
+        # unless different snapshots are merged using join_fields.
+        has_join = any(s.operation == "join_fields" for s in steps)
+        if (
+            source_query
+            and source_query.transform != "period_return_by_ts_code"
+            and not has_join
+        ):
+            close_derivations = [
+                s.output_field
+                for s in steps
+                if s.operation == "derive" and s.field == "close"
+            ]
+            if len(close_derivations) >= 2:
+                raise PlanValidationError(
+                    "Semantic violation: deriving multiple prices (e.g. start/end close) from "
+                    "the same source field of the same query result is prohibited without explicit joins."
+                )
 
     def _validate_params(self, operation: str, params: Dict[str, Any]) -> None:
         """Reject parameters that escape the A-share market boundary."""
@@ -863,12 +954,13 @@ class AnalysisService:
                     planning_request,
                     operations,
                     lambda candidate: self._validate_planned_time_semantics(
-                        self._validator.validate(candidate),
+                        self._validator.validate(self._compile_intent(candidate)),
                         request.prompt,
                     ),
                 )
             else:
                 plan = self._planner.plan(planning_request, operations)
+            plan = self._compile_intent(plan)
             self._normalize_latest_plan_dates(
                 plan,
                 self._latest_completed_trading_date(
@@ -1585,6 +1677,43 @@ class AnalysisService:
             row_count=len(safe_frame),
         )
 
+    def _compile_intent(self, plan: QueryPlan) -> QueryPlan:
+        """Compile one high-level AnalysisIntent into deterministic queries and result pipelines."""
+        if not plan.intent:
+            return plan
+
+        intent = plan.intent
+        if intent.analysis_type == "rank_metric" and intent.metric.type == "period_return":
+            query = DataQuery(
+                query_id="period_return_query",
+                operation="daily",
+                params={
+                    "start_date": intent.metric.window.start,
+                    "end_date": intent.metric.window.end,
+                },
+                fields=["ts_code", "trade_date", "close", "open", "pct_chg"],
+                purpose="Retrieve boundary close prices to calculate period returns.",
+                transform="period_return_by_ts_code",
+            )
+            sort_step = ResultPipelineStep(
+                operation="sort",
+                field="period_return_pct",
+                direction=intent.ranking.direction,
+            )
+            limit_step = ResultPipelineStep(
+                operation="limit",
+                count=intent.ranking.limit,
+            )
+            pipeline = ResultPipeline(
+                source_query_id="period_return_query",
+                output_query_id="period_return_output",
+                steps=[sort_step, limit_step],
+            )
+            plan.queries = [query]
+            plan.result_pipeline = pipeline
+            plan.feasibility = "supported"
+
+        return plan
 
     def _prepare_planning_request(
         self,

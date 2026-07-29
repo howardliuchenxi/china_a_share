@@ -39,6 +39,7 @@ class ResultPipelineExecutor:
         source_results.setdefault(source.query_id, source)
         for step in pipeline.steps:
             frame = self._execute_step(frame, step, source_results)
+        self._validate_result_invariants(pipeline, frame)
         rows = (
             frame.astype(object)
             .where(pd.notna(frame), None)
@@ -76,6 +77,53 @@ class ResultPipelineExecutor:
             summary=summary,
         )
 
+    def _validate_result_invariants(
+        self,
+        pipeline: ResultPipeline,
+        frame: pd.DataFrame,
+    ) -> None:
+        """Enforce strict post-execution invariant verification for rankings and metrics."""
+        limit_step = next((s for s in pipeline.steps if s.operation == "limit"), None)
+        if limit_step is not None and limit_step.count is not None:
+            if len(frame) > limit_step.count:
+                raise ValueError(
+                    f"Result row count ({len(frame)}) exceeds requested limit ({limit_step.count})."
+                )
+
+        sort_step = next((s for s in pipeline.steps if s.operation == "sort"), None)
+        if sort_step is not None and sort_step.field is not None:
+            field = sort_step.field
+            if field in frame.columns and not frame.empty:
+                series = pd.to_numeric(frame[field], errors="coerce")
+                if series.isna().any():
+                    raise ValueError(
+                        f"Ranking field '{field}' contains invalid or missing (NaN) values in ranking results."
+                    )
+                if series.isin([float("inf"), float("-inf")]).any():
+                    raise ValueError(
+                        f"Ranking field '{field}' contains non-finite values in ranking results."
+                    )
+                ascending = sort_step.direction == "asc"
+                if ascending:
+                    if not series.is_monotonic_increasing:
+                        raise ValueError(
+                            f"Ranking field '{field}' is not sorted in monotonic increasing (asc) order."
+                        )
+                else:
+                    if not series.is_monotonic_decreasing:
+                        raise ValueError(
+                            f"Ranking field '{field}' is not sorted in monotonic decreasing (desc) order."
+                        )
+                
+                # Prevent silent division/derivation errors where all returns are identical (e.g., all 0.0)
+                if len(series) >= 2 and series.nunique() == 1:
+                    if "start_close" in frame.columns and "end_close" in frame.columns:
+                        if (frame["start_close"] == frame["end_close"]).all():
+                            raise ValueError(
+                                "Ranking failed: all calculated return values are exactly 0.0 "
+                                "because starting close and ending close are identical (derived from same source field)."
+                            )
+
     def _execute_step(
         self,
         frame: pd.DataFrame,
@@ -83,7 +131,8 @@ class ResultPipelineExecutor:
         sources: Mapping[str, QueryResult],
     ) -> pd.DataFrame:
         """Execute one validated relational operation."""
-        required_fields = set(step.fields + step.group_by + step.join_on)
+        fields_list = [] if step.operation == "join_fields" else (list(step.fields.keys()) if isinstance(step.fields, dict) else list(step.fields))
+        required_fields = set(fields_list + step.group_by + step.join_on)
         required_fields.update(
             field
             for field in (step.field, step.right_field, step.order_by)
@@ -216,28 +265,28 @@ class ResultPipelineExecutor:
                 )
             ordered[step.output_field] = aggregated
             return ordered.reset_index(drop=True)
-        if step.operation == "match_source":
+        if step.operation in {"match_source", "exists_in_source"}:
             right_source = sources.get(step.right_source_query_id)
             if right_source is None:
                 raise ValueError(
-                    "match_source query result is unavailable: "
+                    f"{step.operation} query result is unavailable: "
                     f"{step.right_source_query_id}"
                 )
             if right_source.status != QueryStatus.SUCCESS:
                 raise ValueError(
-                    "match_source query did not succeed: "
+                    f"{step.operation} query did not succeed: "
                     f"{step.right_source_query_id}"
                 )
             right = pd.DataFrame(right_source.rows)
             missing_right = set(step.join_on).difference(right.columns)
             if missing_right:
                 raise ValueError(
-                    "match_source right fields are missing: "
+                    f"{step.operation} right fields are missing: "
                     + ", ".join(sorted(missing_right))
                 )
             if step.output_field in frame.columns:
                 raise ValueError(
-                    f"match_source output field already exists: {step.output_field}"
+                    f"{step.operation} output field already exists: {step.output_field}"
                 )
             marker = right[step.join_on].drop_duplicates().copy()
             marker[step.output_field] = True
@@ -249,6 +298,48 @@ class ResultPipelineExecutor:
                 validate="many_to_one",
             )
             matched[step.output_field] = matched[step.output_field].notna()
+            return matched
+        if step.operation == "join_fields":
+            right_source = sources.get(step.right_source_query_id)
+            if right_source is None:
+                raise ValueError(
+                    f"join_fields query result is unavailable: {step.right_source_query_id}"
+                )
+            if right_source.status != QueryStatus.SUCCESS:
+                raise ValueError(
+                    f"join_fields query did not succeed: {step.right_source_query_id}"
+                )
+            right = pd.DataFrame(right_source.rows)
+            for key in step.join_on:
+                if key not in frame.columns:
+                    raise ValueError(f"join_fields left key field is missing: {key}")
+                if key not in right.columns:
+                    raise ValueError(f"join_fields right key field is missing: {key}")
+            
+            # Strict cardinality checking
+            if step.cardinality == "one_to_one":
+                if frame.duplicated(subset=step.join_on).any():
+                    raise ValueError("join_fields one_to_one cardinality violated: duplicate keys in left frame")
+                if right.duplicated(subset=step.join_on).any():
+                    raise ValueError("join_fields one_to_one cardinality violated: duplicate keys in right frame")
+            elif step.cardinality == "many_to_one":
+                if right.duplicated(subset=step.join_on).any():
+                    raise ValueError("join_fields many_to_one cardinality violated: duplicate keys in right frame")
+                    
+            fields_map = step.fields if isinstance(step.fields, dict) else {}
+            for col, out_col in fields_map.items():
+                if col not in right.columns:
+                    raise ValueError(f"join_fields right copy field is missing: {col}")
+                if out_col in frame.columns:
+                    raise ValueError(f"join_fields output field already exists in left frame: {out_col}")
+                    
+            right_subset = right[list(step.join_on) + list(fields_map.keys())].rename(columns=fields_map)
+            matched = frame.merge(
+                right_subset,
+                on=step.join_on,
+                how="left",
+                sort=False,
+            )
             return matched
         if step.operation == "shift":
             ordered = frame.sort_values(

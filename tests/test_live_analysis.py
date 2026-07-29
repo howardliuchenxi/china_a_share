@@ -114,3 +114,32 @@ def test_live_limit_up_event_study_completes(
     )
     assert pipeline_result.status.value == "success"
     assert pipeline_result.row_count >= minimum_rows
+
+
+def test_live_april_decline_top_10(live_analysis_service) -> None:
+    """Run real April decline top 10 query through actual upstream APIs and verify correctness."""
+    response = live_analysis_service.analyze(
+        request_id=f"local-live-{uuid4()}",
+        request=AnalysisRequest(prompt="A股4月一整月单月跌幅最大的公司是top10"),
+        api_route="/local-live-analysis",
+    )
+
+    assert response.status is AnalysisStatus.SUCCESS, (response.error.message if response.error else "Unknown error")
+    assert response.error is None
+    assert response.plan is not None
+    assert response.plan.intent is not None
+    assert response.plan.intent.analysis_type == "rank_metric"
+    assert response.plan.intent.metric.type == "period_return"
+
+    pipeline_output_id = response.plan.result_pipeline.output_query_id
+    pipeline_result = next(
+        result for result in response.results if result.query_id == pipeline_output_id
+    )
+    assert pipeline_result.status.value == "success"
+    assert pipeline_result.row_count == 10
+
+    # Assert monotonic increasing order of returns (drops/losses are increasing from lowest/most negative to less negative)
+    returns = [float(row["period_return_pct"]) for row in pipeline_result.rows]
+    for i in range(len(returns) - 1):
+        assert returns[i] <= returns[i+1], f"Monotonicity violated: {returns}"
+

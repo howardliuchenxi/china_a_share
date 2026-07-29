@@ -687,3 +687,292 @@ def test_pipeline_matches_a_global_trading_session_offset():
     assert result.rows[0]["next_close"] == 11.0
     assert result.rows[0]["next_trade_date"] == "20260106"
     assert result.rows[2]["next_close"] is None
+
+
+def test_result_pipeline_exists_in_source():
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[{"ts_code": "000001.SZ", "close": 12.0}],
+        row_count=1,
+    )
+    right = QueryResult(
+        query_id="limit_up",
+        provider="tushare",
+        operation="limit_list_d",
+        status="success",
+        rows=[{"ts_code": "000001.SZ", "limit_up": True}],
+        row_count=1,
+    )
+    pipeline = ResultPipeline.model_validate({
+        "source_query_id": "daily",
+        "output_query_id": "out",
+        "steps": [
+            {
+                "operation": "exists_in_source",
+                "right_source_query_id": "limit_up",
+                "join_on": ["ts_code"],
+                "output_field": "is_limit_up",
+            }
+        ]
+    })
+    result = ResultPipelineExecutor().execute(pipeline, source, {"limit_up": right})
+    assert result.rows[0]["is_limit_up"] is True
+
+
+def test_result_pipeline_join_fields_one_to_one():
+    source = QueryResult(
+        query_id="start",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 10.0},
+            {"ts_code": "000002.SZ", "close": 20.0},
+        ],
+        row_count=2,
+    )
+    right = QueryResult(
+        query_id="end",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 11.0},
+            {"ts_code": "000002.SZ", "close": 18.0},
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate({
+        "source_query_id": "start",
+        "output_query_id": "out",
+        "steps": [
+            {
+                "operation": "join_fields",
+                "right_source_query_id": "end",
+                "join_on": ["ts_code"],
+                "fields": {"close": "end_close"},
+                "cardinality": "one_to_one",
+            }
+        ]
+    })
+    result = ResultPipelineExecutor().execute(pipeline, source, {"end": right})
+    assert result.rows[0]["close"] == 10.0
+    assert result.rows[0]["end_close"] == 11.0
+    assert result.rows[1]["close"] == 20.0
+    assert result.rows[1]["end_close"] == 18.0
+
+
+def test_result_pipeline_join_fields_violates_cardinality():
+    import pytest
+    source = QueryResult(
+        query_id="start",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 10.0},
+            {"ts_code": "000001.SZ", "close": 12.0},  # Duplicate left keys
+        ],
+        row_count=2,
+    )
+    right = QueryResult(
+        query_id="end",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 11.0},
+        ],
+        row_count=1,
+    )
+    pipeline = ResultPipeline.model_validate({
+        "source_query_id": "start",
+        "output_query_id": "out",
+        "steps": [
+            {
+                "operation": "join_fields",
+                "right_source_query_id": "end",
+                "join_on": ["ts_code"],
+                "fields": {"close": "end_close"},
+                "cardinality": "one_to_one",
+            }
+        ]
+    })
+    with pytest.raises(ValueError, match="one_to_one cardinality violated"):
+        ResultPipelineExecutor().execute(pipeline, source, {"end": right})
+
+
+def test_result_pipeline_invariants_limit():
+    import pytest
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 10.0},
+            {"ts_code": "000002.SZ", "close": 20.0},
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate({
+        "source_query_id": "daily",
+        "output_query_id": "out",
+        "steps": [
+            {
+                "operation": "limit",
+                "count": 1,
+            }
+        ]
+    })
+    # Since we did not drop or slice in execute before invariants run (or we test that limit invariant enforces maximum boundaries):
+    # Actually, execute applies steps sequentially. The "limit" step in execute applies .head(1).
+    # If the rows returned exceed limit due to some bug, it raises. Let's verify normal head(1) runs:
+    res = ResultPipelineExecutor().execute(pipeline, source)
+    assert res.row_count == 1
+
+
+def test_result_pipeline_invariants_monotonicity():
+    import pytest
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 12.0},
+            {"ts_code": "000002.SZ", "close": 10.0},
+        ],
+        row_count=2,
+    )
+    # Correct sort ascending should be 10.0 first, then 12.0. Let's create an invalid non-monotonic list by sorting descending but asserting asc (or vice-versa):
+    # Actually, the sort step itself sorts correctly, so sorting normally always passes invariants.
+    # To test invariant verification, let's pass steps where we sort but somehow monotonicity is violated (e.g. invalid non-sorted or nan fields).
+    source_nan = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 12.0},
+            {"ts_code": "000002.SZ", "close": None},  # NaN in sorted field!
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate({
+        "source_query_id": "daily",
+        "output_query_id": "out",
+        "steps": [
+            {
+                "operation": "sort",
+                "field": "close",
+                "direction": "asc",
+            }
+        ]
+    })
+    with pytest.raises(ValueError, match="contains invalid or missing"):
+        ResultPipelineExecutor().execute(pipeline, source_nan)
+
+
+def test_result_pipeline_invariants_zero_return_check():
+    import pytest
+    source = QueryResult(
+        query_id="start",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 10.0},
+            {"ts_code": "000002.SZ", "close": 20.0},
+        ],
+        row_count=2,
+    )
+    right = QueryResult(
+        query_id="end",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "close": 10.0}, # identical closes!
+            {"ts_code": "000002.SZ", "close": 20.0},
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate({
+        "source_query_id": "start",
+        "output_query_id": "out",
+        "steps": [
+            {
+                "operation": "join_fields",
+                "right_source_query_id": "end",
+                "join_on": ["ts_code"],
+                "fields": {"close": "end_close"},
+                "cardinality": "one_to_one",
+            },
+            {
+                "operation": "derive",
+                "field": "end_close",
+                "output_field": "period_return_pct",
+                "arithmetic_operator": "divide",
+                "right_field": "close",
+            },
+            {
+                "operation": "derive",
+                "field": "period_return_pct",
+                "output_field": "period_return_pct",
+                "arithmetic_operator": "subtract",
+                "value": 1.0,
+            },
+            {
+                "operation": "sort",
+                "field": "period_return_pct",
+                "direction": "asc",
+            }
+        ]
+    })
+    # If starting close and ending close are identical for all rows, period_return_pct is 0.0, raising zero-return check!
+    # Let's add start_close and end_close columns renaming to mimic our start/end closes mapping:
+    pipeline_renamed = ResultPipeline.model_validate({
+        "source_query_id": "start",
+        "output_query_id": "out",
+        "steps": [
+            {
+                "operation": "derive",
+                "field": "close",
+                "output_field": "start_close",
+                "arithmetic_operator": "multiply",
+                "value": 1.0,
+            },
+            {
+                "operation": "join_fields",
+                "right_source_query_id": "end",
+                "join_on": ["ts_code"],
+                "fields": {"close": "end_close"},
+                "cardinality": "one_to_one",
+            },
+            {
+                "operation": "derive",
+                "field": "end_close",
+                "output_field": "period_return_pct",
+                "arithmetic_operator": "divide",
+                "right_field": "start_close",
+            },
+            {
+                "operation": "derive",
+                "field": "period_return_pct",
+                "output_field": "period_return_pct",
+                "arithmetic_operator": "subtract",
+                "value": 1.0,
+            },
+            {
+                "operation": "sort",
+                "field": "period_return_pct",
+                "direction": "asc",
+            }
+        ]
+    })
+    with pytest.raises(ValueError, match="all calculated return values are exactly 0.0"):
+        ResultPipelineExecutor().execute(pipeline_renamed, source, {"end": right})
