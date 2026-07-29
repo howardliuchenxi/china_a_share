@@ -33,7 +33,7 @@ async function mockApiRoutes(
       body: JSON.stringify(analysisFixture),
     });
   });
-  await page.route("**/api/stocks", (route) => {
+  await page.route("**/api/stocks*", (route) => {
     void route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -76,7 +76,7 @@ test("page load renders analysis page with hero and form", async ({
   await expect(submitButton).toBeDisabled();
 
   // Empty output placeholder is visible
-  await expect(page.locator(".empty-output")).toBeVisible();
+  await expect(page.locator(".results-panel .empty-output")).toBeVisible();
 });
 
 /* ------------------------------------------------------------------ */
@@ -316,6 +316,10 @@ test("planning error shows DeepSeek error card", async ({ page }) => {
   // Error should contain HTTP status 401
   await expect(errorCard).toContainText("401");
 
+  // Expand the collapsible panel first to make the decision trace visible
+  const detailsPanel = page.locator(".collapsible-panel");
+  await detailsPanel.locator("summary").click();
+
   // Error trace should be visible in the decision flow
   await expect(
     page.locator(".decision-trace li.is-error").first(),
@@ -467,7 +471,7 @@ test("basic info page shows stock list with mocked data", async ({ page }) => {
   await page.goto("/analysis");
 
   // Click the reference data tab
-  await page.locator('.page-tabs button[role="tab"]').nth(1).click();
+  await page.locator('.page-tabs button[role="tab"]').nth(2).click();
 
   // Stock list section should appear
   await expect(page.locator(".reference-page")).toBeVisible();
@@ -478,4 +482,109 @@ test("basic info page shows stock list with mocked data", async ({ page }) => {
   // Should contain mocked stock names
   await expect(page.locator(".stock-table")).toContainText("平安银行");
   await expect(page.locator(".stock-table")).toContainText("贵州茅台");
+});
+
+test("compatible results grouping merges multiple tables and displays raw details", async ({ page }) => {
+  const compatibleResultsFixture = {
+    request_id: "e2e-grouping-test",
+    planner: "deepseek",
+    data_provider: "tushare",
+    status: "success",
+    plan: {
+      market: "A_SHARE",
+      interpretation: "对比平安银行和万科A的日线行情",
+      feasibility: "supported",
+      requirements: [],
+      limitations: [],
+      queries: [
+        {
+          query_id: "q-pingan",
+          operation: "daily",
+          params: { ts_code: "000001.SZ", trade_date: "20260717" },
+          fields: ["ts_code", "trade_date", "close"],
+          purpose: "pingan daily",
+          transform: null,
+          filters: [],
+          aggregations: [],
+        },
+        {
+          query_id: "q-wanke",
+          operation: "daily",
+          params: { ts_code: "000002.SZ", trade_date: "20260717" },
+          fields: ["ts_code", "trade_date", "close"],
+          purpose: "wanke daily",
+          transform: null,
+          filters: [],
+          aggregations: [],
+        },
+      ],
+    },
+    results: [
+      {
+        query_id: "q-pingan",
+        provider: "tushare",
+        operation: "daily",
+        status: "success",
+        columns: ["ts_code", "trade_date", "close"],
+        rows: [
+          { ts_code: "000001.SZ", trade_date: "20260717", close: 12.18 },
+        ],
+        row_count: 1,
+        summary: {},
+        error: null,
+      },
+      {
+        query_id: "q-wanke",
+        provider: "tushare",
+        operation: "daily",
+        status: "success",
+        columns: ["ts_code", "trade_date", "close"],
+        rows: [
+          { ts_code: "000002.SZ", trade_date: "20260717", close: 18.50 },
+        ],
+        row_count: 1,
+        summary: {},
+        error: null,
+      },
+    ],
+    decision_trace: [],
+  };
+
+  await page.route("**/api/analysis", (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(compatibleResultsFixture),
+    });
+  });
+
+  await page.goto("/analysis");
+
+  await page.locator("#analysis-prompt").fill("对比平安银行和万科A");
+  await page.locator('button[type="submit"]').click();
+
+  // There should be exactly 1 top-level result block (since the two results are merged!)
+  const resultBlocks = page.locator(".results-panel > .result-block");
+  await expect(resultBlocks.first()).toBeVisible({ timeout: 5000 });
+  await expect(resultBlocks).toHaveCount(1);
+
+  // Both stocks should be visible in the single merged table
+  await expect(resultBlocks).toContainText("000001.SZ");
+  await expect(resultBlocks).toContainText("000002.SZ");
+
+  // The raw results collapsible panel should exist
+  const rawDetails = page.locator(".raw-results-panel");
+  await expect(rawDetails).toBeVisible();
+  await expect(rawDetails.locator("summary")).toContainText("查看 2 个原始分步查询结果");
+
+  // Clicking it should expand the child tables
+  await rawDetails.locator("summary").click();
+  const rawContent = rawDetails.locator(".raw-results-content");
+  await expect(rawContent).toBeVisible();
+
+  // Inside raw content, child result blocks exist
+  const childBlocks = rawContent.locator(".result-block");
+  await expect(childBlocks).toHaveCount(2);
+  await expect(childBlocks.first()).toContainText("000001.SZ");
+  await expect(childBlocks.nth(1)).toContainText("000002.SZ");
 });

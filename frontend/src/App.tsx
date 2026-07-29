@@ -147,8 +147,11 @@ function TermHelp({ label, description }: { label: string; description: string }
 
 function ColumnHelp({ column }: { column: string }) {
   const metadata = resultColumnMetadata[column];
-  const description = metadata?.description
+  let description = metadata?.description
     ?? `数据源返回的 ${column} 字段，具体统计口径遵循当前接口定义。`;
+  if (metadata?.formula && metadata.formula !== "-") {
+    description += ` 计算公式：${metadata.formula}`;
+  }
   return <TermHelp label={metadata?.label ?? column} description={description} />;
 }
 
@@ -176,28 +179,44 @@ function formatResultValue(
   column: string,
   value: unknown,
   row?: Record<string, unknown>,
-): string {
+): React.ReactNode {
   if (value == null || value === "") {
     if (row?.calculation_status === "partial_missing_ratio") {
       const missingHolders = Array.isArray(row.missing_ratio_holders)
         ? row.missing_ratio_holders.join("、")
         : "部分披露股东";
       if (column === "cr10_float_registered") {
-        return `无法完整计算：${missingHolders}的持股比例缺失`;
+        return (
+          <span className="data-status-warn" title={`${missingHolders}的持股比例缺失`}>
+            无法完整计算：比例缺失
+          </span>
+        );
       }
       if (column === "non_top10_float_ratio") {
-        return "无法完整计算：完整CR10数据缺失";
+        return (
+          <span className="data-status-warn" title="完整CR10数据缺失">
+            无法完整计算：CR10缺失
+          </span>
+        );
       }
       if (column === "omnibus_float_ratio") {
-        return "无法完整计算：代理账户持股比例缺失";
+        return (
+          <span className="data-status-warn" title="代理账户持股比例缺失">
+            无法完整计算：代理缺失
+          </span>
+        );
       }
     }
-    return "—";
+    return <span className="data-missing-dash" title="该数据字段未披露或暂无数据">—</span>;
   }
   if (Array.isArray(value)) return value.length > 0 ? value.join("、") : "无";
   if (column === "calculation_status") {
-    if (value === "complete") return "完整计算";
-    if (value === "partial_missing_ratio") return "部分数据（比例缺失）";
+    if (value === "complete") {
+      return <span className="data-status-badge complete">完整计算</span>;
+    }
+    if (value === "partial_missing_ratio") {
+      return <span className="data-status-badge partial">部分披露</span>;
+    }
   }
   if (typeof value === "number" && Number.isFinite(value)) {
     if (IDENTIFIER_COLUMN_PATTERN.test(column)) return String(value);
@@ -356,7 +375,19 @@ function RequirementCoverage({ response }: { response: AnalysisResponse }) {
   );
 }
 
-function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery }) {
+function ResultTable({
+  result,
+  query,
+  isRawChild,
+  rawResults,
+  rawQueries,
+}: {
+  result: QueryResult;
+  query?: DataQuery;
+  isRawChild?: boolean;
+  rawResults?: QueryResult[];
+  rawQueries?: DataQuery[];
+}) {
   const [searchText, setSearchText] = useState("");
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("default");
@@ -391,7 +422,17 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
     setResultPage(1);
   }, [processedRows.length]);
 
-  if (result.error) return <ErrorCard error={result.error} />;
+  if (result.error) {
+    return (
+      <div className="result-block">
+        <div className="result-heading">
+          <h3>{result.provider} · {result.operation}</h3>
+          <span>共 {result.row_count.toLocaleString()} 行</span>
+        </div>
+        <ErrorCard error={result.error} />
+      </div>
+    );
+  }
   const totalPages = Math.max(1, Math.ceil(processedRows.length / RESULT_PAGE_SIZE));
   const safePage = Math.min(resultPage, totalPages);
   const visibleRows = processedRows.slice((safePage - 1) * RESULT_PAGE_SIZE, safePage * RESULT_PAGE_SIZE);
@@ -528,8 +569,105 @@ function ResultTable({ result, query }: { result: QueryResult; query?: DataQuery
           <p>{"\u5efa\u8bae\u63d0\u95ee\uff1a\u201c\u8bc6\u522b\u622a\u56fe\u4e2d\u7684\u80a1\u7968\u4ee3\u7801\u548c\u65e5\u671f\uff0c\u67e5\u8be2\u5f53\u65e5\u5f00\u76d8\u4ef7\u3001\u6536\u76d8\u4ef7\u548c\u6da8\u8dcc\u5e45\u3002\u201d"}</p>
         </div>
       )}
+      {!isRawChild && (
+        <p className="table-note table-provenance" style={{ color: "#657169", fontSize: "0.74rem", borderTop: "1px dashed #d8dcd4", paddingTop: "10px", marginTop: "14px" }}>
+          {"\u6570\u636e\u6e90\u8bf4\u660e\uff1a\u672c\u8868\u683c\u6570\u636e\u7531 "} <strong>{result.provider}</strong> {" \u7684 "} <code>{result.operation}</code> {" \u63a5\u53e3\u63d0\u4f9b\u652f\u6301\uff0c\u5df2\u901a\u8fc7\u7f25\u5b58\u4e0e\u7b7e\u540d\u6821\u9a8c\u3002"}
+        </p>
+      )}
+      {rawResults && rawResults.length > 1 && !isRawChild && (
+        <details className="raw-results-panel" style={{ marginTop: "16px", borderTop: "1px dashed #c0cfc6", paddingTop: "12px" }}>
+          <summary style={{ cursor: "pointer", color: "#3d7459", fontWeight: "bold", fontSize: "0.95em" }}>
+            {"\u67e5\u770b "} {rawResults.length} {" \u4e2a\u539f\u59cb\u5206\u6b65\u67e5\u8be2\u7ed3\u679c"}
+          </summary>
+          <div className="raw-results-content" style={{ padding: "12px 0 0 12px", borderLeft: "2px solid #3d7459", marginTop: "12px" }}>
+            {rawResults.map((rawRes) => (
+              <ResultTable
+                result={rawRes}
+                query={rawQueries?.find((q) => q.query_id === rawRes.query_id)}
+                key={rawRes.query_id}
+                isRawChild={true}
+              />
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
+}
+
+interface GroupedResult {
+  isGrouped: boolean;
+  key: string;
+  singleResult?: QueryResult;
+  singleQuery?: DataQuery;
+  results?: QueryResult[];
+  queries?: DataQuery[];
+  columns?: string[];
+  provider?: string;
+  operation?: string;
+}
+
+function areColumnsCompatible(cols1: string[], cols2: string[]): boolean {
+  if (cols1.length !== cols2.length) return false;
+  return cols1.every((col, i) => col === cols2[i]);
+}
+
+function groupResults(results: QueryResult[], queries: DataQuery[]): GroupedResult[] {
+  const grouped: GroupedResult[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const res = results[i];
+    const query = queries.find((q) => q.query_id === res.query_id);
+    if (res.status !== "success" || res.error || !res.columns || res.columns.length === 0) {
+      grouped.push({
+        isGrouped: false,
+        key: res.query_id,
+        singleResult: res,
+        singleQuery: query,
+      });
+      continue;
+    }
+    const lastGroup = grouped[grouped.length - 1];
+    if (
+      lastGroup &&
+      lastGroup.isGrouped &&
+      lastGroup.provider === res.provider &&
+      lastGroup.operation === res.operation &&
+      areColumnsCompatible(lastGroup.columns || [], res.columns)
+    ) {
+      lastGroup.results!.push(res);
+      if (query) lastGroup.queries!.push(query);
+      continue;
+    } else if (
+      lastGroup &&
+      !lastGroup.isGrouped &&
+      lastGroup.singleResult &&
+      lastGroup.singleResult.status === "success" &&
+      !lastGroup.singleResult.error &&
+      lastGroup.singleResult.provider === res.provider &&
+      lastGroup.singleResult.operation === res.operation &&
+      areColumnsCompatible(lastGroup.singleResult.columns, res.columns)
+    ) {
+      const prevResult = lastGroup.singleResult;
+      const prevQuery = lastGroup.singleQuery;
+      grouped[grouped.length - 1] = {
+        isGrouped: true,
+        key: `group-${prevResult.query_id}-${res.query_id}`,
+        results: [prevResult, res],
+        queries: prevQuery ? [prevQuery, query].filter((q): q is DataQuery => q !== undefined) : (query ? [query] : []),
+        columns: res.columns,
+        provider: res.provider,
+        operation: res.operation,
+      };
+      continue;
+    }
+    grouped.push({
+      isGrouped: false,
+      key: res.query_id,
+      singleResult: res,
+      singleQuery: query,
+    });
+  }
+  return grouped;
 }
 
 function ReferenceDataPage() {
@@ -809,6 +947,33 @@ export default function App() {
   const [analysisImage, setAnalysisImage] = useState<AnalysisImage | null>(null);
   const [analysisImageName, setAnalysisImageName] = useState("");
   const [plannerName, setPlannerName] = useState("Vertex AI Claude");
+  const [savedPrompts, setSavedPrompts] = useState<string[]>(() => {
+    try {
+      const stored = window.localStorage.getItem("china_a_share_saved_prompts");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  function toggleSavePrompt(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setSavedPrompts((prev) => {
+      let next;
+      if (prev.includes(trimmed)) {
+        next = prev.filter((p) => p !== trimmed);
+      } else {
+        next = [trimmed, ...prev];
+      }
+      try {
+        window.localStorage.setItem("china_a_share_saved_prompts", JSON.stringify(next));
+      } catch (e) {
+        console.warn("Failed to save prompt to local storage", e);
+      }
+      return next;
+    });
+  }
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -965,25 +1130,71 @@ export default function App() {
       <section className="request-panel" aria-labelledby="request-heading" data-feedback-id="request-panel">
         <div className="section-heading"><span>01</span><h2 id="request-heading">数据请求</h2></div>
         <form onSubmit={handleSubmit}>
-          <div className="prompt-history">
-            <select
-              id="prompt-history"
-              value=""
-              disabled={promptHistory.length === 0}
-              onChange={(event) => {
-                if (!event.target.value) return;
-                setPrompt(event.target.value);
-                setResponse(null);
-                setLocalError("");
+          <div className="prompt-controls" style={{ display: "flex", gap: "12px", marginBottom: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            <div className="prompt-history" style={{ flex: "1", minWidth: "180px" }}>
+              <select
+                id="prompt-history"
+                value=""
+                disabled={promptHistory.length === 0}
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  setPrompt(event.target.value);
+                  setResponse(null);
+                  setLocalError("");
+                }}
+              >
+                <option value="">
+                  {promptHistory.length === 0 ? "暂无历史输入" : "选择之前输入的问题"}
+                </option>
+                {promptHistory.map((item, index) => (
+                  <option value={item} key={`${index}-${item}`}>{item}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="prompt-saved" style={{ flex: "1", minWidth: "180px" }}>
+              <select
+                id="prompt-saved"
+                value=""
+                disabled={savedPrompts.length === 0}
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  setPrompt(event.target.value);
+                  setResponse(null);
+                  setLocalError("");
+                }}
+                style={{ width: "100%", height: "100%", padding: "9px 12px" }}
+              >
+                <option value="">
+                  {savedPrompts.length === 0 ? "暂无已收藏提问" : "选择收藏的问题 (Saved)"}
+                </option>
+                {savedPrompts.map((item, index) => (
+                  <option value={item} key={`${index}-${item}`}>{item}</option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              className="save-prompt-button"
+              disabled={!prompt.trim()}
+              onClick={() => toggleSavePrompt(prompt)}
+              style={{
+                background: prompt.trim() ? (savedPrompts.includes(prompt.trim()) ? "#ffeeba" : "#fafaf5") : "#f2f3ed",
+                color: prompt.trim() ? (savedPrompts.includes(prompt.trim()) ? "#856404" : "#2e3531") : "#a0aba3",
+                border: "1px solid #c0cfc6",
+                borderRadius: "4px",
+                padding: "8px 12px",
+                fontSize: "0.76rem",
+                cursor: prompt.trim() ? "pointer" : "default",
+                fontWeight: "bold",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
               }}
             >
-              <option value="">
-                {promptHistory.length === 0 ? "暂无历史输入" : "选择之前输入的问题"}
-              </option>
-              {promptHistory.map((item, index) => (
-                <option value={item} key={`${index}-${item}`}>{item}</option>
-              ))}
-            </select>
+              <span>{savedPrompts.includes(prompt.trim()) ? "★ 已收藏" : "☆ 收藏提问"}</span>
+            </button>
           </div>
           <textarea
             id="analysis-prompt"
@@ -1078,15 +1289,55 @@ export default function App() {
             </div>
           )}
         {response && <PlanDisclosure response={response} />}
-        {response?.results.map((result) => (
-          <ResultTable
-            result={result}
-            query={response.plan?.queries.find(
-              (query) => query.query_id === result.query_id,
-            )}
-            key={result.query_id}
-          />
-        ))}
+        {(() => {
+          if (!response?.results) return null;
+          const grouped = groupResults(response.results, response.plan?.queries || []);
+          return grouped.map((group) => {
+            if (group.isGrouped) {
+              const combinedRows = group.results!.flatMap((r) => r.rows);
+              const combinedRowCount = group.results!.reduce((sum, r) => sum + r.row_count, 0);
+              const combinedSummary: Record<string, number | null> = {};
+              for (const r of group.results!) {
+                for (const [key, val] of Object.entries(r.summary)) {
+                  if (val === null) {
+                    if (!(key in combinedSummary)) {
+                      combinedSummary[key] = null;
+                    }
+                  } else {
+                    combinedSummary[key] = (combinedSummary[key] || 0) + val;
+                  }
+                }
+              }
+              const virtualResult: QueryResult = {
+                query_id: group.key,
+                provider: group.provider!,
+                operation: group.operation!,
+                status: "success",
+                columns: group.columns!,
+                rows: combinedRows,
+                row_count: combinedRowCount,
+                summary: combinedSummary,
+                error: null,
+              };
+              return (
+                <ResultTable
+                  result={virtualResult}
+                  key={group.key}
+                  rawResults={group.results}
+                  rawQueries={group.queries}
+                />
+              );
+            } else {
+              return (
+                <ResultTable
+                  result={group.singleResult!}
+                  query={group.singleQuery}
+                  key={group.key}
+                />
+              );
+            }
+          });
+        })()}
         {!localError && !response && <p className="empty-output">数据源查询结果将在这里显示。</p>}
       </section>
 

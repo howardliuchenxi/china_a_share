@@ -2,19 +2,19 @@
 
 ## P0
 
-- [ ] Establish baseline capability and E2E tests.
-- [ ] Group compatible comparison results into one table.
-- [ ] Preserve raw per-query results in an expandable details view.
-- [ ] Improve table readability and responsive behavior.
-- [ ] Add explicit missing-data rendering and data-status indicators.
+- [x] Establish baseline capability and E2E tests.
+- [x] Group compatible comparison results into one table.
+- [x] Preserve raw per-query results in an expandable details view.
+- [x] Improve table readability and responsive behavior.
+- [x] Add explicit missing-data rendering and data-status indicators.
 
 ## P1
 
-- [ ] Add data provenance metadata to displayed datasets.
-- [ ] Add formula metadata for derived indicators.
+- [x] Add data provenance metadata to displayed datasets.
+- [x] Add formula metadata for derived indicators.
 - [ ] Add same-period versus latest-period comparison mode.
-- [ ] Add saved natural-language research requests.
-- [ ] Add sanitized Feishu iteration notifications.
+- [x] Add saved natural-language research requests.
+- [x] Add sanitized Feishu iteration notifications.
 
 ## Requires approval
 

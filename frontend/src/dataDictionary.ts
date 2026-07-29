@@ -556,7 +556,15 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "Y", field: "equity_yoy", description: "财务/基本面数据指标。", formula: "-", source: "Tushare" },
 ];
 
-export const resultColumnMetadata: Record<string, { label: string; description: string }> = {};
+export const resultColumnMetadata: Record<
+  string,
+  { label: string; description: string; formula?: string; source?: string }
+> = {};
 DATA_DICTIONARY_ENTRIES.forEach(entry => {
-  resultColumnMetadata[entry.field] = { label: entry.label, description: entry.description };
+  resultColumnMetadata[entry.field] = {
+    label: entry.label,
+    description: entry.description,
+    formula: entry.formula,
+    source: entry.source,
+  };
 });

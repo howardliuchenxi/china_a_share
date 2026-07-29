@@ -737,10 +737,17 @@ button:disabled {
   font-size: 0.62rem;
 }
 
-.table-scroll { overflow: auto; max-height: 520px; }
+.table-scroll {
+  overflow: auto;
+  max-height: 520px;
+  border: 1px solid #d2d6ce;
+  border-radius: 4px;
+}
 table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-th, td { border-bottom: 1px solid #d8dcd4; padding: 9px 10px; text-align: left; white-space: nowrap; }
-th { position: sticky; top: 0; background: #e9ece5; }
+th, td { border-bottom: 1px solid #d8dcd4; padding: 10px 12px; text-align: left; white-space: nowrap; }
+th { position: sticky; top: 0; background: #f0f2eb; font-weight: bold; color: #2e3531; }
+table tbody tr:nth-child(even) { background-color: #f9faf7; }
+table tbody tr:hover { background-color: #f1f3ee; }
 .table-note { margin: 10px 0 0; font-size: 0.78rem; }
 
 .result-tools {
@@ -1276,4 +1283,35 @@ th { position: sticky; top: 0; background: #e9ece5; }
 }
 .expand-factors-button:hover {
   color: #0056b3;
+}
+
+/* Data Status and Explicit Missing Data Indicators */
+.data-status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: bold;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.data-status-badge.complete {
+  background-color: #e2f5e9;
+  color: #217346;
+  border: 1px solid #c2ebd0;
+}
+.data-status-badge.partial {
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeeba;
+}
+.data-status-warn {
+  color: #b44c27;
+  font-weight: 500;
+  text-decoration: underline dotted;
+  cursor: help;
+  white-space: nowrap;
+}
+.data-missing-dash {
+  color: #a0aba3;
+  font-weight: bold;
 }
