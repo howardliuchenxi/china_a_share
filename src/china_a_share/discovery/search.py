@@ -142,7 +142,9 @@ class RuleSearchEngine:
         factors: Sequence[str],
     ) -> List[Tuple[str, str]]:
         conditions = []
-        for factor in factors:
+        # Canonical factor order keeps threshold generation, pairing, and
+        # equivalent-cohort deduplication independent of request ordering.
+        for factor in sorted(factors):
             if factor not in train:
                 continue
             numeric = pd.to_numeric(train[factor], errors="coerce").dropna()

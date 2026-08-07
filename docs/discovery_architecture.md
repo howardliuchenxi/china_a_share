@@ -70,9 +70,12 @@ a one-session forward horizon.
 value for factors with at most ten finite values, allowing rare discrete states
 such as a three-day streak to remain searchable. Continuous factors use the
 training window's 10%, 25%, 50%, 75%, and 90% quantiles. Equivalent selections
-are deduplicated. When two conditions are allowed, a 24-entry pairing pool first
-covers every factor with an eligible single-condition candidate and then adds
-alternate directions. This caps the pair search at 276 combinations.
+are deduplicated. Factors are processed in canonical field-name order, so
+request ordering cannot change threshold generation, bounded pairing, or
+equivalent-cohort selection. When two conditions are allowed, a 24-entry
+pairing pool first covers every factor with an eligible single-condition
+candidate and then adds alternate directions. This caps the pair search at 276
+combinations.
 
 Candidates are ranked only on training data by conservative lift:
 

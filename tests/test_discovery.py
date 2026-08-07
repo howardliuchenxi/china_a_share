@@ -1308,6 +1308,37 @@ def test_rule_search_prioritizes_factor_breadth_in_the_pairing_pool():
     assert {field for _, field in pairing_pool} == set(factor_names)
 
 
+def test_rule_search_is_invariant_to_requested_factor_order():
+    factor_names = [f"factor_{index:02d}" for index in range(3)]
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
+            "forward_return": [-0.10] * 50 + [0.10] * 50,
+            **{factor: list(range(100)) for factor in factor_names},
+        }
+    )
+    search = RuleSearchEngine(min_sample_count=10)
+
+    forward, _ = search.search(
+        dataset,
+        dataset.copy(),
+        factor_names,
+        max_conditions=2,
+        top_n=20,
+    )
+    reversed_order, _ = search.search(
+        dataset,
+        dataset.copy(),
+        list(reversed(factor_names)),
+        max_conditions=2,
+        top_n=20,
+    )
+
+    assert [candidate.formula for candidate in forward] == [
+        candidate.formula for candidate in reversed_order
+    ]
+
+
 def test_rule_search_deduplicates_formulas_selecting_the_same_training_cohort():
     dataset = pd.DataFrame(
         {
