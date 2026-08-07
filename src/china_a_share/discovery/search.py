@@ -3,7 +3,7 @@
 from itertools import combinations
 import math
 import re
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -94,6 +94,7 @@ class RuleSearchEngine:
         validated = self._validate_candidates(
             validation_shortlist,
             validation,
+            training=train,
         )
         self._apply_false_discovery_rate(
             validated,
@@ -283,6 +284,7 @@ class RuleSearchEngine:
                 formula,
                 target_return=self._target_return,
                 dependence_lag_days=self._dependence_lag_days,
+                include_event_examples=False,
             )
             if (
                 train_result.sample_count < self._min_sample_count
@@ -335,10 +337,21 @@ class RuleSearchEngine:
         self,
         candidates: Sequence[FactorHypothesis],
         validation: pd.DataFrame,
+        *,
+        training: Optional[pd.DataFrame] = None,
     ) -> List[FactorHypothesis]:
         """Attach validation evidence without using its outcomes for ranking."""
         validated = []
         for candidate in candidates:
+            if training is not None:
+                candidate.train_result.event_examples = (
+                    FactorBacktester.evaluate_rule(
+                        training,
+                        candidate.formula,
+                        target_return=self._target_return,
+                        dependence_lag_days=self._dependence_lag_days,
+                    ).event_examples
+                )
             validation_result = FactorBacktester.evaluate_rule(
                 validation,
                 candidate.formula,

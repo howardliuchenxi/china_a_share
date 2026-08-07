@@ -239,6 +239,7 @@ class FactorBacktester:
         *,
         target_return: float = 0.0,
         dependence_lag_days: int = 0,
+        include_event_examples: bool = True,
     ) -> BacktestResult:
         """Evaluate one expression against pre-aligned event-study observations."""
         if "forward_return" not in dataset:
@@ -388,7 +389,11 @@ class FactorBacktester:
             cluster_standard_error=cluster_standard_error,
             lift_standard_error=lift_standard_error,
             dependence_lag_days=dependence_lag_days,
-            event_examples=FactorBacktester._event_examples(evaluation_frame),
+            event_examples=(
+                FactorBacktester._event_examples(evaluation_frame)
+                if include_event_examples
+                else []
+            ),
         )
 
     @staticmethod

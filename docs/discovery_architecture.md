@@ -160,7 +160,9 @@ ordered deterministically by signal date and security. The UI keeps these audit
 rows collapsed by default and exposes signal date, security, outcome settlement
 date, and adjusted forward return so a researcher can trace summary statistics
 back to concrete examples without allowing response size to grow with the full
-event population.
+event population. Training examples are extracted only after the bounded
+training-ranked validation shortlist is frozen, so formulas discarded during
+initial screening do not incur presentation-only work.
 
 The summary explicitly describes the first rule as the training leader and
 reports how many leaderboard entries passed validation. Applying a rule sends

@@ -1111,6 +1111,8 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     assert any("value" in candidate.formula for candidate in candidates)
     assert all(candidate.train_result.sample_count >= 4 for candidate in candidates)
     assert all(candidate.val_result is not None for candidate in candidates)
+    assert all(candidate.train_result.event_examples for candidate in candidates)
+    assert all(candidate.val_result.event_examples for candidate in candidates)
     training_scores = [
         candidate.train_result.lift_confidence_lower
         for candidate in candidates
@@ -1164,6 +1166,23 @@ def test_training_rank_penalizes_uncertain_lift():
     assert RuleSearchEngine._training_rank_key(precise) > (
         RuleSearchEngine._training_rank_key(uncertain)
     )
+
+
+def test_training_formula_screening_defers_event_example_extraction():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{index:02d}" for index in range(1, 21)],
+            "value": list(range(20)),
+            "forward_return": [-0.10] * 10 + [0.10] * 10,
+        }
+    )
+    search = RuleSearchEngine(min_sample_count=4)
+    conditions = search._build_conditions(dataset, ["value"])
+
+    candidates, _ = search._evaluate_training_formulas(conditions, dataset)
+
+    assert candidates
+    assert all(candidate.train_result.event_examples == [] for candidate in candidates)
 
 
 def test_training_rank_does_not_treat_zero_standard_error_as_certainty():
