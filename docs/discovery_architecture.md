@@ -123,11 +123,13 @@ Reported evidence includes:
 - validation-to-training support retention, which exposes relative applicability
   collapse that can look small in percentage-point terms;
 - observable-outcome coverage;
+- worst- and best-case probability bounds that treat every unobserved outcome
+  as a failure or success, respectively;
 - hit rate, mean and median forward return, and fifth-percentile return;
 - hit-rate lift over the factor-comparable baseline;
 - a conservative lift interval enveloping the date-clustered HAC interval and
   the difference between selected and baseline concentration-adjusted
-  probability intervals;
+  probability intervals, including their unobserved-outcome bounds;
 - date-clustered HAC uncertainty that accounts for overlapping horizons;
 - zero-influence calendar gaps that preserve true trading-session HAC lags when
   a factor is unavailable for an entire date, while the finite-sample variance

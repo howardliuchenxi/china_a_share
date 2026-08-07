@@ -942,6 +942,25 @@ def test_rule_evaluation_reports_missing_outcome_coverage():
     assert result.outcome_coverage_rate == pytest.approx(2 / 3)
 
 
+def test_probability_interval_includes_unobserved_outcome_extremes():
+    observed_dates = [f"2026{index:04d}" for index in range(1, 101)]
+    missing_dates = [f"2027{index:04d}" for index in range(1, 6)]
+    dataset = pd.DataFrame(
+        {
+            "trade_date": observed_dates + missing_dates,
+            "factor": [1.0] * 105,
+            "forward_return": [0.10] * 100 + [None] * 5,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.win_rate == 1.0
+    assert result.outcome_coverage_rate == pytest.approx(100 / 105)
+    assert result.confidence_lower == pytest.approx(100 / 105)
+    assert result.confidence_upper == 1.0
+
+
 def test_rule_evaluation_reports_single_security_event_concentration():
     dataset = pd.DataFrame(
         {

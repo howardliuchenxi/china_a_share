@@ -371,6 +371,13 @@ class FactorBacktester:
             dependence_lag_days,
             research_frame["trade_date"],
         )
+        outcome_lower, outcome_upper = FactorBacktester._outcome_bounds(
+            positive_count,
+            matched_sample_count,
+            len(returns),
+        )
+        confidence_lower = min(confidence_lower, outcome_lower)
+        confidence_upper = max(confidence_upper, outcome_upper)
         (
             baseline_confidence_lower,
             baseline_confidence_upper,
@@ -381,6 +388,23 @@ class FactorBacktester:
             target_return,
             dependence_lag_days,
             research_frame["trade_date"],
+        )
+        baseline_positive_count = int((baseline > target_return).sum())
+        (
+            baseline_outcome_lower,
+            baseline_outcome_upper,
+        ) = FactorBacktester._outcome_bounds(
+            baseline_positive_count,
+            eligible_sample_count,
+            len(baseline),
+        )
+        baseline_confidence_lower = min(
+            baseline_confidence_lower,
+            baseline_outcome_lower,
+        )
+        baseline_confidence_upper = max(
+            baseline_confidence_upper,
+            baseline_outcome_upper,
         )
         (
             lift_confidence_lower,
@@ -498,6 +522,21 @@ class FactorBacktester:
         return (
             max(-1.0, min(hac_lower, probability_lower)),
             min(1.0, max(hac_upper, probability_upper)),
+        )
+
+    @staticmethod
+    def _outcome_bounds(
+        positive_count: int,
+        matched_count: int,
+        observed_count: int,
+    ) -> tuple[float, float]:
+        """Bound a hit rate when unobserved outcomes may all fail or succeed."""
+        if matched_count <= 0:
+            return 0.0, 1.0
+        missing_count = matched_count - observed_count
+        return (
+            positive_count / matched_count,
+            (positive_count + missing_count) / matched_count,
         )
 
     def _load_trade_dates(
