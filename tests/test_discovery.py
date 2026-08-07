@@ -721,6 +721,26 @@ def test_discovery_request_accepts_a_percentage_point_return_target():
     )
 
     assert request.target_return_pct == 5.0
+    assert request.max_generations == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("max_generations", 2), ("max_conditions", 3)],
+)
+def test_discovery_request_rejects_unimplemented_search_depths(field, value):
+    request = {
+        "target_pool": "A_SHARE",
+        "train_start": "20250101",
+        "train_end": "20251231",
+        "val_start": "20260101",
+        "val_end": "20260630",
+        "factors": ["pe_ttm"],
+        field: value,
+    }
+
+    with pytest.raises(ValueError):
+        DiscoveryTaskRequest(**request)
 
 
 def test_memory_store_preserves_extended_discovery_request():

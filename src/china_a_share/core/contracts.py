@@ -1020,8 +1020,16 @@ class DiscoveryTaskRequest(BaseModel):
     val_start: str = Field(description="Start date for validation blind test (YYYYMMDD).")
     val_end: str = Field(description="End date for validation blind test (YYYYMMDD).")
     factors: List[str] = Field(description="Selected base factor fields to use.", default_factory=list)
-    prompt: str = Field(description="User guidance prompt.", default="")
-    max_generations: int = Field(default=3, description="Number of evolutionary generations.")
+    prompt: str = Field(
+        description="Optional research note stored with the deterministic request.",
+        default="",
+    )
+    max_generations: int = Field(
+        default=1,
+        ge=1,
+        le=1,
+        description="Supported deterministic search pass count; currently fixed at one.",
+    )
     forward_days: int = Field(
         default=20,
         ge=1,
@@ -1055,7 +1063,7 @@ class DiscoveryTaskRequest(BaseModel):
     max_conditions: int = Field(
         default=2,
         ge=1,
-        le=3,
+        le=2,
         description="Maximum number of conditions in one discovered rule.",
     )
 

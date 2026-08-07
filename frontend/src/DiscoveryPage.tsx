@@ -41,7 +41,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [trainEnd, setTrainEnd] = useState(params.get("dp_te") || "20251231");
   const [valStart, setValStart] = useState(params.get("dp_vs") || "20260101");
   const [valEnd, setValEnd] = useState(params.get("dp_ve") || "20260630");
-  const [prompt, setPrompt] = useState(params.get("dp_prompt") || "寻找未来一个月上涨概率较高且样本稳定的市场状态");
+  const [prompt, setPrompt] = useState(params.get("dp_prompt") || "");
   const [forwardDays, setForwardDays] = useState(Number(params.get("dp_forward")) || 20);
   const [targetReturnPct, setTargetReturnPct] = useState(Number(params.get("dp_target")) || 0);
   const [minimumSamples, setMinimumSamples] = useState(Number(params.get("dp_samples")) || 30);
@@ -170,11 +170,11 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       </section>
 
       <section className="request-panel">
-        <div className="section-heading"><span>01</span><h2>定义研究目标</h2></div>
+        <div className="section-heading"><span>01</span><h2>定义研究参数</h2></div>
         <form onSubmit={handleSubmit} className="discovery-form">
           <label className="wide-field">
-            <span>研究目标</span>
-            <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} placeholder="例如：寻找未来 20 个交易日上涨概率较高的市场状态" />
+            <span>研究备注（不参与计算）</span>
+            <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={2} placeholder="可选：记录这次研究的假设、背景或用途" />
           </label>
           <div className="discovery-settings-grid">
             <label><span>训练开始</span><input value={trainStart} onChange={event => setTrainStart(event.target.value)} inputMode="numeric" /></label>

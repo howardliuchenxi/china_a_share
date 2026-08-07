@@ -241,6 +241,30 @@ def test_discovery_endpoint_rejects_overlapping_windows():
     assert response.status_code == 422
 
 
+def test_discovery_endpoint_rejects_unsupported_generation_count():
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            task_coordinator=FakeDiscoveryCoordinator(),
+        )
+    )
+
+    response = client.post(
+        "/api/discovery/tasks",
+        json={
+            "target_pool": "A_SHARE",
+            "train_start": "20250101",
+            "train_end": "20251231",
+            "val_start": "20260101",
+            "val_end": "20260630",
+            "factors": ["pe_ttm"],
+            "max_generations": 2,
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_ui_feedback_config_exposes_only_public_values():
     client = TestClient(
         create_app(
