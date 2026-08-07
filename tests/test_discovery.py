@@ -941,6 +941,42 @@ def test_training_rank_penalizes_uncertain_lift():
     )
 
 
+def test_training_rank_uses_robust_returns_instead_of_outlier_mean():
+    tail_robust = FactorHypothesis(
+        formula="value >= 1",
+        description="Tail-robust rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            median_return=0.02,
+            return_p05=-0.05,
+            eval_time_ms=0,
+            win_rate_lift=0.10,
+            lift_standard_error=0.02,
+        ),
+    )
+    outlier_driven = FactorHypothesis(
+        formula="value >= 2",
+        description="Outlier-driven rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.30,
+            median_return=0.01,
+            return_p05=-0.20,
+            eval_time_ms=0,
+            win_rate_lift=0.10,
+            lift_standard_error=0.02,
+        ),
+    )
+
+    assert tail_robust.train_result.mean_return < outlier_driven.train_result.mean_return
+    assert RuleSearchEngine._training_rank_key(tail_robust) > (
+        RuleSearchEngine._training_rank_key(outlier_driven)
+    )
+
+
 def test_rule_search_ignores_non_finite_factor_values():
     dataset = pd.DataFrame(
         {

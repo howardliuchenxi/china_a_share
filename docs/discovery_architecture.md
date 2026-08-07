@@ -70,6 +70,9 @@ Candidates are ranked only on training data by conservative lift:
 training win-rate lift - 1.6448536269514722 * clustered lift standard error
 ```
 
+Ties are resolved by the fifth-percentile forward return and then median return,
+so an isolated positive outlier cannot win a tie through mean return alone.
+
 The training-ranked validation shortlist is frozen before validation outcomes
 are read. Validation evidence never reorders the leaderboard.
 
