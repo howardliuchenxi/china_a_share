@@ -185,6 +185,11 @@ class FactorBacktester:
             evaluation_frame["forward_return"].map(math.isfinite)
         ]
         returns = evaluation_frame["forward_return"]
+        security_count = (
+            int(evaluation_frame["ts_code"].nunique())
+            if "ts_code" in evaluation_frame
+            else len(evaluation_frame)
+        )
         baseline = pd.to_numeric(
             baseline_frame["forward_return"], errors="coerce"
         ).dropna()
@@ -209,6 +214,7 @@ class FactorBacktester:
                 ),
                 baseline_sample_count=len(baseline),
                 target_return=target_return,
+                security_count=security_count,
                 dependence_lag_days=dependence_lag_days,
             )
 
@@ -267,6 +273,7 @@ class FactorBacktester:
             confidence_upper=confidence_upper,
             target_return=target_return,
             trading_day_count=trading_day_count,
+            security_count=security_count,
             cluster_standard_error=cluster_standard_error,
             lift_standard_error=lift_standard_error,
             dependence_lag_days=dependence_lag_days,

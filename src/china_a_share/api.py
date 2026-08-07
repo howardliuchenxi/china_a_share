@@ -319,6 +319,7 @@ def create_app(
                 target_return_pct=task.request.target_return_pct,
                 minimum_samples=task.request.minimum_samples,
                 minimum_trading_days=task.request.minimum_trading_days,
+                minimum_securities=task.request.minimum_securities,
                 minimum_outcome_coverage_pct=(
                     task.request.minimum_outcome_coverage_pct
                 ),

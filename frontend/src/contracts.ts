@@ -278,6 +278,7 @@ export interface DiscoveryTaskRequest {
   target_return_pct: number;
   minimum_samples: number;
   minimum_trading_days: number;
+  minimum_securities: number;
   minimum_outcome_coverage_pct: number;
   max_conditions: number;
 }
@@ -304,6 +305,7 @@ export interface BacktestResult {
   confidence_upper: number;
   target_return: number;
   trading_day_count: number;
+  security_count: number;
   cluster_standard_error: number;
   lift_standard_error: number;
   dependence_lag_days: number;
@@ -354,6 +356,7 @@ export interface DiscoveryTaskStatusResponse {
     target_return_pct: number;
     minimum_samples: number;
     minimum_trading_days: number;
+    minimum_securities: number;
     minimum_outcome_coverage_pct: number;
     max_conditions: number;
   };

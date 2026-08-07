@@ -94,6 +94,7 @@ class EvolutionLoop:
         search = RuleSearchEngine(
             min_sample_count=request.minimum_samples,
             min_trading_day_count=request.minimum_trading_days,
+            min_security_count=request.minimum_securities,
             min_outcome_coverage=request.minimum_outcome_coverage_pct / 100.0,
             target_return=request.target_return_pct / 100.0,
             dependence_lag_days=request.forward_days - 1,
@@ -110,7 +111,7 @@ class EvolutionLoop:
         task.progress.leaderboard = leaderboard
         if not leaderboard:
             raise ValueError(
-                "No rule met the event, trading-day, and outcome-coverage requirements in both windows."
+                "No rule met the event, trading-day, security, and outcome-coverage requirements in both windows."
             )
 
     @staticmethod

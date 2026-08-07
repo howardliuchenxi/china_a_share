@@ -54,7 +54,7 @@ function MetricSet({ result }: { result: BacktestResult }) {
       <span><small>收益超过 {percent(result.target_return)}</small><strong>{percent(result.win_rate)}</strong></span>
       <span><small>相对可比基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
-      <span><small>样本 / 交易日</small><strong>{result.sample_count} / {result.trading_day_count}</strong></span>
+      <span><small>样本 / 交易日 / 证券</small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
       <span><small>规则覆盖（可比事件 {result.eligible_sample_count}）</small><strong>{percent(result.rule_support_rate)}</strong></span>
       <span><small>标签覆盖</small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
     </div>
@@ -73,6 +73,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [targetReturnPct, setTargetReturnPct] = useState(Number(params.get("dp_target")) || 0);
   const [minimumSamples, setMinimumSamples] = useState(Number(params.get("dp_samples")) || 30);
   const [minimumTradingDays, setMinimumTradingDays] = useState(Number(params.get("dp_days")) || 20);
+  const [minimumSecurities, setMinimumSecurities] = useState(Number(params.get("dp_securities")) || 10);
   const [minimumOutcomeCoveragePct, setMinimumOutcomeCoveragePct] = useState(Number(params.get("dp_coverage")) || 95);
   const [maxConditions, setMaxConditions] = useState(Number(params.get("dp_depth")) || 2);
   const [factors, setFactors] = useState<string[]>(() => {
@@ -108,12 +109,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     next.set("dp_target", String(targetReturnPct));
     next.set("dp_samples", String(minimumSamples));
     next.set("dp_days", String(minimumTradingDays));
+    next.set("dp_securities", String(minimumSecurities));
     next.set("dp_coverage", String(minimumOutcomeCoveragePct));
     next.set("dp_depth", String(maxConditions));
     if (prompt) next.set("dp_prompt", prompt); else next.delete("dp_prompt");
     if (factors.length) next.set("dp_factors", factors.join(",")); else next.delete("dp_factors");
     window.history.replaceState({}, "", `${window.location.pathname}?${next.toString()}`);
-  }, [targetPool, trainStart, trainEnd, valStart, valEnd, forwardDays, targetReturnPct, minimumSamples, minimumTradingDays, minimumOutcomeCoveragePct, maxConditions, prompt, factors]);
+  }, [targetPool, trainStart, trainEnd, valStart, valEnd, forwardDays, targetReturnPct, minimumSamples, minimumTradingDays, minimumSecurities, minimumOutcomeCoveragePct, maxConditions, prompt, factors]);
 
   function toggleFactor(field: string) {
     setFactors(current => current.includes(field)
@@ -144,6 +146,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         target_return_pct: targetReturnPct,
         minimum_samples: minimumSamples,
         minimum_trading_days: minimumTradingDays,
+        minimum_securities: minimumSecurities,
         minimum_outcome_coverage_pct: minimumOutcomeCoveragePct,
         max_conditions: maxConditions,
       };
@@ -218,6 +221,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             <label><span>目标收益（%）</span><input type="number" min="-100" max="1000" step="0.5" value={targetReturnPct} onChange={event => setTargetReturnPct(Number(event.target.value))} /></label>
             <label><span>最小样本数</span><input type="number" min="5" max="10000" value={minimumSamples} onChange={event => setMinimumSamples(Number(event.target.value))} /></label>
             <label><span>最少交易日</span><input type="number" min="2" max="1000" value={minimumTradingDays} onChange={event => setMinimumTradingDays(Number(event.target.value))} /></label>
+            <label><span>最少证券数</span><input type="number" min="2" max="1000" value={minimumSecurities} onChange={event => setMinimumSecurities(Number(event.target.value))} /></label>
             <label><span>最低标签覆盖（%）</span><input type="number" min="50" max="100" step="1" value={minimumOutcomeCoveragePct} onChange={event => setMinimumOutcomeCoveragePct(Number(event.target.value))} /></label>
             <label><span>最多条件数</span><select value={maxConditions} onChange={event => setMaxConditions(Number(event.target.value))}><option value={1}>1 个</option><option value={2}>2 个</option></select></label>
           </div>
@@ -273,7 +277,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>训练窗口</small><strong>{taskStatus!.research_config.train_start} – {taskStatus!.research_config.train_end}</strong></div>
           <div><small>验证窗口</small><strong>{taskStatus!.research_config.val_start} – {taskStatus!.research_config.val_end}</strong></div>
           <div><small>未来收益周期</small><strong>{taskStatus!.research_config.forward_days} 个交易日</strong></div>
-          <div><small>样本 / 交易日门槛</small><strong>{taskStatus!.research_config.minimum_samples} / {taskStatus!.research_config.minimum_trading_days}</strong></div>
+          <div><small>样本 / 交易日 / 证券门槛</small><strong>{taskStatus!.research_config.minimum_samples} / {taskStatus!.research_config.minimum_trading_days} / {taskStatus!.research_config.minimum_securities}</strong></div>
           <div><small>标签覆盖 / 条件数</small><strong>{taskStatus!.research_config.minimum_outcome_coverage_pct}% / {taskStatus!.research_config.max_conditions}</strong></div>
         </div>
         <div className="headline-metrics">
@@ -284,7 +288,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>5% 分位收益</small><strong className={topTrainingRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(topTrainingRule.val_result!.return_p05, 2)}</strong><em>{topTrainingRule.val_result!.sample_count} / {topTrainingRule.val_result!.matched_sample_count} 个结果可观测</em></div>
           <div><small>提升检验 q-value</small><strong>{topTrainingRule.q_value.toFixed(3)}</strong><em>{topTrainingRule.fdr_family_size} 个盲测候选 · {topTrainingRule.q_value <= 0.1 ? "通过 10% FDR" : "未通过 10% FDR"}</em></div>
         </div>
-        <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。标记为“验证通过”的规则必须在训练和验证窗口相对基准均为正向提升，并通过验证集 10% FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日和未来标签覆盖率门槛；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间取日期聚类 HAC 与独立交易日 score 区间的保守包络，既处理相邻信号共享收益，也防止全胜或全败样本显示虚假确定性；提升检验还计入规则与可比较样本基准的重叠。FDR 分母包含所有进入盲测的冻结候选，包括因验证样本不足而未入榜的规则。统计关联仍不代表因果关系。</p>
+        <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。标记为“验证通过”的规则必须在训练和验证窗口相对基准均为正向提升，并通过验证集 10% FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日、独立证券数和未来标签覆盖率门槛，避免单一个股的长期历史被误称为市场规律；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间取日期聚类 HAC 与独立交易日 score 区间的保守包络，既处理相邻信号共享收益，也防止全胜或全败样本显示虚假确定性；提升检验还计入规则与可比较样本基准的重叠。FDR 分母包含所有进入盲测的冻结候选，包括因验证样本不足而未入榜的规则。统计关联仍不代表因果关系。</p>
       </section>}
 
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">

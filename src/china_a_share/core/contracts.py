@@ -1054,6 +1054,12 @@ class DiscoveryTaskRequest(BaseModel):
         le=1000,
         description="Minimum distinct signal dates required for each rule and window.",
     )
+    minimum_securities: int = Field(
+        default=10,
+        ge=2,
+        le=1000,
+        description="Minimum distinct securities required for each rule and window.",
+    )
     minimum_outcome_coverage_pct: float = Field(
         default=95.0,
         ge=50.0,
@@ -1116,6 +1122,9 @@ class DiscoveryResearchConfig(BaseModel):
     minimum_trading_days: int = Field(
         description="Minimum distinct signal dates per window."
     )
+    minimum_securities: int = Field(
+        description="Minimum distinct securities per window."
+    )
     minimum_outcome_coverage_pct: float = Field(
         description="Minimum observable outcome percentage."
     )
@@ -1167,6 +1176,11 @@ class BacktestResult(BaseModel):
     confidence_upper: float = 0.0
     target_return: float = 0.0
     trading_day_count: int = Field(default=0, ge=0)
+    security_count: int = Field(
+        default=0,
+        ge=0,
+        description="Distinct securities represented by observable rule outcomes.",
+    )
     cluster_standard_error: float = Field(default=0.0, ge=0.0)
     lift_standard_error: float = Field(default=0.0, ge=0.0)
     dependence_lag_days: int = Field(default=0, ge=0)

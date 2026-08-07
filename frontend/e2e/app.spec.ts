@@ -592,6 +592,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
       target_return_pct: 5,
       minimum_samples: 30,
       minimum_trading_days: 20,
+      minimum_securities: 10,
       minimum_outcome_coverage_pct: 95,
       max_conditions: 2,
     },
@@ -629,6 +630,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           win_rate_lift: 0.11, confidence_lower: 0.56, confidence_upper: 0.70,
           target_return: 0.05,
           trading_day_count: 120,
+          security_count: 86,
           cluster_standard_error: 0.04,
           lift_standard_error: 0.035,
           dependence_lag_days: 19,
@@ -645,6 +647,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           win_rate_lift: 0.09, confidence_lower: 0.49, confidence_upper: 0.70,
           target_return: 0.05,
           trading_day_count: 55,
+          security_count: 48,
           cluster_standard_error: 0.06,
           lift_standard_error: 0.05,
           dependence_lag_days: 19,
@@ -655,8 +658,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
     error: null,
   };
   await page.route("**/api/discovery/tasks", route => {
-    const request = route.request().postDataJSON() as { minimum_trading_days: number; minimum_outcome_coverage_pct: number };
+    const request = route.request().postDataJSON() as { minimum_trading_days: number; minimum_securities: number; minimum_outcome_coverage_pct: number };
     expect(request.minimum_trading_days).toBe(20);
+    expect(request.minimum_securities).toBe(10);
     expect(request.minimum_outcome_coverage_pct).toBe(95);
     void route.fulfill({
       status: 202,
@@ -687,6 +691,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".research-config-grid")).toContainText("20240101 – 20251231");
   await expect(page.locator(".research-config-grid")).toContainText("20260101 – 20260630");
   await expect(page.locator(".research-config-grid")).toContainText("20 个交易日");
+  await expect(page.locator(".research-config-grid")).toContainText("30 / 20 / 10");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首验证结论");
   await expect(page.locator(".headline-metrics")).toContainText("1 / 1 条入榜规律验证通过");
@@ -694,6 +699,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% FDR");
   await expect(page.locator(".window-comparison")).toContainText("规则覆盖（可比事件 1200）");
   await expect(page.locator(".window-comparison")).toContainText("15.3%");
+  await expect(page.locator(".window-comparison")).toContainText("180 / 120 / 86");
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");

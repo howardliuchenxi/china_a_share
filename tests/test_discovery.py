@@ -621,6 +621,7 @@ def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
     result = FactorBacktester.evaluate_rule(dataset, "factor >= 2")
 
     assert result.sample_count == 3
+    assert result.security_count == 3
     assert result.positive_count == 2
     assert result.win_rate == pytest.approx(2 / 3)
     assert result.mean_return == pytest.approx(0.0666666667)
@@ -1208,6 +1209,32 @@ def test_rule_search_rejects_many_events_concentrated_on_one_day():
     assert candidates == []
 
 
+def test_rule_search_rejects_many_events_from_one_security():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 21)],
+            "ts_code": ["000001.SZ"] * 20,
+            "factor": list(range(20)),
+            "forward_return": [-0.10] * 10 + [0.10] * 10,
+        }
+    )
+
+    candidates, evaluated_count = RuleSearchEngine(
+        min_sample_count=4,
+        min_trading_day_count=4,
+        min_security_count=2,
+    ).search(
+        dataset,
+        dataset.copy(),
+        ["factor"],
+        max_conditions=1,
+        top_n=10,
+    )
+
+    assert evaluated_count > 0
+    assert candidates == []
+
+
 def test_rule_search_rejects_low_outcome_coverage():
     dataset = pd.DataFrame(
         {
@@ -1461,6 +1488,7 @@ def test_memory_store_preserves_extended_discovery_request():
             forward_days=20,
             minimum_samples=50,
             minimum_trading_days=25,
+            minimum_securities=12,
             minimum_outcome_coverage_pct=98,
             max_conditions=2,
         ),
@@ -1474,6 +1502,7 @@ def test_memory_store_preserves_extended_discovery_request():
     assert loaded.request.forward_days == 20
     assert loaded.request.minimum_samples == 50
     assert loaded.request.minimum_trading_days == 25
+    assert loaded.request.minimum_securities == 12
     assert loaded.request.minimum_outcome_coverage_pct == 98
     assert loaded.request.max_conditions == 2
 
