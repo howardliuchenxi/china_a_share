@@ -18,6 +18,12 @@ const discoveryFactorFields = new Set([
   "ps_ttm", "total_mv", "total_share", "turnover_rate",
   "turnover_rate_f", "vol", "volume_ratio",
 ]);
+const discoveryFactorEntries = DATA_DICTIONARY_ENTRIES.filter(entry =>
+  discoveryFactorFields.has(entry.field),
+);
+const discoveryFactorLabels = new Map(
+  discoveryFactorEntries.map(entry => [entry.field, entry.label]),
+);
 
 function percent(value: number, digits = 1) {
   return `${(value * 100).toFixed(digits)}%`;
@@ -31,6 +37,15 @@ function validationReason(hypothesis: FactorHypothesis) {
     case "passed": return "训练与验证同向，且通过 10% FDR";
     default: return "尚未完成独立验证";
   }
+}
+
+function ruleTitle(formula: string) {
+  const fields = [...new Set(
+    (formula.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])
+      .filter(token => discoveryFactorFields.has(token)),
+  )];
+  const labels = fields.map(field => discoveryFactorLabels.get(field) ?? field);
+  return labels.length > 0 ? `${labels.join(" × ")}分位规律` : "候选分位规律";
 }
 
 function MetricSet({ result }: { result: BacktestResult }) {
@@ -69,9 +84,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [submitError, setSubmitError] = useState("");
   const [showAllFactors, setShowAllFactors] = useState(false);
 
-  const availableFactors = DATA_DICTIONARY_ENTRIES.filter(entry =>
-    discoveryFactorFields.has(entry.field),
-  );
+  const availableFactors = discoveryFactorEntries;
   const bestRule = taskStatus?.progress.leaderboard[0] ?? null;
   const coverageFactors = [...new Set([
     ...Object.keys(taskStatus?.progress.training_factor_coverage ?? {}),
@@ -267,8 +280,8 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           {taskStatus.progress.leaderboard.map((hypothesis, index) => <article className="rule-card" key={hypothesis.formula}>
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
-              <div className="rule-heading"><div><h3>{hypothesis.description}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>带入分析页</button></div></div>
-              <p>{hypothesis.reasoning}</p>
+              <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>带入分析页</button></div></div>
+              <p>该条件由训练窗口分位阈值生成并完成排名锁定，随后进入独立验证，验证结果未参与重新排序。</p>
               <div className="window-comparison">
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>

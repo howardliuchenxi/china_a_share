@@ -675,6 +675,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");
   await expect(page.locator(".headline-metrics")).toContainText("5% 分位收益");
   await expect(page.locator(".rule-card")).toContainText("75");
+  await expect(page.locator(".rule-card h3")).toHaveText("市盈率TTM × 换手率分位规律");
+  await expect(page.locator(".rule-card")).toContainText("验证结果未参与重新排序");
   await expect(page.locator(".rule-card")).toContainText("97.4%");
   await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();
