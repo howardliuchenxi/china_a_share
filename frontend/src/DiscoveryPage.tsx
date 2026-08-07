@@ -101,6 +101,7 @@ function MetricSet({ result }: { result: BacktestResult }) {
       <span><small>收益超过 {percent(result.target_return)}</small><strong>{percent(result.win_rate)}</strong></span>
       <span><small>相对可比基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
+      <span><small>收益起点</small><strong>信号日复权收盘</strong></span>
       <span><small>样本 / 交易日 / 证券</small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
       <span><small>日期集中度折算后有效交易日</small><strong>{result.effective_trading_day_count.toFixed(1)}</strong></span>
       <span><small>证券集中度折算后有效证券</small><strong>{result.effective_security_count.toFixed(1)}</strong></span>
@@ -292,10 +293,10 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         <div>
           <p className="eyebrow">Evidence-first discovery</p>
           <h2>从历史数据反向发现规律</h2>
-          <p>系统只在训练窗口生成并排序规则，锁定候选后才进行独立验证，验证结果不参与重排。特征来自信号日，收益来自未来交易日。</p>
+          <p>系统只在训练窗口生成并排序规则，锁定候选后才进行独立验证，验证结果不参与重排。特征来自信号日，标签是信号日复权收盘到未来交易日复权收盘的事件收益。</p>
         </div>
         <div className="research-guardrails">
-          <span>无同日收益泄漏</span><span>最小样本约束</span><span>95% 概率区间</span>
+          <span>未来标签隔离</span><span>最小样本约束</span><span>95% 概率区间</span>
         </div>
       </section>
 
@@ -376,6 +377,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>训练窗口</small><strong>{taskStatus!.research_config.train_start} – {taskStatus!.research_config.train_end}</strong></div>
           <div><small>验证窗口</small><strong>{taskStatus!.research_config.val_start} – {taskStatus!.research_config.val_end}</strong></div>
           <div><small>未来收益周期</small><strong>{taskStatus!.research_config.forward_days} 个交易日</strong></div>
+          <div><small>收益区间</small><strong>信号日复权收盘 → 第 {taskStatus!.research_config.forward_days} 个未来交易日复权收盘</strong></div>
           <div><small>样本 / 交易日 / 证券门槛</small><strong>{taskStatus!.research_config.minimum_samples} / {taskStatus!.research_config.minimum_trading_days} / {taskStatus!.research_config.minimum_securities}</strong></div>
           <div><small>标签覆盖 / 条件数</small><strong>{taskStatus!.research_config.minimum_outcome_coverage_pct}% / {taskStatus!.research_config.max_conditions}</strong></div>
         </div>
@@ -387,7 +389,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>5% 分位收益</small><strong className={topTrainingRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(topTrainingRule.val_result!.return_p05, 2)}</strong><em>{topTrainingRule.val_result!.sample_count} / {topTrainingRule.val_result!.matched_sample_count} 个结果可观测</em></div>
           <div><small>提升检验 q-value</small><strong>{topTrainingRule.q_value.toFixed(3)}</strong><em>{topTrainingRule.fdr_family_size} 个盲测候选 · {topTrainingRule.q_value <= 0.1 ? "通过 10% BY-FDR" : "未通过 10% BY-FDR"}</em></div>
         </div>
-        <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序；即使训练候选在验证期证据不足，也会保留原名次并明确显示失败原因，不会让后续规则替补上位。标记为“验证通过”的规则必须满足全部证据门槛、在训练和验证窗口相对基准均为正向提升，并通过验证集 10% BY-FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日、独立证券数和未来标签覆盖率门槛，避免单一个股的长期历史被误称为市场规律；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在，并按缺失结果全部失败或全部成功的边界扩展概率区间。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠，也没有足以计算真实组合最大回撤的逐日持仓净值路径，因此不会伪造回撤值。命中率置信区间取日期聚类 HAC、日期集中度折算后的 score 区间和缺失标签边界的保守包络；相对提升区间再取 HAC 提升区间和规则—基准概率区间差的保守包络，既处理相邻信号共享收益，也防止全胜、全败或少量结果缺失时显示虚假确定性；正式显著性仍由计入规则与可比较样本重叠的提升检验及 BY-FDR 判定。嵌套分位规则共享大量样本，因此 q-value 使用可控制任意依赖候选族的 Benjamini–Yekutieli 谐波惩罚。验证期少于 20 个日期集中度折算有效日时仍可探索，但显著性固定为 p=1，不能通过 FDR。FDR 分母包含所有进入盲测的冻结候选，包括验证证据不足但仍保留展示的规则。统计关联仍不代表因果关系。</p>
+        <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序；即使训练候选在验证期证据不足，也会保留原名次并明确显示失败原因，不会让后续规则替补上位。标记为“验证通过”的规则必须满足全部证据门槛、在训练和验证窗口相对基准均为正向提升，并通过验证集 10% BY-FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日、独立证券数和未来标签覆盖率门槛，避免单一个股的长期历史被误称为市场规律；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在，并按缺失结果全部失败或全部成功的边界扩展概率区间。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；信号日完整行情通常只能在收盘后确认，因此结果不代表能够按同一收盘价成交。当前尚未计入涨跌停成交约束、手续费和持仓重叠，也没有足以计算真实组合最大回撤的逐日持仓净值路径，因此不会伪造回撤值。命中率置信区间取日期聚类 HAC、日期集中度折算后的 score 区间和缺失标签边界的保守包络；相对提升区间再取 HAC 提升区间和规则—基准概率区间差的保守包络，既处理相邻信号共享收益，也防止全胜、全败或少量结果缺失时显示虚假确定性；正式显著性仍由计入规则与可比较样本重叠的提升检验及 BY-FDR 判定。嵌套分位规则共享大量样本，因此 q-value 使用可控制任意依赖候选族的 Benjamini–Yekutieli 谐波惩罚。验证期少于 20 个日期集中度折算有效日时仍可探索，但显著性固定为 p=1，不能通过 FDR。FDR 分母包含所有进入盲测的冻结候选，包括验证证据不足但仍保留展示的规则。统计关联仍不代表因果关系。</p>
         <p className="research-caveat">验证通过还要求训练与验证窗口的标签缺失最坏情形提升均大于零：规则内缺失结果按全部失败、规则外的可比基准缺失结果按全部成功计算，同时保持规则样本与基准样本的真实重叠关系。最低标签覆盖门槛同时约束规则命中事件和完整的因子可比基准。用户配置的交易日门槛同时约束原始不同日期数和按事件权重折算的有效日期数；正式显著性另有至少 20 个有效日的固定底线，Student-t 自由度按有效日数向下取整后计算。证券门槛同样同时约束原始不同证券数和有效证券数，防止少数日期或个股贡献绝大多数命中事件。</p>
       </section>}
 

@@ -720,6 +720,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await page.getByRole("tab", { name: "策略挖掘" }).click();
 
   await expect(page.getByRole("heading", { name: "从历史数据反向发现规律" })).toBeVisible();
+  await expect(page.getByText("未来标签隔离", { exact: true })).toBeVisible();
+  await expect(page.getByText(/信号日复权收盘到未来交易日复权收盘的事件收益/)).toBeVisible();
   await expect(page.locator(".factor-grid")).toContainText("近3日上涨天数");
   await expect(page.locator(".factor-grid")).toContainText("复权5日收益率");
   await expect(page.locator(".factor-grid")).toContainText("复权5日波动率");
@@ -740,6 +742,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".research-config-grid")).toContainText("20240101 – 20251231");
   await expect(page.locator(".research-config-grid")).toContainText("20260101 – 20260630");
   await expect(page.locator(".research-config-grid")).toContainText("20 个交易日");
+  await expect(page.locator(".research-config-grid")).toContainText("信号日复权收盘 → 第 20 个未来交易日复权收盘");
   await expect(page.locator(".research-config-grid")).toContainText("30 / 20 / 10");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
@@ -748,6 +751,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
   await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
+  await expect(topWindowComparison).toContainText("信号日复权收盘");
   await expect(topWindowComparison).toContainText("可比基准标签覆盖");
   await expect(topWindowComparison).toContainText("98.5%");
   await expect(topWindowComparison).toContainText("96.9%");
@@ -790,6 +794,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
   await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
+  await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("信号日完整行情通常只能在收盘后确认");
 
   await expect(topRuleCard).toContainText("收益超过 5.0%");
   await expect(topRuleCard).toContainText("验证集收益超过 5.0% 的概率 95% 区间");

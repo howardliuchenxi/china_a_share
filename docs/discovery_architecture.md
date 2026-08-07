@@ -47,7 +47,10 @@ research note.
 `FactorBacktester` loads the exchange calendar, daily market data, daily basic
 factors, and adjustment factors for every required signal and outcome session.
 It computes forward returns from consistently split-and-dividend-adjusted close
-prices.
+prices. The interval starts at the signal session's adjusted close and ends at
+the configured future session's adjusted close. Signal-session market fields
+are generally complete only after that close, so this event endpoint is not an
+assumption that a strategy can transact at the same closing price.
 
 The dataset also derives point-in-time historical features without an extra
 provider source: split-and-dividend-adjusted five-session return, population
