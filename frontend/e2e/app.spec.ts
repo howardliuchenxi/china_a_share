@@ -775,7 +775,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("HAC、42.7 个有效日 score 与缺失标签的保守包络：49.0% – 70.0%");
   await expect(page.locator(".headline-metrics")).toContainText("可比基准命中率 51.0%");
   await expect(page.locator(".headline-metrics")).toContainText("含规则样本，N=407");
-  await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
+  await expect(page.locator(".headline-metrics")).toContainText("保守 95% 包络 2.0% – 16.0%");
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首预留验证结论");
   await expect(page.locator(".headline-metrics")).toContainText("1 / 2 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
@@ -828,6 +828,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
   await expect(page.getByText(/可比基准.*包含规则命中样本.*并不是只由未命中事件组成的对照组/)).toBeVisible();
   await expect(page.getByText(/提升等于规则命中率减去这个可比全体命中率/)).toBeVisible();
+  await expect(page.getByText(/验证通过.*单侧检验并控制 10% BY-FDR/)).toBeVisible();
+  await expect(page.getByText(/q-value 通过不等于保守 95% 包络必然完全高于零/)).toBeVisible();
   await expect(page.getByText(/预留验证.*只表示本次任务的搜索和排名没有读取该窗口结果/)).toBeVisible();
   await expect(page.getByText(/同一验证窗口调整因子、日期、门槛或目标收益/)).toBeVisible();
   await expect(page.getByText(/应改用更晚且从未查看的数据再次确认/)).toBeVisible();
@@ -841,7 +843,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
 
   await expect(topRuleCard).toContainText("收益超过 5.0%");
   await expect(topRuleCard).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
-  await expect(topRuleCard).toContainText("验证集相对基准提升 95% 区间：2.0% – 16.0%");
+  await expect(topRuleCard).toContainText("验证集相对可比全体提升保守 95% 包络：2.0% – 16.0%");
   await expect(topRuleCard).toContainText("标签缺失最坏—最好提升：7.0% – 11.0%");
   await expect(topRuleCard).toContainText("验证判定：训练与验证同向，且通过 10% BY-FDR");
   await expect(topRuleCard).toContainText("训练—验证提升差距：3.0%");
