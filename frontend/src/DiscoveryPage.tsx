@@ -24,6 +24,10 @@ const discoveryFactorEntries = DATA_DICTIONARY_ENTRIES.filter(entry =>
 const discoveryFactorLabels = new Map(
   discoveryFactorEntries.map(entry => [entry.field, entry.label]),
 );
+const unsupportedDirectApplicationFields = new Set([
+  "positive_days_3",
+  "return_5d_pct",
+]);
 
 function percent(value: number, digits = 1) {
   return `${(value * 100).toFixed(digits)}%`;
@@ -51,6 +55,16 @@ function thresholdSource(source: FactorHypothesis["threshold_source"]) {
     case "mixed": return "训练窗口分位阈值与离散实际值";
     default: return "未记录的训练阈值来源";
   }
+}
+
+function directApplicationLimitation(formula: string) {
+  const fields = formula.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
+  const unsupported = [...new Set(fields.filter(
+    field => unsupportedDirectApplicationFields.has(field),
+  ))];
+  return unsupported.length > 0
+    ? `分析页尚不能按相同的复权与连续交易日口径执行：${unsupported.join("、")}`
+    : null;
 }
 
 function ruleTitle(formula: string) {
@@ -312,10 +326,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">
         <div className="section-heading"><span>04</span><h2>候选规律排行榜</h2></div>
         <div className="rule-list">
-          {taskStatus.progress.leaderboard.map((hypothesis, index) => <article className="rule-card" key={hypothesis.formula}>
+          {taskStatus.progress.leaderboard.map((hypothesis, index) => {
+            const applicationLimitation = directApplicationLimitation(hypothesis.formula);
+            return <article className="rule-card" key={hypothesis.formula}>
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
-              <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>带入分析页</button></div></div>
+              <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" disabled={applicationLimitation !== null} title={applicationLimitation ?? undefined} onClick={() => onApplyFormula(hypothesis.formula)}>{applicationLimitation ? "暂不可带入" : "带入分析页"}</button></div></div>
+              {applicationLimitation && <p className="confidence-note">带入限制：{applicationLimitation}。研究结果仍可查看，但不会交给模型猜测执行口径。</p>}
               <p>阈值来源：{thresholdSource(hypothesis.threshold_source)}。规则按扣除单侧 95% 不确定性惩罚后的相对提升完成排名锁定；同分时优先选择 5% 下行分位和中位收益更高的规则。随后进入独立验证，验证结果未参与重新排序。</p>
               <div className="window-comparison">
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
@@ -328,9 +345,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
               <p className="confidence-note">相对基准提升检验 p-value：{hypothesis.p_value.toFixed(3)} · BY-FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}（{hypothesis.fdr_family_size} 个盲测候选）</p>
               <p className="confidence-note">验证判定：{validationReason(hypothesis)}</p>
             </div>
-          </article>)}
+          </article>})}
         </div>
-        <p className="research-caveat">“带入分析页”会生成今日筛选请求，但仍需经过查询规划。提交后请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
+        <p className="research-caveat">“带入分析页”仅对分析页能够保持同一计算口径的字段开放，并会生成今日筛选请求；含内部复权序列特征的规则在同口径执行器完成前不会被交给模型猜测。提交普通规则后仍需经过查询规划，请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
       </section>}
     </div>
   );

@@ -151,3 +151,9 @@ The summary explicitly describes the first rule as the training leader and
 reports how many leaderboard entries passed validation. Applying a rule sends
 an explicit natural-language screening request to the analysis page; the user
 must still verify the resulting query plan before execution.
+
+Rules containing internal adjusted-history features are not directly applied
+until the analysis page can reproduce their adjusted-price and consecutive-
+session semantics exactly. Their evidence remains visible, but the disabled
+action explains the missing execution capability instead of asking a planner to
+guess or silently translate the formula.

@@ -587,7 +587,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
       train_end: "20251231",
       val_start: "20260101",
       val_end: "20260630",
-      factors: ["pe_ttm", "turnover_rate", "circ_mv"],
+      factors: ["pe_ttm", "turnover_rate", "circ_mv", "positive_days_3"],
       forward_days: 20,
       target_return_pct: 5,
       minimum_samples: 30,
@@ -599,15 +599,15 @@ test("discovery page submits a bounded study and renders validation evidence", a
     progress: {
       current_generation: 1,
       total_generations: 1,
-      formulas_tested: 1,
+      formulas_tested: 2,
       candidates_evaluated: 18,
       current_log: "规律搜索与独立验证已完成。",
       current_stage: "completed",
       training_sample_count: 1200,
       training_samples_purged: 80,
       validation_sample_count: 420,
-      training_factor_coverage: { pe_ttm: 0.98, turnover_rate: 0.96, circ_mv: 1 },
-      validation_factor_coverage: { pe_ttm: 0.97, turnover_rate: 0.95, circ_mv: 1 },
+      training_factor_coverage: { pe_ttm: 0.98, turnover_rate: 0.96, circ_mv: 1, positive_days_3: 0.91 },
+      validation_factor_coverage: { pe_ttm: 0.97, turnover_rate: 0.95, circ_mv: 1, positive_days_3: 0.90 },
       leaderboard: [{
         formula: "pe_ttm <= 12 and turnover_rate >= 8",
         description: "Low valuation with active turnover",
@@ -661,8 +661,16 @@ test("discovery page submits a bounded study and renders validation evidence", a
     },
     error: null,
   };
+  discoveryStatus.progress.leaderboard.push({
+    ...discoveryStatus.progress.leaderboard[0],
+    formula: "positive_days_3 >= 3",
+    description: "Three positive adjusted-close sessions",
+    reasoning: "Generated from observed discrete training values.",
+    threshold_source: "observed_value",
+  });
   await page.route("**/api/discovery/tasks", route => {
-    const request = route.request().postDataJSON() as { minimum_trading_days: number; minimum_securities: number; minimum_outcome_coverage_pct: number };
+    const request = route.request().postDataJSON() as { factors: string[]; minimum_trading_days: number; minimum_securities: number; minimum_outcome_coverage_pct: number };
+    expect(request.factors).toContain("positive_days_3");
     expect(request.minimum_trading_days).toBe(20);
     expect(request.minimum_securities).toBe(10);
     expect(request.minimum_outcome_coverage_pct).toBe(95);
@@ -699,6 +707,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByRole("heading", { name: "从历史数据反向发现规律" })).toBeVisible();
   await expect(page.locator(".factor-grid")).toContainText("近3日上涨天数");
   await expect(page.locator(".factor-grid")).toContainText("复权5日收益率");
+  await page.locator(".factor-checkbox").filter({ hasText: "近3日上涨天数" }).locator("input").check();
   await expect(page.getByText(/24 个配对席位会先覆盖所有存在有效候选的因子/)).toBeVisible();
   await expect(page.getByText(/离散因子会枚举全部实际阈值/)).toBeVisible();
   await expect(page.getByLabel("最少交易日")).toHaveAttribute("max", "30");
@@ -706,6 +715,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await page.getByRole("button", { name: "开始反向搜索" }).click();
 
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
+  const topRuleCard = page.locator(".rule-card").first();
+  const topWindowComparison = topRuleCard.locator(".window-comparison");
   await expect(page.getByText("本次研究配置（任务快照）", { exact: true })).toBeVisible();
   await expect(page.locator(".research-config-grid")).toContainText("20240101 – 20251231");
   await expect(page.locator(".research-config-grid")).toContainText("20260101 – 20260630");
@@ -714,43 +725,45 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首验证结论");
-  await expect(page.locator(".headline-metrics")).toContainText("1 / 1 条入榜规律验证通过");
+  await expect(page.locator(".headline-metrics")).toContainText("2 / 2 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
-  await expect(page.locator(".window-comparison")).toContainText("规则覆盖（可比事件 1200）");
-  await expect(page.locator(".window-comparison")).toContainText("15.3%");
-  await expect(page.locator(".window-comparison")).toContainText("180 / 120 / 86");
+  await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
+  await expect(topWindowComparison).toContainText("15.3%");
+  await expect(topWindowComparison).toContainText("180 / 120 / 86");
   await expect(page.locator(".rule-list")).toContainText("规则覆盖差距：2.9%");
   expect(statusPollCount).toBeGreaterThanOrEqual(2);
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");
   await expect(page.locator(".headline-metrics")).toContainText("5% 分位收益");
-  await expect(page.locator(".rule-card")).toContainText("75");
-  await expect(page.locator(".rule-card h3")).toHaveText("市盈率TTM × 换手率分位规律");
-  await expect(page.locator(".rule-card")).toContainText("验证结果未参与重新排序");
-  await expect(page.locator(".rule-card")).toContainText("阈值来源：训练窗口分位阈值");
-  await expect(page.locator(".rule-card")).toContainText("97.4%");
+  await expect(topRuleCard).toContainText("75");
+  await expect(page.locator(".rule-card h3").first()).toHaveText("市盈率TTM × 换手率分位规律");
+  await expect(topRuleCard).toContainText("验证结果未参与重新排序");
+  await expect(topRuleCard).toContainText("阈值来源：训练窗口分位阈值");
+  await expect(topRuleCard).toContainText("97.4%");
   await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
   await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
-  await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true })).toBeVisible();
+  await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
 
-  await expect(page.locator(".rule-card")).toContainText("收益超过 5.0%");
-  await expect(page.locator(".rule-card")).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
-  await expect(page.locator(".rule-card")).toContainText("验证集相对基准提升 95% 区间：2.0% – 16.0%");
-  await expect(page.locator(".rule-card")).toContainText("验证判定：训练与验证同向，且通过 10% BY-FDR");
-  await expect(page.locator(".rule-card")).toContainText("训练—验证提升差距：3.0%");
-  await expect(page.locator(".rule-card")).toContainText("保守相对提升：2.7%");
+  await expect(topRuleCard).toContainText("收益超过 5.0%");
+  await expect(topRuleCard).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
+  await expect(topRuleCard).toContainText("验证集相对基准提升 95% 区间：2.0% – 16.0%");
+  await expect(topRuleCard).toContainText("验证判定：训练与验证同向，且通过 10% BY-FDR");
+  await expect(topRuleCard).toContainText("训练—验证提升差距：3.0%");
+  await expect(topRuleCard).toContainText("保守相对提升：2.7%");
+  await expect(page.getByRole("button", { name: "暂不可带入" })).toBeDisabled();
+  await expect(page.locator(".rule-card").nth(1)).toContainText("不会交给模型猜测执行口径");
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();
   await expect(page.getByText("超过 5.0% 的概率", { exact: true })).toBeVisible();
-  await expect(page.locator(".factor-coverage-grid > div")).toHaveCount(3);
+  await expect(page.locator(".factor-coverage-grid > div")).toHaveCount(4);
 
   await expect(page.getByText(/仍需经过查询规划/)).toBeVisible();
   await page.getByRole("button", { name: "带入分析页" }).click();
