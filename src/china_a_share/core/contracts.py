@@ -1249,13 +1249,17 @@ class FactorHypothesis(BaseModel):
     validation_passed: bool = Field(
         default=False,
         description=(
-            "Whether both windows have positive lift, validation has sufficient "
-            "signal dates, and validation passes FDR."
+            "Whether both windows have positive lift, validation satisfies all "
+            "evidence thresholds, and validation passes FDR."
         ),
     )
     validation_reason: Literal[
         "not_evaluated",
         "training_lift_not_positive",
+        "insufficient_validation_samples",
+        "insufficient_validation_days",
+        "insufficient_validation_securities",
+        "insufficient_validation_coverage",
         "validation_lift_not_positive",
         "insufficient_significance_days",
         "fdr_not_passed",

@@ -1448,7 +1448,114 @@ def test_validation_reports_the_first_failed_replication_gate(
         q_value=q_value,
     )
 
-    assert RuleSearchEngine._validation_reason(candidate) == expected
+    search = RuleSearchEngine(
+        min_sample_count=0,
+        min_trading_day_count=0,
+        min_security_count=0,
+        min_outcome_coverage=0.0,
+    )
+
+    assert search._validation_reason(candidate) == expected
+
+
+@pytest.mark.parametrize(
+    ("result_update", "expected"),
+    [
+        ({"sample_count": 9}, "insufficient_validation_samples"),
+        ({"trading_day_count": 4}, "insufficient_validation_days"),
+        ({"security_count": 2}, "insufficient_validation_securities"),
+        ({"outcome_coverage_rate": 0.89}, "insufficient_validation_coverage"),
+    ],
+)
+def test_validation_reason_identifies_the_failed_evidence_threshold(
+    result_update,
+    expected,
+):
+    validation_result = BacktestResult(
+        win_rate=0.60,
+        mean_return=0.03,
+        eval_time_ms=1,
+        sample_count=10,
+        trading_day_count=20,
+        security_count=5,
+        outcome_coverage_rate=1.0,
+        win_rate_lift=0.10,
+    ).model_copy(update=result_update)
+    candidate = FactorHypothesis(
+        formula="value >= 1",
+        description="Test rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            win_rate_lift=0.10,
+        ),
+        val_result=validation_result,
+    )
+    search = RuleSearchEngine(
+        min_sample_count=10,
+        min_trading_day_count=5,
+        min_security_count=3,
+        min_outcome_coverage=0.90,
+    )
+
+    assert search._validation_reason(candidate) == expected
+
+
+def test_validation_keeps_training_ranked_candidates_with_insufficient_evidence():
+    validation = pd.DataFrame(
+        {
+            "trade_date": [f"202601{index:02d}" for index in range(1, 21)],
+            "ts_code": [f"{index:06d}.SZ" for index in range(1, 21)],
+            "value": list(range(20)),
+            "forward_return": [-0.10] * 10 + [0.10] * 10,
+        }
+    )
+    candidates = [
+        FactorHypothesis(
+            formula="value >= 100",
+            description="Training leader",
+            reasoning="Test evidence",
+            train_result=BacktestResult(
+                win_rate=0.70,
+                mean_return=0.05,
+                eval_time_ms=1,
+                sample_count=10,
+                win_rate_lift=0.20,
+            ),
+        ),
+        FactorHypothesis(
+            formula="value >= 10",
+            description="Training runner-up",
+            reasoning="Test evidence",
+            train_result=BacktestResult(
+                win_rate=0.60,
+                mean_return=0.03,
+                eval_time_ms=1,
+                sample_count=10,
+                win_rate_lift=0.10,
+            ),
+        ),
+    ]
+    search = RuleSearchEngine(
+        min_sample_count=5,
+        min_trading_day_count=5,
+        min_security_count=5,
+    )
+
+    validated = search._validate_candidates(candidates, validation)
+    search._apply_false_discovery_rate(validated, family_size=len(candidates))
+    for candidate in validated:
+        candidate.validation_reason = search._validation_reason(candidate)
+
+    assert [candidate.formula for candidate in validated] == [
+        "value >= 100",
+        "value >= 10",
+    ]
+    assert validated[0].val_result is not None
+    assert validated[0].p_value == 1.0
+    assert validated[0].validation_reason == "insufficient_validation_samples"
 
 
 def test_validation_reason_reports_insufficient_significance_days():
@@ -1473,7 +1580,12 @@ def test_validation_reason_reports_insufficient_significance_days():
     )
 
     assert (
-        RuleSearchEngine._validation_reason(candidate)
+        RuleSearchEngine(
+            min_sample_count=0,
+            min_trading_day_count=0,
+            min_security_count=0,
+            min_outcome_coverage=0.0,
+        )._validation_reason(candidate)
         == "insufficient_significance_days"
     )
 
@@ -1485,7 +1597,10 @@ def test_validation_reason_reports_an_unevaluated_candidate():
         reasoning="Test evidence",
     )
 
-    assert RuleSearchEngine._validation_reason(candidate) == "not_evaluated"
+    assert (
+        RuleSearchEngine(min_sample_count=0)._validation_reason(candidate)
+        == "not_evaluated"
+    )
 
 
 def test_clustered_lift_significance_remains_finite_for_large_samples():

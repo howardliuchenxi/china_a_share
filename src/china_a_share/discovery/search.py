@@ -103,13 +103,26 @@ class RuleSearchEngine:
         # Validation outcomes never reorder the training-frozen shortlist.
         return validated[:top_n], evaluated_count
 
-    @staticmethod
-    def _validation_reason(candidate: FactorHypothesis) -> str:
+    def _validation_reason(self, candidate: FactorHypothesis) -> str:
         """Return the first failed gate in the replication policy."""
         if not candidate.train_result or not candidate.val_result:
             return "not_evaluated"
         if candidate.train_result.win_rate_lift <= 0.0:
             return "training_lift_not_positive"
+        if candidate.val_result.sample_count < self._min_sample_count:
+            return "insufficient_validation_samples"
+        if (
+            candidate.val_result.trading_day_count
+            < self._min_trading_day_count
+        ):
+            return "insufficient_validation_days"
+        if candidate.val_result.security_count < self._min_security_count:
+            return "insufficient_validation_securities"
+        if (
+            candidate.val_result.outcome_coverage_rate
+            < self._min_outcome_coverage
+        ):
+            return "insufficient_validation_coverage"
         if candidate.val_result.win_rate_lift <= 0.0:
             return "validation_lift_not_positive"
         if (
@@ -293,15 +306,14 @@ class RuleSearchEngine:
                 target_return=self._target_return,
                 dependence_lag_days=self._dependence_lag_days,
             )
-            if (
+            has_sufficient_evidence = not (
                 validation_result.sample_count < self._min_sample_count
                 or validation_result.trading_day_count
                 < self._min_trading_day_count
                 or validation_result.security_count < self._min_security_count
                 or validation_result.outcome_coverage_rate
                 < self._min_outcome_coverage
-            ):
-                continue
+            )
             train_result = candidate.train_result
             generalization_gap = self._lift_generalization_gap(
                 train_result,
@@ -317,10 +329,14 @@ class RuleSearchEngine:
                 validation_result,
                 generalization_gap,
             )
-            candidate.p_value = self._clustered_lift_tail_probability(
-                validation_result.win_rate_lift,
-                validation_result.lift_standard_error,
-                validation_result.trading_day_count,
+            candidate.p_value = (
+                self._clustered_lift_tail_probability(
+                    validation_result.win_rate_lift,
+                    validation_result.lift_standard_error,
+                    validation_result.trading_day_count,
+                )
+                if has_sufficient_evidence
+                else 1.0
             )
             validated.append(candidate)
         return validated

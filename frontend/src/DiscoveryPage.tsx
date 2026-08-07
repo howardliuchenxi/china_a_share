@@ -32,6 +32,10 @@ function percent(value: number, digits = 1) {
 function validationReason(hypothesis: FactorHypothesis) {
   switch (hypothesis.validation_reason) {
     case "training_lift_not_positive": return "训练期未获得正提升";
+    case "insufficient_validation_samples": return "验证期有效事件数不足";
+    case "insufficient_validation_days": return "验证期独立交易日不足";
+    case "insufficient_validation_securities": return "验证期独立证券数不足";
+    case "insufficient_validation_coverage": return "验证期未来标签覆盖率不足";
     case "validation_lift_not_positive": return "验证期未复现正提升";
     case "insufficient_significance_days": return "验证期不足 20 个独立信号日";
     case "fdr_not_passed": return "未通过 10% FDR";
@@ -293,7 +297,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>5% 分位收益</small><strong className={topTrainingRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(topTrainingRule.val_result!.return_p05, 2)}</strong><em>{topTrainingRule.val_result!.sample_count} / {topTrainingRule.val_result!.matched_sample_count} 个结果可观测</em></div>
           <div><small>提升检验 q-value</small><strong>{topTrainingRule.q_value.toFixed(3)}</strong><em>{topTrainingRule.fdr_family_size} 个盲测候选 · {topTrainingRule.q_value <= 0.1 ? "通过 10% FDR" : "未通过 10% FDR"}</em></div>
         </div>
-        <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。标记为“验证通过”的规则必须在训练和验证窗口相对基准均为正向提升，并通过验证集 10% FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日、独立证券数和未来标签覆盖率门槛，避免单一个股的长期历史被误称为市场规律；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠，也没有足以计算真实组合最大回撤的逐日持仓净值路径，因此不会伪造回撤值。置信区间取日期聚类 HAC 与独立交易日 score 区间的保守包络，既处理相邻信号共享收益，也防止全胜或全败样本显示虚假确定性；提升检验还计入规则与可比较样本基准的重叠。验证期少于 20 个独立信号日时仍可探索，但显著性固定为 p=1，不能通过 FDR。FDR 分母包含所有进入盲测的冻结候选，包括因验证样本不足而未入榜的规则。统计关联仍不代表因果关系。</p>
+        <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序；即使训练候选在验证期证据不足，也会保留原名次并明确显示失败原因，不会让后续规则替补上位。标记为“验证通过”的规则必须满足全部证据门槛、在训练和验证窗口相对基准均为正向提升，并通过验证集 10% FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日、独立证券数和未来标签覆盖率门槛，避免单一个股的长期历史被误称为市场规律；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠，也没有足以计算真实组合最大回撤的逐日持仓净值路径，因此不会伪造回撤值。置信区间取日期聚类 HAC 与独立交易日 score 区间的保守包络，既处理相邻信号共享收益，也防止全胜或全败样本显示虚假确定性；提升检验还计入规则与可比较样本基准的重叠。验证期少于 20 个独立信号日时仍可探索，但显著性固定为 p=1，不能通过 FDR。FDR 分母包含所有进入盲测的冻结候选，包括验证证据不足但仍保留展示的规则。统计关联仍不代表因果关系。</p>
       </section>}
 
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">

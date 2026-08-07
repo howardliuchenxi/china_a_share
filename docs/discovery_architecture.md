@@ -74,7 +74,11 @@ Ties are resolved by the fifth-percentile forward return and then median return,
 so an isolated positive outlier cannot win a tie through mean return alone.
 
 The training-ranked validation shortlist is frozen before validation outcomes
-are read. Validation evidence never reorders the leaderboard.
+are read. Every frozen candidate remains in that order even when its validation
+evidence misses a configured sample, date, security, or outcome-coverage
+threshold. Such candidates receive `p = 1` and an explicit machine-readable
+failure reason instead of disappearing and allowing a lower training rank to
+take their place. Validation evidence never reorders the leaderboard.
 
 ## Statistical guardrails
 
@@ -103,9 +107,10 @@ validation signal dates. Shorter studies remain visible for exploration but
 receive `p = 1`, report `insufficient_significance_days`, and cannot pass FDR.
 
 The false-discovery family contains every frozen candidate sent to validation,
-including candidates later excluded for insufficient validation evidence. A
-rule passes validation only when training and validation lift are both positive
-and the validation q-value is at most 0.10.
+including candidates retained with insufficient validation evidence. A rule
+passes validation only when every configured evidence threshold is satisfied,
+training and validation lift are both positive, and the validation q-value is
+at most 0.10.
 
 ## Result interpretation
 
