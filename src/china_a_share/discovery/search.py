@@ -112,6 +112,8 @@ class RuleSearchEngine:
             return "not_evaluated"
         if candidate.train_result.win_rate_lift <= 0.0:
             return "training_lift_not_positive"
+        if candidate.train_result.outcome_robust_lift_lower <= 0.0:
+            return "training_outcome_attrition_not_robust"
         if candidate.val_result.sample_count < self._min_sample_count:
             return "insufficient_validation_samples"
         if (
@@ -128,6 +130,8 @@ class RuleSearchEngine:
             return "insufficient_validation_coverage"
         if candidate.val_result.win_rate_lift <= 0.0:
             return "validation_lift_not_positive"
+        if candidate.val_result.outcome_robust_lift_lower <= 0.0:
+            return "validation_outcome_attrition_not_robust"
         if (
             candidate.val_result.trading_day_count
             < MINIMUM_SIGNIFICANCE_TRADING_DAYS

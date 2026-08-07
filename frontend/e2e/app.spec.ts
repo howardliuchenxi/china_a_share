@@ -631,6 +631,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
           baseline_sample_count: 1200,
           win_rate_lift: 0.11, lift_confidence_lower: 0.04,
+          outcome_robust_lift_lower: 0.09, outcome_robust_lift_upper: 0.13,
           lift_confidence_upper: 0.18, confidence_lower: 0.56, confidence_upper: 0.70,
           target_return: 0.05,
           trading_day_count: 120,
@@ -653,6 +654,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
           baseline_sample_count: 420,
           win_rate_lift: 0.09, lift_confidence_lower: 0.02,
+          outcome_robust_lift_lower: 0.07, outcome_robust_lift_upper: 0.11,
           lift_confidence_upper: 0.16, confidence_lower: 0.49, confidence_upper: 0.70,
           target_return: 0.05,
           trading_day_count: 55,
@@ -776,6 +778,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topRuleCard).toContainText("收益超过 5.0%");
   await expect(topRuleCard).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
   await expect(topRuleCard).toContainText("验证集相对基准提升 95% 区间：2.0% – 16.0%");
+  await expect(topRuleCard).toContainText("标签缺失最坏—最好提升：7.0% – 11.0%");
   await expect(topRuleCard).toContainText("验证判定：训练与验证同向，且通过 10% BY-FDR");
   await expect(topRuleCard).toContainText("训练—验证提升差距：3.0%");
   await expect(topRuleCard).toContainText("保守相对提升：2.7%");

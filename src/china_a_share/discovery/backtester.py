@@ -407,6 +407,17 @@ class FactorBacktester:
             baseline_outcome_upper,
         )
         (
+            outcome_robust_lift_lower,
+            outcome_robust_lift_upper,
+        ) = FactorBacktester._outcome_robust_lift_bounds(
+            selected_positive_count=positive_count,
+            selected_matched_count=matched_sample_count,
+            selected_observed_count=len(returns),
+            baseline_positive_count=baseline_positive_count,
+            baseline_matched_count=eligible_sample_count,
+            baseline_observed_count=len(baseline),
+        )
+        (
             lift_confidence_lower,
             lift_confidence_upper,
         ) = FactorBacktester._lift_confidence_interval(
@@ -434,6 +445,8 @@ class FactorBacktester:
             baseline_win_rate=baseline_win_rate,
             baseline_sample_count=len(baseline),
             win_rate_lift=float(win_rate - baseline_win_rate),
+            outcome_robust_lift_lower=outcome_robust_lift_lower,
+            outcome_robust_lift_upper=outcome_robust_lift_upper,
             lift_confidence_lower=lift_confidence_lower,
             lift_confidence_upper=lift_confidence_upper,
             confidence_lower=confidence_lower,
@@ -538,6 +551,36 @@ class FactorBacktester:
             positive_count / matched_count,
             (positive_count + missing_count) / matched_count,
         )
+
+    @staticmethod
+    def _outcome_robust_lift_bounds(
+        *,
+        selected_positive_count: int,
+        selected_matched_count: int,
+        selected_observed_count: int,
+        baseline_positive_count: int,
+        baseline_matched_count: int,
+        baseline_observed_count: int,
+    ) -> tuple[float, float]:
+        """Bound lift while preserving selected/baseline outcome overlap."""
+        if selected_matched_count <= 0 or baseline_matched_count <= 0:
+            return -1.0, 1.0
+        selected_missing = selected_matched_count - selected_observed_count
+        baseline_missing = baseline_matched_count - baseline_observed_count
+        non_selected_missing = baseline_missing - selected_missing
+        if selected_missing < 0 or non_selected_missing < 0:
+            raise ValueError("Outcome counts violate selected/baseline containment.")
+        lower_selected = selected_positive_count / selected_matched_count
+        lower_baseline = (
+            baseline_positive_count + non_selected_missing
+        ) / baseline_matched_count
+        upper_selected = (
+            selected_positive_count + selected_missing
+        ) / selected_matched_count
+        upper_baseline = (
+            baseline_positive_count + selected_missing
+        ) / baseline_matched_count
+        return lower_selected - lower_baseline, upper_selected - upper_baseline
 
     def _load_trade_dates(
         self,

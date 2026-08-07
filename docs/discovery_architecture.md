@@ -149,8 +149,11 @@ Shorter studies remain visible for exploration but receive `p = 1`, report
 The false-discovery family contains every frozen candidate sent to validation,
 including candidates retained with insufficient validation evidence. A rule
 passes validation only when every configured evidence threshold is satisfied,
-training and validation lift are both positive, and the validation q-value is
-at most 0.10.
+training and validation lift are both positive, both lifts remain positive when
+selected missing outcomes fail and non-selected comparable-baseline missing
+outcomes succeed while preserving the actual selected/baseline overlap,
+and the validation q-value is at most 0.10. This prevents an observed-only
+p-value from overriding an attrition-sensitive economic conclusion.
 
 ## Result interpretation
 

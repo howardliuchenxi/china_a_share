@@ -1216,6 +1216,24 @@ class BacktestResult(BaseModel):
         ),
     )
     win_rate_lift: float = 0.0
+    outcome_robust_lift_lower: float = Field(
+        default=-1.0,
+        ge=-1.0,
+        le=1.0,
+        description=(
+            "Worst-case win-rate lift when selected missing outcomes fail and "
+            "non-selected baseline missing outcomes succeed."
+        ),
+    )
+    outcome_robust_lift_upper: float = Field(
+        default=1.0,
+        ge=-1.0,
+        le=1.0,
+        description=(
+            "Best-case win-rate lift when selected missing outcomes succeed and "
+            "non-selected baseline missing outcomes fail."
+        ),
+    )
     lift_confidence_lower: float = Field(
         default=-1.0,
         ge=-1.0,
@@ -1342,11 +1360,13 @@ class FactorHypothesis(BaseModel):
     validation_reason: Literal[
         "not_evaluated",
         "training_lift_not_positive",
+        "training_outcome_attrition_not_robust",
         "insufficient_validation_samples",
         "insufficient_validation_days",
         "insufficient_validation_securities",
         "insufficient_validation_coverage",
         "validation_lift_not_positive",
+        "validation_outcome_attrition_not_robust",
         "insufficient_significance_days",
         "fdr_not_passed",
         "passed",

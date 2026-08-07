@@ -959,6 +959,24 @@ def test_probability_interval_includes_unobserved_outcome_extremes():
     assert result.outcome_coverage_rate == pytest.approx(100 / 105)
     assert result.confidence_lower == pytest.approx(100 / 105)
     assert result.confidence_upper == 1.0
+    assert result.outcome_robust_lift_lower == pytest.approx(0.0)
+    assert result.outcome_robust_lift_upper == pytest.approx(0.0)
+
+
+def test_outcome_robust_lift_preserves_selected_baseline_overlap():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 211)],
+            "factor": [1.0] * 100 + [0.0] * 110,
+            "forward_return": [0.10] * 100 + [-0.10] * 100 + [None] * 10,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.win_rate_lift == pytest.approx(0.50)
+    assert result.outcome_robust_lift_lower == pytest.approx(1 - 110 / 210)
+    assert result.outcome_robust_lift_upper == pytest.approx(1 - 100 / 210)
 
 
 def test_rule_evaluation_reports_single_security_event_concentration():
@@ -1889,17 +1907,42 @@ def test_false_discovery_rate_rejects_an_incomplete_test_family():
 
 
 @pytest.mark.parametrize(
-    ("train_lift", "validation_lift", "q_value", "expected"),
+    (
+        "train_lift",
+        "train_outcome_lower",
+        "validation_lift",
+        "validation_outcome_lower",
+        "q_value",
+        "expected",
+    ),
     [
-        (-0.05, 0.20, 0.01, "training_lift_not_positive"),
-        (0.05, -0.01, 0.01, "validation_lift_not_positive"),
-        (0.05, 0.20, 0.11, "fdr_not_passed"),
-        (0.05, 0.20, 0.10, "passed"),
+        (-0.05, -0.05, 0.20, 0.20, 0.01, "training_lift_not_positive"),
+        (
+            0.05,
+            0.0,
+            0.20,
+            0.20,
+            0.01,
+            "training_outcome_attrition_not_robust",
+        ),
+        (0.05, 0.05, -0.01, -0.01, 0.01, "validation_lift_not_positive"),
+        (
+            0.05,
+            0.05,
+            0.20,
+            -0.01,
+            0.01,
+            "validation_outcome_attrition_not_robust",
+        ),
+        (0.05, 0.05, 0.20, 0.20, 0.11, "fdr_not_passed"),
+        (0.05, 0.05, 0.20, 0.20, 0.10, "passed"),
     ],
 )
 def test_validation_reports_the_first_failed_replication_gate(
     train_lift,
+    train_outcome_lower,
     validation_lift,
+    validation_outcome_lower,
     q_value,
     expected,
 ):
@@ -1913,6 +1956,7 @@ def test_validation_reports_the_first_failed_replication_gate(
             max_drawdown=-0.10,
             eval_time_ms=1,
             win_rate_lift=train_lift,
+            outcome_robust_lift_lower=train_outcome_lower,
         ),
         val_result=BacktestResult(
             win_rate=0.70,
@@ -1920,6 +1964,7 @@ def test_validation_reports_the_first_failed_replication_gate(
             max_drawdown=-0.05,
             eval_time_ms=1,
             win_rate_lift=validation_lift,
+            outcome_robust_lift_lower=validation_outcome_lower,
             trading_day_count=20,
         ),
         q_value=q_value,
@@ -1967,6 +2012,7 @@ def test_validation_reason_identifies_the_failed_evidence_threshold(
             mean_return=0.03,
             eval_time_ms=1,
             win_rate_lift=0.10,
+            outcome_robust_lift_lower=0.10,
         ),
         val_result=validation_result,
     )
@@ -2000,6 +2046,7 @@ def test_validation_keeps_training_ranked_candidates_with_insufficient_evidence(
                 eval_time_ms=1,
                 sample_count=10,
                 win_rate_lift=0.20,
+                outcome_robust_lift_lower=0.20,
             ),
         ),
         FactorHypothesis(
@@ -2012,6 +2059,7 @@ def test_validation_keeps_training_ranked_candidates_with_insufficient_evidence(
                 eval_time_ms=1,
                 sample_count=10,
                 win_rate_lift=0.10,
+                outcome_robust_lift_lower=0.10,
             ),
         ),
     ]
@@ -2045,12 +2093,14 @@ def test_validation_reason_reports_insufficient_significance_days():
             mean_return=0.03,
             eval_time_ms=1,
             win_rate_lift=0.10,
+            outcome_robust_lift_lower=0.10,
         ),
         val_result=BacktestResult(
             win_rate=0.60,
             mean_return=0.03,
             eval_time_ms=1,
             win_rate_lift=0.10,
+            outcome_robust_lift_lower=0.10,
             trading_day_count=19,
         ),
         q_value=1.0,

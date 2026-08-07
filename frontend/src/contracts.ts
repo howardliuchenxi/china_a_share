@@ -301,6 +301,8 @@ export interface BacktestResult {
   baseline_win_rate: number;
   baseline_sample_count: number;
   win_rate_lift: number;
+  outcome_robust_lift_lower: number;
+  outcome_robust_lift_upper: number;
   lift_confidence_lower: number;
   lift_confidence_upper: number;
   confidence_lower: number;
@@ -346,7 +348,7 @@ export interface FactorHypothesis {
   q_value: number;
   fdr_family_size: number;
   validation_passed: boolean;
-  validation_reason: "not_evaluated" | "training_lift_not_positive" | "insufficient_validation_samples" | "insufficient_validation_days" | "insufficient_validation_securities" | "insufficient_validation_coverage" | "validation_lift_not_positive" | "insufficient_significance_days" | "fdr_not_passed" | "passed";
+  validation_reason: "not_evaluated" | "training_lift_not_positive" | "training_outcome_attrition_not_robust" | "insufficient_validation_samples" | "insufficient_validation_days" | "insufficient_validation_securities" | "insufficient_validation_coverage" | "validation_lift_not_positive" | "validation_outcome_attrition_not_robust" | "insufficient_significance_days" | "fdr_not_passed" | "passed";
 }
 
 export interface DiscoveryTaskProgress {
