@@ -22,16 +22,21 @@ MAX_ANALYSIS_IMAGE_BASE64_LENGTH = 4 * ((MAX_ANALYSIS_IMAGE_BYTES + 2) // 3)
 DATA_CACHE_SCHEMA_VERSION = 4
 PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9_-]*$"
 OPERATION_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
+DISCOVERY_SEQUENCE_FACTOR_FIELDS = {
+    "distance_from_5d_peak_pct",
+    "max_drawdown_5d_pct",
+    "positive_days_3",
+    "return_5d_pct",
+    "volatility_5d_pct",
+}
 DISCOVERY_FACTOR_FIELDS = {
     "amount",
     "circ_mv",
     "close",
     "dv_ratio",
     "dv_ttm",
-    "distance_from_5d_peak_pct",
     "float_share",
     "free_share",
-    "max_drawdown_5d_pct",
     "open",
     "pb",
     "pct_chg",
@@ -39,16 +44,13 @@ DISCOVERY_FACTOR_FIELDS = {
     "pe_ttm",
     "ps",
     "ps_ttm",
-    "positive_days_3",
-    "return_5d_pct",
     "total_mv",
     "total_share",
     "turnover_rate",
     "turnover_rate_f",
     "vol",
-    "volatility_5d_pct",
     "volume_ratio",
-}
+} | DISCOVERY_SEQUENCE_FACTOR_FIELDS
 
 
 class AnalysisStatus(str, Enum):

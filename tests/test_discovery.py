@@ -9,6 +9,7 @@ from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     BacktestResult,
     DISCOVERY_FACTOR_FIELDS,
+    DISCOVERY_SEQUENCE_FACTOR_FIELDS,
     DiscoveryTask,
     DiscoveryTaskRequest,
     FactorHypothesis,
@@ -63,7 +64,7 @@ class FakeQueryExecutor:
         )
 
 
-def test_frontend_discovery_catalog_matches_backend_contract_and_dictionary():
+def test_frontend_discovery_catalog_matches_backend_contract_and_safety_sets():
     repository_root = Path(__file__).resolve().parents[1]
     discovery_page = (
         repository_root / "frontend/src/DiscoveryPage.tsx"
@@ -77,6 +78,15 @@ def test_frontend_discovery_catalog_matches_backend_contract_and_dictionary():
     frontend_factors = set(
         re.findall(r'"([a-z][a-z0-9_]*)"', factor_block.group(1))
     )
+    unsupported_block = re.search(
+        r"const unsupportedDirectApplicationFields = new Set\(\[(.*?)\]\);",
+        discovery_page,
+        re.DOTALL,
+    )
+    assert unsupported_block is not None
+    unsupported_direct_application = set(
+        re.findall(r'"([a-z][a-z0-9_]*)"', unsupported_block.group(1))
+    )
     dictionary_source = (
         repository_root / "frontend/src/dataDictionary.ts"
     ).read_text(encoding="utf-8")
@@ -89,6 +99,7 @@ def test_frontend_discovery_catalog_matches_backend_contract_and_dictionary():
     }
 
     assert frontend_factors == DISCOVERY_FACTOR_FIELDS
+    assert unsupported_direct_application == DISCOVERY_SEQUENCE_FACTOR_FIELDS
     assert DISCOVERY_FACTOR_FIELDS <= dictionary_labels.keys()
     assert all(
         dictionary_labels[field] not in {"", "Y", "N"}

@@ -80,7 +80,9 @@ before adding alternate directions. The current 25-factor catalog therefore
 caps the pair search at 300 combinations without silently excluding a factor.
 Repository contract tests require that this backend factor set exactly matches
 the frontend selector and that every selectable factor has a non-placeholder
-data-dictionary label.
+data-dictionary label. The backend sequence-factor subset must also exactly
+match the frontend direct-application denylist, preventing an internally
+derived adjusted-history rule from being handed to an incompatible executor.
 
 Candidates are ranked only on training data by the conservative lower 95%
 lift bound. This bound is the lower edge of the envelope combining the
