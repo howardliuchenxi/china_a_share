@@ -328,6 +328,28 @@ class FactorBacktester:
                 "adj_factor",
                 {"ts_code", "adj_factor"},
             )
+            price = price[
+                [
+                    field
+                    for field in (
+                        "ts_code",
+                        "open",
+                        "close",
+                        "pct_chg",
+                        "vol",
+                        "amount",
+                    )
+                    if field in price
+                ]
+            ]
+            adjustment = adjustment[["ts_code", "adj_factor"]]
+            # Daily market fields are authoritative when daily_basic repeats
+            # names such as close or trade_date in its full-field response.
+            overlapping_market_fields = (
+                (set(basic.columns) & set(price.columns)) - {"ts_code"}
+            )
+            if overlapping_market_fields:
+                basic = basic.drop(columns=sorted(overlapping_market_fields))
             frame = pd.merge(
                 basic,
                 price,

@@ -90,6 +90,48 @@ def test_research_dataset_aligns_features_with_future_trading_session_returns():
     assert dataset["pe_ttm"].tolist() == [10.0, 11.0]
 
 
+def test_research_dataset_prefers_daily_market_fields_over_daily_basic_duplicates():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": date,
+                    "close": 999.0,
+                    "pe_ttm": 10.0,
+                }
+            ]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            "20260105": [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260105",
+                    "close": 10.0,
+                }
+            ],
+            "20260106": [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260106",
+                    "close": 11.0,
+                }
+            ],
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+    )
+
+    assert dataset["close"].tolist() == [10.0]
+    assert dataset["forward_return"].tolist() == pytest.approx([0.10])
+
+
 def test_research_dataset_uses_adjusted_closes_for_corporate_actions():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],
