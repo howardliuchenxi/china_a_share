@@ -2525,6 +2525,53 @@ def test_evolution_loop_reports_finite_factor_coverage():
     }
 
 
+def test_evolution_loop_explains_every_no_candidate_evidence_gate(monkeypatch):
+    class EmptySearchBacktester:
+        def build_dataset(self, start_date, end_date, **kwargs):
+            return pd.DataFrame(
+                {
+                    "trade_date": ["20250102"],
+                    "future_trade_date": ["20250103"],
+                    "pe_ttm": [10.0],
+                    "forward_return": [0.01],
+                }
+            )
+
+    monkeypatch.setattr(
+        RuleSearchEngine,
+        "search",
+        lambda self, *args, **kwargs: ([], 1),
+    )
+    store = MemoryAnalysisTaskStore()
+    now = datetime.now(timezone.utc)
+    task = DiscoveryTask(
+        task_id="empty-discovery-loop",
+        status=AnalysisTaskStatus.QUEUED,
+        request=DiscoveryTaskRequest(
+            target_pool="A_SHARE",
+            train_start="20240101",
+            train_end="20241231",
+            val_start="20250101",
+            val_end="20250630",
+            factors=["pe_ttm"],
+            minimum_samples=5,
+            minimum_trading_days=5,
+            minimum_securities=5,
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    EvolutionLoop(store, EmptySearchBacktester()).run(task.task_id)
+
+    failed = store.get(task.task_id)
+    assert failed.status == AnalysisTaskStatus.FAILED
+    assert "raw/effective trading-day breadth" in failed.error.message
+    assert "raw/effective security breadth" in failed.error.message
+    assert "selected/comparable-baseline outcome-coverage" in failed.error.message
+
+
 def test_evolution_loop_persists_a_dataset_failure():
     class FailedBacktester:
         def build_dataset(self, start_date, end_date, **kwargs):

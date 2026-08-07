@@ -101,6 +101,11 @@ Each hypothesis records whether its thresholds came from continuous quantiles,
 observed discrete values, or a mixture, so displayed provenance matches the
 actual training-only generation path.
 
+If no candidate survives, the task error enumerates the sample, raw/effective
+date breadth, raw/effective security breadth, and selected/comparable-baseline
+outcome-coverage gates. The UI can therefore present actionable diagnostics
+without guessing which research contract was enforced.
+
 ## Statistical guardrails
 
 Each rule is compared with events for which every referenced factor is finite.

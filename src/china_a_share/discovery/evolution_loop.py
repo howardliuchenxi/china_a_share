@@ -111,7 +111,10 @@ class EvolutionLoop:
         task.progress.leaderboard = leaderboard
         if not leaderboard:
             raise ValueError(
-                "No rule met the event, trading-day, security, and outcome-coverage requirements in both windows."
+                "No rule met the sample, raw/effective trading-day breadth, "
+                "raw/effective security breadth, and selected/comparable-baseline "
+                "outcome-coverage requirements in both windows. Review factor "
+                "coverage or relax only the failing evidence thresholds."
             )
 
     @staticmethod
