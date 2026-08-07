@@ -315,6 +315,7 @@ class FactorBacktester:
                 trade_date,
                 "daily_basic",
                 {"ts_code"},
+                allow_empty=True,
             )
             price = self._validated_session_rows(
                 price_result,
@@ -405,9 +406,17 @@ class FactorBacktester:
         trade_date: str,
         source: str,
         required_fields: set[str],
+        *,
+        allow_empty: bool = False,
     ) -> pd.DataFrame:
         """Validate one full-market session before any cross-source merge."""
-        if result.status != QueryStatus.SUCCESS or not result.rows:
+        if result.status != QueryStatus.SUCCESS:
+            raise ValueError(
+                f"Incomplete {source} data for trading session {trade_date}."
+            )
+        if not result.rows:
+            if allow_empty:
+                return pd.DataFrame(columns=sorted(required_fields))
             raise ValueError(
                 f"Incomplete {source} data for trading session {trade_date}."
             )

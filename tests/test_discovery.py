@@ -226,6 +226,63 @@ def test_research_dataset_uses_future_prices_without_future_basic_rows():
     assert dataset["forward_return"].tolist() == pytest.approx([0.10, 0.10])
 
 
+def test_research_dataset_uses_future_prices_when_future_basic_is_empty():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            "20260105": [{"ts_code": "000001.SZ", "pe_ttm": 10.0}],
+            "20260106": [],
+        },
+        {
+            "20260105": [{"ts_code": "000001.SZ", "close": 10.0}],
+            "20260106": [{"ts_code": "000001.SZ", "close": 11.0}],
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+    )
+
+    assert dataset["forward_return"].tolist() == pytest.approx([0.10])
+
+
+def test_research_dataset_rejects_failed_optional_basic_query():
+    class FailedBasicExecutor(FakeQueryExecutor):
+        def execute(self, query, *, api_route, request_id):
+            result = super().execute(
+                query,
+                api_route=api_route,
+                request_id=request_id,
+            )
+            if (
+                query.operation == "daily_basic"
+                and query.params["trade_date"] == "20260106"
+            ):
+                return result.model_copy(update={"status": QueryStatus.ERROR})
+            return result
+
+    executor = FailedBasicExecutor(
+        ["20260105", "20260106"],
+        {
+            "20260105": [{"ts_code": "000001.SZ", "pe_ttm": 10.0}],
+            "20260106": [],
+        },
+        {
+            "20260105": [{"ts_code": "000001.SZ", "close": 10.0}],
+            "20260106": [{"ts_code": "000001.SZ", "close": 11.0}],
+        },
+    )
+
+    with pytest.raises(ValueError, match="Incomplete daily_basic data"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
 def test_research_dataset_preserves_missing_factor_values():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],
