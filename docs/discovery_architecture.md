@@ -207,6 +207,8 @@ including the absolute rule and comparable-baseline hit rates, relative lift,
 event, date, security, support, and label-coverage breadth.
 Each card presents a localized, human-readable condition above the unchanged
 executable formula, preserving both immediate interpretation and exact auditability.
+Windows without observable outcomes render probability, return, and lift values
+as unavailable rather than displaying model defaults as measured zeroes.
 
 Each window also carries at most five most-recent observable matched events,
 ordered deterministically by signal date and security. The UI keeps these audit

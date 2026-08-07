@@ -682,6 +682,25 @@ test("discovery page submits a bounded study and renders validation evidence", a
     description: "Three positive adjusted-close sessions",
     reasoning: "Generated from observed discrete training values.",
     threshold_source: "observed_value",
+    validation_score: 0,
+    p_value: 1,
+    q_value: 1,
+    validation_passed: false,
+    validation_reason: "insufficient_validation_samples",
+    val_result: {
+      ...discoveryStatus.progress.leaderboard[0].val_result,
+      win_rate: 0,
+      mean_return: 0,
+      median_return: 0,
+      return_p05: 0,
+      sample_count: 0,
+      matched_sample_count: 0,
+      eligible_sample_count: 0,
+      rule_support_rate: 0,
+      baseline_win_rate: 0,
+      baseline_sample_count: 0,
+      event_examples: [],
+    },
   });
   await page.route("**/api/discovery/tasks", route => {
     const request = route.request().postDataJSON() as { factors: string[]; minimum_trading_days: number; minimum_securities: number; minimum_outcome_coverage_pct: number };
@@ -748,7 +767,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("可比基准命中率 51.0%");
   await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首验证结论");
-  await expect(page.locator(".headline-metrics")).toContainText("2 / 2 条入榜规律验证通过");
+  await expect(page.locator(".headline-metrics")).toContainText("1 / 2 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
   await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
@@ -815,7 +834,13 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topRuleCard).toContainText("市盈率TTM=10.8 · 换手率=9.1");
   await expect(topRuleCard).toContainText("6.10%");
   await expect(page.getByRole("button", { name: "暂不可带入" })).toBeDisabled();
-  await expect(page.locator(".rule-card").nth(1)).toContainText("不会交给模型猜测执行口径");
+  const missingValidationCard = page.locator(".rule-card").nth(1);
+  await expect(missingValidationCard).toContainText("不会交给模型猜测执行口径");
+  await expect(missingValidationCard).toContainText("验证期暂无可观测结果");
+  await expect(missingValidationCard).toContainText("验证判定：验证期有效事件数不足");
+  await expect(missingValidationCard.locator(".window-comparison > div").nth(1)).toContainText("收益超过 5.0%—");
+  await expect(missingValidationCard.locator(".window-comparison > div").nth(1)).toContainText("平均收益—");
+  await expect(missingValidationCard).toContainText("保守相对提升：— · 训练—验证提升差距：—");
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();

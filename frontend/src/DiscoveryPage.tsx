@@ -96,12 +96,15 @@ function readableRuleExpression(formula: string) {
 }
 
 function MetricSet({ result }: { result: BacktestResult }) {
+  const hasOutcomes = result.sample_count > 0;
+  const hasBaseline = result.baseline_sample_count > 0;
+  const hasLift = hasOutcomes && hasBaseline;
   return (
     <div className="rule-metrics">
-      <span><small>收益超过 {percent(result.target_return)}</small><strong>{percent(result.win_rate)}</strong></span>
-      <span><small>可比基准命中率</small><strong>{percent(result.baseline_win_rate)}</strong></span>
-      <span><small>相对可比基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
-      <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
+      <span><small>收益超过 {percent(result.target_return)}</small><strong>{hasOutcomes ? percent(result.win_rate) : "—"}</strong></span>
+      <span><small>可比基准命中率</small><strong>{hasBaseline ? percent(result.baseline_win_rate) : "—"}</strong></span>
+      <span><small>相对可比基准（N={result.baseline_sample_count}）</small><strong className={hasLift ? (result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative") : undefined}>{hasLift ? `${result.win_rate_lift >= 0 ? "+" : ""}${percent(result.win_rate_lift)}` : "—"}</strong></span>
+      <span><small>平均收益</small><strong>{hasOutcomes ? percent(result.mean_return, 2) : "—"}</strong></span>
       <span><small>收益起点</small><strong>信号日复权收盘</strong></span>
       <span><small>样本 / 交易日 / 证券</small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
       <span><small>日期集中度折算后有效交易日</small><strong>{result.effective_trading_day_count.toFixed(1)}</strong></span>
@@ -177,6 +180,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const validationPassedCount = leaderboard.filter(
     hypothesis => hypothesis.validation_passed,
   ).length;
+  const topValidationResult = topTrainingRule?.val_result ?? null;
+  const topHasOutcomes = (topValidationResult?.sample_count ?? 0) > 0;
+  const topHasBaseline = (topValidationResult?.baseline_sample_count ?? 0) > 0;
   const coverageFactors = [...new Set([
     ...Object.keys(taskStatus?.progress.training_factor_coverage ?? {}),
     ...Object.keys(taskStatus?.progress.validation_factor_coverage ?? {}),
@@ -386,10 +392,10 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         </div>
         <div className="headline-metrics">
           <div><small>训练榜首验证结论</small><strong className={topTrainingRule.validation_passed ? "metric-positive" : "metric-negative"}>{topTrainingRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>{validationPassedCount} / {leaderboard.length} 条入榜规律验证通过 · {validationReason(topTrainingRule)}</em></div>
-          <div><small>超过 {percent(topTrainingRule.val_result!.target_return)} 的概率</small><strong>{percent(topTrainingRule.val_result!.win_rate)}</strong><em>HAC + {topTrainingRule.val_result!.trading_day_count} 日 score 下限：{percent(topTrainingRule.val_result!.confidence_lower)} – {percent(topTrainingRule.val_result!.confidence_upper)}</em></div>
-          <div><small>相对可比样本提升</small><strong className={topTrainingRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{topTrainingRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(topTrainingRule.val_result!.win_rate_lift)}</strong><em>95% 区间 {percent(topTrainingRule.val_result!.lift_confidence_lower)} – {percent(topTrainingRule.val_result!.lift_confidence_upper)} · 可比基准命中率 {percent(topTrainingRule.val_result!.baseline_win_rate)}（N={topTrainingRule.val_result!.baseline_sample_count}）</em></div>
-          <div><small>平均未来收益</small><strong>{percent(topTrainingRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(topTrainingRule.val_result!.median_return, 2)}</em></div>
-          <div><small>5% 分位收益</small><strong className={topTrainingRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(topTrainingRule.val_result!.return_p05, 2)}</strong><em>{topTrainingRule.val_result!.sample_count} / {topTrainingRule.val_result!.matched_sample_count} 个结果可观测</em></div>
+          <div><small>超过 {percent(topValidationResult!.target_return)} 的概率</small><strong>{topHasOutcomes ? percent(topValidationResult!.win_rate) : "—"}</strong><em>{topHasOutcomes ? `HAC + ${topValidationResult!.trading_day_count} 日 score 下限：${percent(topValidationResult!.confidence_lower)} – ${percent(topValidationResult!.confidence_upper)}` : "无可观测验证结果，无法估计概率区间"}</em></div>
+          <div><small>相对可比样本提升</small><strong className={topHasOutcomes && topHasBaseline ? (topValidationResult!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative") : undefined}>{topHasOutcomes && topHasBaseline ? `${topValidationResult!.win_rate_lift >= 0 ? "+" : ""}${percent(topValidationResult!.win_rate_lift)}` : "—"}</strong><em>{topHasOutcomes && topHasBaseline ? `95% 区间 ${percent(topValidationResult!.lift_confidence_lower)} – ${percent(topValidationResult!.lift_confidence_upper)} · 可比基准命中率 ${percent(topValidationResult!.baseline_win_rate)}（N=${topValidationResult!.baseline_sample_count}）` : "规则或可比基准没有可观测结果，无法估计提升"}</em></div>
+          <div><small>平均未来收益</small><strong>{topHasOutcomes ? percent(topValidationResult!.mean_return, 2) : "—"}</strong><em>{topHasOutcomes ? `中位数 ${percent(topValidationResult!.median_return, 2)}` : "无可观测验证结果"}</em></div>
+          <div><small>5% 分位收益</small><strong className={topHasOutcomes ? (topValidationResult!.return_p05 >= 0 ? "metric-positive" : "metric-negative") : undefined}>{topHasOutcomes ? percent(topValidationResult!.return_p05, 2) : "—"}</strong><em>{topValidationResult!.sample_count} / {topValidationResult!.matched_sample_count} 个结果可观测</em></div>
           <div><small>提升检验 q-value</small><strong>{topTrainingRule.q_value.toFixed(3)}</strong><em>{topTrainingRule.fdr_family_size} 个盲测候选 · {topTrainingRule.q_value <= 0.1 ? "通过 10% BY-FDR" : "未通过 10% BY-FDR"}</em></div>
         </div>
         <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序；即使训练候选在验证期证据不足，也会保留原名次并明确显示失败原因，不会让后续规则替补上位。标记为“验证通过”的规则必须满足全部证据门槛、在训练和验证窗口相对基准均为正向提升，并通过验证集 10% BY-FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日、独立证券数和未来标签覆盖率门槛，避免单一个股的长期历史被误称为市场规律；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在，并按缺失结果全部失败或全部成功的边界扩展概率区间。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；信号日完整行情通常只能在收盘后确认，因此结果不代表能够按同一收盘价成交。当前尚未计入涨跌停成交约束、手续费和持仓重叠，也没有足以计算真实组合最大回撤的逐日持仓净值路径，因此不会伪造回撤值。命中率置信区间取日期聚类 HAC、日期集中度折算后的 score 区间和缺失标签边界的保守包络；相对提升区间再取 HAC 提升区间和规则—基准概率区间差的保守包络，既处理相邻信号共享收益，也防止全胜、全败或少量结果缺失时显示虚假确定性；正式显著性仍由计入规则与可比较样本重叠的提升检验及 BY-FDR 判定。嵌套分位规则共享大量样本，因此 q-value 使用可控制任意依赖候选族的 Benjamini–Yekutieli 谐波惩罚。验证期少于 20 个日期集中度折算有效日时仍可探索，但显著性固定为 p=1，不能通过 FDR。FDR 分母包含所有进入盲测的冻结候选，包括验证证据不足但仍保留展示的规则。统计关联仍不代表因果关系。</p>
@@ -411,11 +417,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /><EventExamples result={hypothesis.train_result!} windowLabel="训练" /></div>
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /><EventExamples result={hypothesis.val_result!} windowLabel="验证" /></div>
               </div>
-              <p className="confidence-note">验证集收益超过 {percent(hypothesis.val_result!.target_return)} 的概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
-              <p className="confidence-note">验证集相对基准提升 95% 区间：{percent(hypothesis.val_result!.lift_confidence_lower)} – {percent(hypothesis.val_result!.lift_confidence_upper)}</p>
-              <p className="confidence-note">标签缺失最坏—最好提升：{percent(hypothesis.val_result!.outcome_robust_lift_lower)} – {percent(hypothesis.val_result!.outcome_robust_lift_upper)}</p>
-              <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
-              <p className="confidence-note">保守相对提升：{percent(hypothesis.validation_score)} · 训练—验证提升差距：{percent(hypothesis.generalization_gap)} · 规则覆盖差距：{percent(hypothesis.support_rate_gap)} · 覆盖保留比例：{percent(hypothesis.support_retention_ratio)}</p>
+              {hypothesis.val_result!.sample_count > 0 ? <>
+                <p className="confidence-note">验证集收益超过 {percent(hypothesis.val_result!.target_return)} 的概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
+                <p className="confidence-note">验证集相对基准提升 95% 区间：{percent(hypothesis.val_result!.lift_confidence_lower)} – {percent(hypothesis.val_result!.lift_confidence_upper)}</p>
+                <p className="confidence-note">标签缺失最坏—最好提升：{percent(hypothesis.val_result!.outcome_robust_lift_lower)} – {percent(hypothesis.val_result!.outcome_robust_lift_upper)}</p>
+                <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
+              </> : <p className="confidence-note">验证期暂无可观测结果，概率、收益分布与相对提升均无法估计；请结合因子覆盖率和验证判定排查。</p>}
+              <p className="confidence-note">保守相对提升：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.validation_score) : "—"} · 训练—验证提升差距：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.generalization_gap) : "—"} · 规则覆盖差距：{percent(hypothesis.support_rate_gap)} · 覆盖保留比例：{percent(hypothesis.support_retention_ratio)}</p>
               <p className="confidence-note">有限有效交易日 Student-t 提升检验 p-value：{hypothesis.p_value.toFixed(3)} · BY-FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}（{hypothesis.fdr_family_size} 个盲测候选）</p>
               <p className="confidence-note">验证判定：{validationReason(hypothesis)}</p>
             </div>
