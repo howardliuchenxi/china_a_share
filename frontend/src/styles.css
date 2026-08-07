@@ -1458,6 +1458,12 @@ table tbody tr:hover { background-color: #f1f3ee; }
 .rule-heading h3 {
   margin: 0 0 0.35rem;
 }
+.rule-expression {
+  margin: 0 0 0.45rem;
+  color: #263b31;
+  font-size: 0.96rem;
+  font-weight: 650;
+}
 .rule-heading code {
   color: #315e4d;
   overflow-wrap: anywhere;

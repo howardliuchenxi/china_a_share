@@ -84,6 +84,17 @@ function ruleTitle(formula: string) {
   return labels.length > 0 ? `${labels.join(" × ")}分位规律` : "候选分位规律";
 }
 
+function readableRuleExpression(formula: string) {
+  return formula
+    .replace(
+      /\b[A-Za-z_][A-Za-z0-9_]*\b/g,
+      token => discoveryFactorLabels.get(token) ?? token,
+    )
+    .replace(/\band\b/g, "且")
+    .replace(/<=/g, "≤")
+    .replace(/>=/g, "≥");
+}
+
 function MetricSet({ result }: { result: BacktestResult }) {
   return (
     <div className="rule-metrics">
@@ -327,7 +338,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </fieldset>
           {submitError && <p className="discovery-error" role="alert">{submitError}</p>}
           <div className="discovery-submit-row">
-            <p>连续因子搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；有限取值不超过 10 个的离散因子会枚举全部实际阈值，避免罕见序列状态被宽分位遗漏。候选按“相对基准提升 − 单侧 95% 不确定性惩罚”排序，同分时依次比较 5% 下行收益和中位收益，避免平均值被单个异常上涨拉高。{discoveryFactorFields.size} 个配对席位会先覆盖所有存在有效候选的因子，再补充反方向条件，相同训练样本的规则只保留排名最高者。</p>
+            <p>连续因子搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；有限取值不超过 10 个的离散因子会枚举全部实际阈值，避免罕见序列状态被宽分位遗漏。候选按相对可比基准提升的保守 95% 下界排序，同分时依次比较 5% 下行收益和中位收益，避免平均值被单个异常上涨拉高。{discoveryFactorFields.size} 个配对席位会先覆盖所有存在有效候选的因子，再补充反方向条件，相同训练样本的规则只保留排名最高者。</p>
             <button type="submit" disabled={isSubmitting || taskStatus?.status === "running"}>{isSubmitting ? "正在提交…" : taskStatus?.status === "running" ? "研究进行中" : "开始反向搜索"}</button>
           </div>
         </form>
@@ -388,7 +399,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             return <article className="rule-card" key={hypothesis.formula}>
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
-              <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" disabled={applicationLimitation !== null} title={applicationLimitation ?? undefined} onClick={() => onApplyFormula(hypothesis.formula)}>{applicationLimitation ? "暂不可带入" : "带入分析页"}</button></div></div>
+              <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><p className="rule-expression">{readableRuleExpression(hypothesis.formula)}</p><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" disabled={applicationLimitation !== null} title={applicationLimitation ?? undefined} onClick={() => onApplyFormula(hypothesis.formula)}>{applicationLimitation ? "暂不可带入" : "带入分析页"}</button></div></div>
               {applicationLimitation && <p className="confidence-note">带入限制：{applicationLimitation}。研究结果仍可查看，但不会交给模型猜测执行口径。</p>}
               <p>阈值来源：{thresholdSource(hypothesis.threshold_source)}。规则按训练期相对提升的保守 95% 下界完成排名锁定；该下界同时包络日期聚类 HAC 区间与规则—基准 score 区间差，避免把零标准误误认为确定性。同分时优先选择 5% 下行分位和中位收益更高的规则。随后进入独立验证，验证结果未参与重新排序。</p>
               <div className="window-comparison">

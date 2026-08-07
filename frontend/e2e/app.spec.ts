@@ -772,6 +772,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("5% 分位收益");
   await expect(topRuleCard).toContainText("75");
   await expect(page.locator(".rule-card h3").first()).toHaveText("市盈率TTM × 换手率分位规律");
+  await expect(topRuleCard.locator(".rule-expression")).toHaveText("市盈率TTM ≤ 12 且 换手率 ≥ 8");
+  await expect(page.getByText(/候选按相对可比基准提升的保守 95% 下界排序/)).toBeVisible();
   await expect(topRuleCard).toContainText("验证结果未参与重新排序");
   await expect(topRuleCard).toContainText("阈值来源：训练窗口分位阈值");
   await expect(topRuleCard).toContainText("97.4%");

@@ -197,6 +197,8 @@ research lead, not a causal claim or a deployable trading strategy.
 snapshot, factor-coverage diagnostics, validation summary, and training-ranked
 leaderboard. Every rule shows training and validation evidence side by side,
 including event, date, security, support, and label-coverage breadth.
+Each card presents a localized, human-readable condition above the unchanged
+executable formula, preserving both immediate interpretation and exact auditability.
 
 Each window also carries at most five most-recent observable matched events,
 ordered deterministically by signal date and security. The UI keeps these audit
