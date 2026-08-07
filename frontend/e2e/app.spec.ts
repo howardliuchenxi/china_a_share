@@ -768,6 +768,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".research-config-grid")).toContainText("信号日复权收盘 → 第 20 个未来交易日复权收盘");
   await expect(page.locator(".research-config-grid")).toContainText("30 / 20 / 10");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
+  await expect(page.locator(".headline-metrics")).toContainText("HAC、42.7 个有效日 score 与缺失标签的保守包络：49.0% – 70.0%");
   await expect(page.locator(".headline-metrics")).toContainText("可比基准命中率 51.0%");
   await expect(page.locator(".headline-metrics")).toContainText("含规则样本，N=407");
   await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
