@@ -62,10 +62,10 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     discoveryFactorFields.has(entry.field),
   );
   const bestRule = taskStatus?.progress.leaderboard[0] ?? null;
-  const coverageFactors = factors.filter(factor =>
-    factor in (taskStatus?.progress.training_factor_coverage ?? {})
-    || factor in (taskStatus?.progress.validation_factor_coverage ?? {}),
-  );
+  const coverageFactors = [...new Set([
+    ...Object.keys(taskStatus?.progress.training_factor_coverage ?? {}),
+    ...Object.keys(taskStatus?.progress.validation_factor_coverage ?? {}),
+  ])].sort();
 
   useEffect(() => {
     const next = new URLSearchParams(window.location.search);
@@ -241,7 +241,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         <div className="section-heading"><span>03</span><h2>验证集摘要</h2></div>
         <div className="headline-metrics">
           <div><small>独立验证结论</small><strong className={bestRule.validation_passed ? "metric-positive" : "metric-negative"}>{bestRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>训练排名已锁定</em></div>
-          <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>HAC + {bestRule.val_result!.trading_day_count} 日 score 下限：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
+          <div><small>超过 {percent(bestRule.val_result!.target_return)} 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>HAC + {bestRule.val_result!.trading_day_count} 日 score 下限：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)} · N={bestRule.val_result!.baseline_sample_count}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
           <div><small>5% 分位收益</small><strong className={bestRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(bestRule.val_result!.return_p05, 2)}</strong><em>{bestRule.val_result!.sample_count} / {bestRule.val_result!.matched_sample_count} 个结果可观测</em></div>

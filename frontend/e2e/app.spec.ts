@@ -678,6 +678,11 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText("18 个盲测候选 · 通过 10% FDR", { exact: true })).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
+
+  await page.getByLabel("目标收益（%）").fill("5");
+  await page.locator(".factor-checkbox.is-selected").first().click();
+  await expect(page.getByText("超过 0.0% 的概率", { exact: true })).toBeVisible();
+  await expect(page.locator(".factor-coverage-grid > div")).toHaveCount(3);
 });
 
 test("discovery page deduplicates factors restored from the URL", async ({ page }) => {
