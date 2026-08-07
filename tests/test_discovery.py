@@ -1793,6 +1793,43 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
     assert len(buckets) == len(set(buckets)) == 4
 
 
+def test_rule_search_fills_pairing_pool_with_alternate_directions():
+    factor_names = [f"factor_{index}" for index in range(13)]
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
+            "forward_return": [-0.10] * 50 + [0.10] * 50,
+            **{factor: list(range(100)) for factor in factor_names},
+        }
+    )
+    search = RuleSearchEngine(min_sample_count=10)
+    conditions = search._build_conditions(dataset, factor_names)
+    candidates, _ = search._evaluate_training_formulas(conditions, dataset)
+
+    pairing_pool = search._select_pairing_conditions(candidates)
+    direction_counts = {
+        field: len({
+            formula.split()[1]
+            for formula, candidate_field in pairing_pool
+            if candidate_field == field
+        })
+        for field in factor_names
+    }
+
+    assert len(pairing_pool) == PAIRING_CANDIDATE_LIMIT
+    assert set(direction_counts.values()) == {1, 2}
+    assert sum(count == 2 for count in direction_counts.values()) == 12
+
+
+def test_rule_search_rejects_same_factor_conditions_in_the_same_direction():
+    assert RuleSearchEngine._conditions_are_compatible(
+        "value >= 10",
+        "value",
+        "value >= 20",
+        "value",
+    ) is False
+
+
 def test_rule_search_prioritizes_factor_breadth_in_the_pairing_pool():
     factor_names = [
         f"factor_{index}"
