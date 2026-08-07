@@ -129,6 +129,11 @@ class RuleSearchEngine:
         if candidate.val_result.security_count < self._min_security_count:
             return "insufficient_validation_securities"
         if (
+            candidate.val_result.effective_security_count
+            < self._min_security_count
+        ):
+            return "insufficient_validation_effective_securities"
+        if (
             candidate.val_result.outcome_coverage_rate
             < self._min_outcome_coverage
         ):
@@ -299,6 +304,8 @@ class RuleSearchEngine:
                 train_result.sample_count < self._min_sample_count
                 or train_result.trading_day_count < self._min_trading_day_count
                 or train_result.security_count < self._min_security_count
+                or train_result.effective_security_count
+                < self._min_security_count
                 or train_result.outcome_coverage_rate
                 < self._min_outcome_coverage
             ):
@@ -372,6 +379,8 @@ class RuleSearchEngine:
                 or validation_result.trading_day_count
                 < self._min_trading_day_count
                 or validation_result.security_count < self._min_security_count
+                or validation_result.effective_security_count
+                < self._min_security_count
                 or validation_result.outcome_coverage_rate
                 < self._min_outcome_coverage
             )

@@ -113,6 +113,9 @@ Reported evidence includes:
 - event count, distinct signal dates, and distinct securities;
 - maximum single-security event share, which reveals concentration hidden by a
   distinct-security count;
+- Kish effective security count based on per-security event weights; both raw
+  and effective security counts must satisfy the configured security breadth
+  threshold in training and validation;
 - maximum single-date event share, which reveals temporal concentration hidden
   by a distinct-signal-date count;
 - Kish effective signal-date count based on daily event weights; this count is

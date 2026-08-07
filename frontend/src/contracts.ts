@@ -312,6 +312,8 @@ export interface BacktestResult {
   /** Kish effective signal-date count after event concentration weighting. */
   effective_trading_day_count: number;
   security_count: number;
+  /** Kish effective security count after event concentration weighting. */
+  effective_security_count: number;
   max_security_event_share: number;
   max_signal_date_event_share: number;
   cluster_standard_error: number;
@@ -348,7 +350,7 @@ export interface FactorHypothesis {
   q_value: number;
   fdr_family_size: number;
   validation_passed: boolean;
-  validation_reason: "not_evaluated" | "training_lift_not_positive" | "training_outcome_attrition_not_robust" | "insufficient_validation_samples" | "insufficient_validation_days" | "insufficient_validation_securities" | "insufficient_validation_coverage" | "validation_lift_not_positive" | "validation_outcome_attrition_not_robust" | "insufficient_significance_days" | "fdr_not_passed" | "passed";
+  validation_reason: "not_evaluated" | "training_lift_not_positive" | "training_outcome_attrition_not_robust" | "insufficient_validation_samples" | "insufficient_validation_days" | "insufficient_validation_securities" | "insufficient_validation_effective_securities" | "insufficient_validation_coverage" | "validation_lift_not_positive" | "validation_outcome_attrition_not_robust" | "insufficient_significance_days" | "fdr_not_passed" | "passed";
 }
 
 export interface DiscoveryTaskProgress {

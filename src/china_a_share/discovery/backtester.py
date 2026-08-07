@@ -293,6 +293,13 @@ class FactorBacktester:
             if "ts_code" in evaluation_frame
             else len(evaluation_frame)
         )
+        effective_security_count = (
+            FactorBacktester._effective_cluster_count(
+                evaluation_frame["ts_code"]
+            )
+            if "ts_code" in evaluation_frame and len(returns)
+            else float(len(returns))
+        )
         max_security_event_share = (
             float(evaluation_frame["ts_code"].value_counts().max() / len(returns))
             if "ts_code" in evaluation_frame and len(returns)
@@ -342,6 +349,7 @@ class FactorBacktester:
                 baseline_sample_count=len(baseline),
                 target_return=target_return,
                 security_count=security_count,
+                effective_security_count=effective_security_count,
                 max_security_event_share=max_security_event_share,
                 max_signal_date_event_share=max_signal_date_event_share,
                 effective_trading_day_count=effective_trading_day_count,
@@ -455,6 +463,7 @@ class FactorBacktester:
             trading_day_count=trading_day_count,
             effective_trading_day_count=effective_trading_day_count,
             security_count=security_count,
+            effective_security_count=effective_security_count,
             max_security_event_share=max_security_event_share,
             max_signal_date_event_share=max_signal_date_event_share,
             cluster_standard_error=cluster_standard_error,

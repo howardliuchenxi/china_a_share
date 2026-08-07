@@ -637,6 +637,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           trading_day_count: 120,
           effective_trading_day_count: 96.4,
           security_count: 86,
+          effective_security_count: 74.2,
           max_security_event_share: 0.08,
           max_signal_date_event_share: 0.06,
           cluster_standard_error: 0.04,
@@ -660,6 +661,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           trading_day_count: 55,
           effective_trading_day_count: 42.7,
           security_count: 48,
+          effective_security_count: 35.6,
           max_security_event_share: 0.12,
           max_signal_date_event_share: 0.15,
           cluster_standard_error: 0.06,
@@ -746,6 +748,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topWindowComparison).toContainText("15.3%");
   await expect(topWindowComparison).toContainText("180 / 120 / 86");
   await expect(topWindowComparison).toContainText("日期集中度折算后有效交易日");
+  await expect(topWindowComparison).toContainText("证券集中度折算后有效证券");
+  await expect(topWindowComparison).toContainText("74.2");
+  await expect(topWindowComparison).toContainText("35.6");
   await expect(topWindowComparison).toContainText("96.4");
   await expect(topWindowComparison).toContainText("42.7");
   await expect(topWindowComparison).toContainText("最大单股事件占比");
@@ -768,6 +773,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();
   await expect(page.getByText(/按缺失结果全部失败或全部成功的边界扩展概率区间/)).toBeVisible();
   await expect(page.getByText(/正式显著性要求至少 20 个日期集中度折算有效日/)).toBeVisible();
+  await expect(page.getByText(/证券门槛同时约束原始不同证券数和按事件权重折算的有效证券数/)).toBeVisible();
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();

@@ -1263,6 +1263,14 @@ class BacktestResult(BaseModel):
         ge=0,
         description="Distinct securities represented by observable rule outcomes.",
     )
+    effective_security_count: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Kish effective security count after accounting for unequal event "
+            "concentration across securities."
+        ),
+    )
     max_security_event_share: float = Field(
         default=0.0,
         ge=0.0,
@@ -1364,6 +1372,7 @@ class FactorHypothesis(BaseModel):
         "insufficient_validation_samples",
         "insufficient_validation_days",
         "insufficient_validation_securities",
+        "insufficient_validation_effective_securities",
         "insufficient_validation_coverage",
         "validation_lift_not_positive",
         "validation_outcome_attrition_not_robust",

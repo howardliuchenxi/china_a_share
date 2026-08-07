@@ -995,6 +995,29 @@ def test_rule_evaluation_reports_single_security_event_concentration():
 
     assert result.security_count == 10
     assert result.max_security_event_share == pytest.approx(0.91)
+    assert result.effective_security_count == pytest.approx(
+        10000 / (91**2 + 9)
+    )
+
+
+def test_training_screen_rejects_low_effective_security_breadth():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
+            "ts_code": ["000001.SZ"] * 91
+            + [f"{index:06d}.SZ" for index in range(2, 11)],
+            "factor": [1.0] * 100,
+            "forward_return": [0.10, -0.10] * 50,
+        }
+    )
+
+    candidates, evaluated_count = RuleSearchEngine(
+        min_sample_count=10,
+        min_security_count=5,
+    )._evaluate_training_formulas([("factor == 1", "factor")], dataset)
+
+    assert evaluated_count == 1
+    assert candidates == []
 
 
 def test_rule_evaluation_reports_single_date_event_concentration():
@@ -1992,6 +2015,10 @@ def test_validation_reports_the_first_failed_replication_gate(
         ({"sample_count": 9}, "insufficient_validation_samples"),
         ({"trading_day_count": 4}, "insufficient_validation_days"),
         ({"security_count": 2}, "insufficient_validation_securities"),
+        (
+            {"effective_security_count": 2.9},
+            "insufficient_validation_effective_securities",
+        ),
         ({"outcome_coverage_rate": 0.89}, "insufficient_validation_coverage"),
     ],
 )
@@ -2006,6 +2033,7 @@ def test_validation_reason_identifies_the_failed_evidence_threshold(
         sample_count=10,
         trading_day_count=20,
         security_count=5,
+        effective_security_count=5.0,
         outcome_coverage_rate=1.0,
         win_rate_lift=0.10,
     ).model_copy(update=result_update)
