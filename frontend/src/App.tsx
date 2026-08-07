@@ -84,6 +84,8 @@ const NON_MONETARY_FINANCIAL_FIELDS = new Set([
 ]);
 const IDENTIFIER_COLUMN_PATTERN = /(^|_)(code|date|year|month|type|status|flag|count|num)$/;
 const PERCENT_COLUMN_PATTERN = /(^pct_|_pct$|_pct_|_ratio$|_rate$|_yield$)/;
+const A_SHARE_CODE_PATTERN = /^(?<symbol>\d{6})\.(?:SH|SZ|BJ)$/;
+const EASTMONEY_CAPITAL_FLOW_BASE_URL = "https://data.eastmoney.com/zjlx";
 
 const LEGACY_SUMMARY_METADATA: Record<
   string,
@@ -305,6 +307,18 @@ function compareResultValues(left: unknown, right: unknown): number {
   return String(left).localeCompare(String(right), "zh-CN", { numeric: true });
 }
 
+function eastmoneyVerificationUrl(
+  column: string,
+  value: unknown,
+  row?: Record<string, unknown>,
+): string | null {
+  if (column !== "ts_code" && column !== "name") return null;
+  const code = String(column === "ts_code" ? value : row?.ts_code ?? "");
+  const match = A_SHARE_CODE_PATTERN.exec(code);
+  if (!match?.groups?.symbol) return null;
+  return `${EASTMONEY_CAPITAL_FLOW_BASE_URL}/${match.groups.symbol}.html`;
+}
+
 function formatResultValue(
   operation: string,
   column: string,
@@ -341,6 +355,22 @@ function formatResultValue(
     return <span className="data-missing-dash" title="该数据字段未披露或暂无数据">—</span>;
   }
   if (Array.isArray(value)) return value.length > 0 ? value.join("、") : "无";
+  const verificationUrl = eastmoneyVerificationUrl(column, value, row);
+  if (verificationUrl) {
+    const label = String(value);
+    return (
+      <a
+        className="result-verification-link"
+        href={verificationUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="在东方财富查看资金流向数据"
+        aria-label={`${label}，在东方财富查看资金流向数据（新窗口）`}
+      >
+        {label}<span aria-hidden="true">↗</span>
+      </a>
+    );
+  }
   if (column === "calculation_status") {
     if (value === "complete") {
       return <span className="data-status-badge complete">完整计算</span>;

@@ -766,6 +766,17 @@ th, td { border-bottom: 1px solid #d8dcd4; padding: 10px 12px; text-align: left;
 th { position: sticky; top: 0; background: #f0f2eb; font-weight: bold; color: #2e3531; }
 table tbody tr:nth-child(even) { background-color: #f9faf7; }
 table tbody tr:hover { background-color: #f1f3ee; }
+.result-verification-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: #256d56;
+  font-weight: 650;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+.result-verification-link:hover { color: #174b3b; }
+.result-verification-link span { font-size: 0.68em; }
 .table-note { margin: 10px 0 0; font-size: 0.78rem; }
 
 .result-tools {

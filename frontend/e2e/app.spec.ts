@@ -101,6 +101,25 @@ test("custom prompt input enables submit button", async ({ page }) => {
   await expect(submitButton).toBeEnabled();
 });
 
+test("A-share result codes link to Eastmoney verification pages", async ({
+  page,
+}) => {
+  await mockApiRoutes(page, successWithMultiRowFixture);
+  await page.goto("/analysis");
+  await page.locator("#analysis-prompt").fill("查询2026年7月17日A股涨跌分布");
+  await page.locator('button[type="submit"]').click();
+
+  const verificationLink = page.getByRole("link", {
+    name: "000001.SZ，在东方财富查看资金流向数据（新窗口）",
+  });
+  await expect(verificationLink).toHaveAttribute(
+    "href",
+    "https://data.eastmoney.com/zjlx/000001.html",
+  );
+  await expect(verificationLink).toHaveAttribute("target", "_blank");
+  await expect(verificationLink).toHaveAttribute("rel", "noopener noreferrer");
+});
+
 test("administrator feedback dialog stays open while entering a suggestion", async ({
   page,
 }) => {
