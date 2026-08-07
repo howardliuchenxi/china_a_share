@@ -576,3 +576,65 @@ test("compatible results grouping merges multiple tables and displays raw detail
   await expect(childBlocks.first()).toContainText("000001.SZ");
   await expect(childBlocks.nth(1)).toContainText("000002.SZ");
 });
+
+test("discovery page submits a bounded study and renders validation evidence", async ({ page }) => {
+  const discoveryStatus = {
+    task_id: "discovery-e2e",
+    status: "succeeded",
+    progress: {
+      current_generation: 1,
+      total_generations: 1,
+      formulas_tested: 1,
+      current_log: "规律搜索与独立验证已完成。",
+      current_stage: "completed",
+      training_sample_count: 1200,
+      validation_sample_count: 420,
+      leaderboard: [{
+        formula: "pe_ttm <= 12 and turnover_rate >= 8",
+        description: "Low valuation with active turnover",
+        reasoning: "Generated from training-window quantiles and independently validated.",
+        train_result: {
+          win_rate: 0.63, mean_return: 0.071, median_return: 0.052,
+          max_drawdown: -0.12, eval_time_ms: 10, sample_count: 180,
+          positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
+          win_rate_lift: 0.11, confidence_lower: 0.56, confidence_upper: 0.70,
+        },
+        val_result: {
+          win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
+          max_drawdown: -0.15, eval_time_ms: 8, sample_count: 75,
+          positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
+          win_rate_lift: 0.09, confidence_lower: 0.49, confidence_upper: 0.70,
+        },
+      }],
+    },
+    error: null,
+  };
+  await page.route("**/api/discovery/tasks", route => {
+    void route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        task_id: "discovery-e2e",
+        status: "queued",
+        status_url: "/api/discovery/tasks/discovery-e2e",
+      }),
+    });
+  });
+  await page.route("**/api/discovery/tasks/discovery-e2e", route => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(discoveryStatus),
+    });
+  });
+  await page.goto("/analysis");
+  await page.getByRole("tab", { name: "策略挖掘" }).click();
+
+  await expect(page.getByRole("heading", { name: "从历史数据反向发现规律" })).toBeVisible();
+  await page.getByRole("button", { name: "开始反向搜索" }).click();
+
+  await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
+  await expect(page.locator(".headline-metrics")).toContainText("60.0%");
+  await expect(page.locator(".rule-card")).toContainText("75");
+  await expect(page.locator(".research-caveat")).toContainText("不等同于可直接交易的组合回测");
+});

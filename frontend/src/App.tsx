@@ -464,11 +464,13 @@ function PlanDisclosure({
   onSelectOption: (prompt: string) => void;
   disabled: boolean;
 }) {
+  const limitations = response.plan?.limitations ?? [];
+  const clarificationOptions = response.plan?.clarification_options ?? [];
   if (
     response.plan?.feasibility !== "supported"
     || (
-      response.plan.limitations.length === 0
-      && response.plan.clarification_options.length === 0
+      limitations.length === 0
+      && clarificationOptions.length === 0
     )
   ) {
     return null;
@@ -476,17 +478,17 @@ function PlanDisclosure({
   return (
     <aside className="disclosure-card" role="note">
       <strong>{"\u53e3\u5f84\u8bf4\u660e"}</strong>
-      {response.plan.limitations.length > 0 && (
+      {limitations.length > 0 && (
         <ul>
-          {response.plan.limitations.map((item) => (
+          {limitations.map((item) => (
             <li key={item}>{formatPlanDisclosure(item)}</li>
           ))}
         </ul>
       )}
-      {response.plan.clarification_options.length > 0 && (
+      {clarificationOptions.length > 0 && (
         <div className="clarification-options">
           <p>请选择一个明确口径重新分析：</p>
-          {response.plan.clarification_options.map((option) => (
+          {clarificationOptions.map((option) => (
             <button
               type="button"
               key={option}
@@ -657,13 +659,14 @@ function ResultTable({
                 )}
               </dt>
               <dd>{formatSummaryValue(label, value, result.summary_metadata?.[label])}</dd>
+              {summaryDescription(label, result.summary_metadata?.[label]) && (
+                <p className="summary-description">
+                  {summaryDescription(label, result.summary_metadata?.[label])}
+                </p>
+              )}
               {result.summary_metadata?.[label]?.formula && (
                 <details className="summary-explanation">
                   <summary>{"\u67e5\u770b\u5b8c\u6574\u53e3\u5f84"}</summary>
-                  <p>
-                    <strong>{"\u6307\u6807\u542b\u4e49\uff1a"}</strong>
-                    {summaryDescription(label, result.summary_metadata[label])}
-                  </p>
                   <p>
                     <strong>{"\u8ba1\u7b97\u516c\u5f0f\uff1a"}</strong>
                     <code>{result.summary_metadata[label].formula}</code>

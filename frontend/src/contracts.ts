@@ -274,6 +274,9 @@ export interface DiscoveryTaskRequest {
   factors: string[];
   prompt: string;
   max_generations: number;
+  forward_days: number;
+  minimum_samples: number;
+  max_conditions: number;
 }
 
 export interface BacktestResult {
@@ -281,6 +284,14 @@ export interface BacktestResult {
   mean_return: number;
   max_drawdown: number;
   eval_time_ms: number;
+  sample_count: number;
+  positive_count: number;
+  median_return: number;
+  return_std: number;
+  baseline_win_rate: number;
+  win_rate_lift: number;
+  confidence_lower: number;
+  confidence_upper: number;
 }
 
 export interface FactorHypothesis {
@@ -296,6 +307,9 @@ export interface DiscoveryTaskProgress {
   total_generations: number;
   formulas_tested: number;
   current_log: string;
+  current_stage: string;
+  training_sample_count: number;
+  validation_sample_count: number;
   leaderboard: FactorHypothesis[];
 }
 

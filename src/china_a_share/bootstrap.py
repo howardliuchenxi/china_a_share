@@ -63,10 +63,9 @@ from china_a_share.core.ports import AnalysisTaskStore
 def create_evolution_loop(settings: Settings, store: AnalysisTaskStore) -> EvolutionLoop:
     """Assemble the configured discovery engine components."""
     provider = _create_data_provider(settings)
-    planner = VertexClaudeQueryPlanner(settings.deepseek_api_key)
     executor = DataQueryExecutor(provider)
     backtester = FactorBacktester(executor)
-    return EvolutionLoop(store, planner, backtester)
+    return EvolutionLoop(store, backtester)
 
 def create_stock_catalog_service(settings: Settings) -> StockCatalogService:
     """Assemble deterministic stock catalog access through the shared cache design."""

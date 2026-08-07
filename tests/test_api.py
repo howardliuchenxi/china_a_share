@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi.testclient import TestClient
 
@@ -7,6 +7,8 @@ import china_a_share.api as api_module
 from china_a_share.api import create_app
 from china_a_share.client import TushareApiError
 from china_a_share.core.contracts import (
+    AnalysisTaskStatus,
+    AnalysisTaskSubmission,
     AnalysisResponse,
     AnalysisStatus,
     StockListItem,
@@ -16,6 +18,8 @@ from china_a_share.core.contracts import (
     UiFeedbackConversationMessage,
     UiFeedbackStatus,
     UiFeedbackSubmission,
+    DiscoveryTask,
+    DiscoveryTaskProgress,
 )
 ORIGINAL_COMPLEX_PROMPT = (
     "\u8fc7\u53bb\u4e00\u4e2a\u6708\uff0c\u533b\u7597\u884c\u4e1a\uff0c"
@@ -45,6 +49,32 @@ class FakeAnalysisService:
 class FailingAnalysisService(FakeAnalysisService):
     def analyze(self, request_id, request, *, api_route):
         raise RuntimeError("unexpected transform failure")
+
+
+class FakeDiscoveryCoordinator:
+    def __init__(self):
+        self.requests = []
+        self.task = None
+
+    def submit_discovery(self, request):
+        self.requests.append(request)
+        now = datetime.now(timezone.utc)
+        self.task = DiscoveryTask(
+            task_id="discovery-api-task",
+            status=AnalysisTaskStatus.QUEUED,
+            request=request,
+            created_at=now,
+            updated_at=now,
+            progress=DiscoveryTaskProgress(current_stage="queued"),
+        )
+        return AnalysisTaskSubmission(
+            task_id=self.task.task_id,
+            status=self.task.status,
+            status_url=f"/api/discovery/tasks/{self.task.task_id}",
+        )
+
+    def get(self, task_id):
+        return self.task if self.task and self.task.task_id == task_id else None
 
 
 class FakeStockCatalogService:
@@ -150,6 +180,61 @@ def test_capabilities_endpoint_exposes_the_runtime_manifest():
 
     assert response.status_code == 200
     assert response.json() == service.capability_manifest
+
+
+def test_discovery_endpoints_validate_submit_and_return_progress():
+    coordinator = FakeDiscoveryCoordinator()
+    client = TestClient(
+        create_app(FakeAnalysisService(), task_coordinator=coordinator)
+    )
+
+    submission = client.post(
+        "/api/discovery/tasks",
+        json={
+            "target_pool": "A_SHARE",
+            "train_start": "20240101",
+            "train_end": "20251231",
+            "val_start": "20260101",
+            "val_end": "20260630",
+            "factors": ["pe_ttm", "turnover_rate"],
+            "prompt": "Find robust event patterns",
+            "max_generations": 1,
+            "forward_days": 20,
+            "minimum_samples": 30,
+            "max_conditions": 2,
+        },
+    )
+
+    assert submission.status_code == 202
+    assert submission.json()["task_id"] == "discovery-api-task"
+    assert coordinator.requests[0].forward_days == 20
+
+    status_response = client.get("/api/discovery/tasks/discovery-api-task")
+    assert status_response.status_code == 200
+    assert status_response.json()["progress"]["current_stage"] == "queued"
+
+
+def test_discovery_endpoint_rejects_overlapping_windows():
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            task_coordinator=FakeDiscoveryCoordinator(),
+        )
+    )
+
+    response = client.post(
+        "/api/discovery/tasks",
+        json={
+            "target_pool": "A_SHARE",
+            "train_start": "20250101",
+            "train_end": "20251231",
+            "val_start": "20251201",
+            "val_end": "20260630",
+            "factors": ["pe_ttm"],
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_ui_feedback_config_exposes_only_public_values():

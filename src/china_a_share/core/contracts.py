@@ -992,7 +992,7 @@ class DiscoveryTaskRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    target_pool: str = Field(description="Universe constraint (e.g., 'A_SHARE').")
+    target_pool: Literal["A_SHARE"] = Field(description="Validated research universe.")
     train_start: str = Field(description="Start date for training (YYYYMMDD).")
     train_end: str = Field(description="End date for training (YYYYMMDD).")
     val_start: str = Field(description="Start date for validation blind test (YYYYMMDD).")
@@ -1000,6 +1000,44 @@ class DiscoveryTaskRequest(BaseModel):
     factors: List[str] = Field(description="Selected base factor fields to use.", default_factory=list)
     prompt: str = Field(description="User guidance prompt.", default="")
     max_generations: int = Field(default=3, description="Number of evolutionary generations.")
+    forward_days: int = Field(
+        default=20,
+        ge=1,
+        le=60,
+        description="Trading sessions between the signal close and outcome close.",
+    )
+    minimum_samples: int = Field(
+        default=30,
+        ge=5,
+        le=10000,
+        description="Minimum observations required in each evaluation window.",
+    )
+    max_conditions: int = Field(
+        default=2,
+        ge=1,
+        le=3,
+        description="Maximum number of conditions in one discovered rule.",
+    )
+
+    @model_validator(mode="after")
+    def validate_research_windows(self) -> "DiscoveryTaskRequest":
+        """Require ordered, non-overlapping research windows."""
+        try:
+            train_start = datetime.strptime(self.train_start, "%Y%m%d")
+            train_end = datetime.strptime(self.train_end, "%Y%m%d")
+            val_start = datetime.strptime(self.val_start, "%Y%m%d")
+            val_end = datetime.strptime(self.val_end, "%Y%m%d")
+        except ValueError as exc:
+            raise ValueError("Discovery dates must use YYYYMMDD format.") from exc
+        if train_start > train_end:
+            raise ValueError("Training start must not be after training end.")
+        if val_start > val_end:
+            raise ValueError("Validation start must not be after validation end.")
+        if val_start <= train_end:
+            raise ValueError("Validation window must start after the training window.")
+        if not self.factors:
+            raise ValueError("At least one discovery factor is required.")
+        return self
 
 
 class BacktestResult(BaseModel):
@@ -1011,6 +1049,14 @@ class BacktestResult(BaseModel):
     mean_return: float
     max_drawdown: float
     eval_time_ms: int
+    sample_count: int = Field(default=0, ge=0)
+    positive_count: int = Field(default=0, ge=0)
+    median_return: float = 0.0
+    return_std: float = 0.0
+    baseline_win_rate: float = 0.0
+    win_rate_lift: float = 0.0
+    confidence_lower: float = 0.0
+    confidence_upper: float = 0.0
 
 
 class FactorHypothesis(BaseModel):
@@ -1034,6 +1080,12 @@ class DiscoveryTaskProgress(BaseModel):
     total_generations: int = 0
     formulas_tested: int = 0
     current_log: str = ""
+    current_stage: str = Field(
+        default="queued",
+        description="Stable research stage displayed while the task runs.",
+    )
+    training_sample_count: int = Field(default=0, ge=0)
+    validation_sample_count: int = Field(default=0, ge=0)
     leaderboard: List[FactorHypothesis] = Field(default_factory=list)
 
 
