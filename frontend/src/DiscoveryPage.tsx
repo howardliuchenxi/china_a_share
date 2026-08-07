@@ -63,12 +63,24 @@ function validationReason(hypothesis: FactorHypothesis) {
     case "insufficient_significance_days": return "验证期不足 20 个日期集中度折算有效日";
     case "fdr_not_passed": return "未通过 10% BY-FDR";
     case "passed": return "训练与验证同向，且通过 10% BY-FDR";
-    default: return "尚未完成独立验证";
+    default: return "尚未完成预留验证";
   }
 }
 
 function significanceWasTested(hypothesis: FactorHypothesis) {
   return !untestedValidationReasons.has(hypothesis.validation_reason);
+}
+
+function supportShiftDescription(hypothesis: FactorHypothesis) {
+  const trainingSupport = hypothesis.train_result?.rule_support_rate ?? 0;
+  const validationSupport = hypothesis.val_result?.rule_support_rate ?? 0;
+  if (validationSupport > trainingSupport) {
+    return `验证期扩张至训练期的 ${percent(hypothesis.support_retention_ratio)}`;
+  }
+  if (validationSupport < trainingSupport) {
+    return `验证期收缩至训练期的 ${percent(hypothesis.support_retention_ratio)}`;
+  }
+  return "验证期与训练期覆盖相同";
 }
 
 function thresholdSource(source: FactorHypothesis["threshold_source"]) {
@@ -442,7 +454,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
                 <p className="confidence-note">标签缺失最坏—最好提升：{percent(hypothesis.val_result!.outcome_robust_lift_lower)} – {percent(hypothesis.val_result!.outcome_robust_lift_upper)}</p>
                 <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
               </> : <p className="confidence-note">验证期暂无可观测结果，概率、收益分布与相对提升均无法估计；请结合因子覆盖率和验证判定排查。</p>}
-              <p className="confidence-note">保守相对提升：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.validation_score) : "—"} · 训练—验证提升差距：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.generalization_gap) : "—"} · 规则覆盖差距：{percent(hypothesis.support_rate_gap)} · 覆盖保留比例：{percent(hypothesis.support_retention_ratio)}</p>
+              <p className="confidence-note">保守相对提升：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.validation_score) : "—"} · 训练—验证提升差距：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.generalization_gap) : "—"} · 规则覆盖差距：{percent(hypothesis.support_rate_gap)} · {supportShiftDescription(hypothesis)}</p>
               <p className="confidence-note">{significanceWasTested(hypothesis) ? `有限有效交易日 Student-t 提升检验 p-value：${hypothesis.p_value.toFixed(3)} · BY-FDR 校正 q-value：${hypothesis.q_value.toFixed(3)}（${hypothesis.fdr_family_size} 个盲测候选）` : `显著性未检验：证据门槛不足，按 p=1.000 计入 BY-FDR（${hypothesis.fdr_family_size} 个盲测候选，q=${hypothesis.q_value.toFixed(3)}）`}</p>
               <p className="confidence-note">验证判定：{validationReason(hypothesis)}</p>
             </div>

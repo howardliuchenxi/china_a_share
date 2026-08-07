@@ -683,6 +683,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
     reasoning: "Generated from observed discrete training values.",
     threshold_source: "observed_value",
     validation_score: 0,
+    support_rate_gap: 0.1533,
+    support_retention_ratio: 0,
     p_value: 1,
     q_value: 1,
     validation_passed: false,
@@ -792,7 +794,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topWindowComparison).toContainText("12.0%");
   await expect(topWindowComparison).toContainText("15.0%");
   await expect(page.locator(".rule-list")).toContainText("规则覆盖差距：2.9%");
-  await expect(page.locator(".rule-list")).toContainText("覆盖保留比例：119.6%");
+  await expect(page.locator(".rule-list")).toContainText("验证期扩张至训练期的 119.6%");
   expect(statusPollCount).toBeGreaterThanOrEqual(2);
   await expect(page.locator(".headline-metrics")).toContainText("N=407");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
@@ -846,6 +848,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(missingValidationCard.locator(".window-comparison > div").nth(1)).toContainText("收益超过 5.0%—");
   await expect(missingValidationCard.locator(".window-comparison > div").nth(1)).toContainText("平均收益—");
   await expect(missingValidationCard).toContainText("保守相对提升：— · 训练—验证提升差距：—");
+  await expect(missingValidationCard).toContainText("验证期收缩至训练期的 0.0%");
   await expect(missingValidationCard).toContainText("显著性未检验：证据门槛不足，按 p=1.000 计入 BY-FDR");
   await expect(missingValidationCard).not.toContainText("Student-t 提升检验 p-value");
 
