@@ -1064,7 +1064,7 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
 
 
 def test_rule_search_prioritizes_factor_breadth_in_the_pairing_pool():
-    factor_names = [f"factor_{index}" for index in range(8)]
+    factor_names = [f"factor_{index}" for index in range(20)]
     dataset = pd.DataFrame(
         {
             "trade_date": [f"2026{index:04d}" for index in range(1, 101)],

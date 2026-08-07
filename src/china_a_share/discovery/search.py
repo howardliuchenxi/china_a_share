@@ -11,7 +11,9 @@ from china_a_share.discovery.backtester import FactorBacktester
 
 
 SEARCH_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
-PAIRING_CANDIDATE_LIMIT = 12
+# Twenty-four entries cover every supported factor once and still cap the
+# two-condition search at 276 combinations.
+PAIRING_CANDIDATE_LIMIT = 24
 VALIDATION_CANDIDATE_LIMIT = 50
 VALIDATION_FDR_THRESHOLD = 0.10
 ONE_SIDED_95_Z_SCORE = 1.6448536269514722
