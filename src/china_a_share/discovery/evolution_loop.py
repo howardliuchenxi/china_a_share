@@ -111,10 +111,11 @@ class EvolutionLoop:
         task.progress.leaderboard = leaderboard
         if not leaderboard:
             raise ValueError(
-                "No rule met the sample, raw/effective trading-day breadth, "
+                "No rule produced positive outcome-attrition-robust training lift "
+                "while meeting the sample, raw/effective trading-day breadth, "
                 "raw/effective security breadth, and selected/comparable-baseline "
-                "outcome-coverage requirements in both windows. Review factor "
-                "coverage or relax only the failing evidence thresholds."
+                "outcome-coverage requirements. Review factor coverage or relax "
+                "only the failing evidence thresholds."
             )
 
     @staticmethod

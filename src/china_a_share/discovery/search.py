@@ -91,6 +91,17 @@ class RuleSearchEngine:
             )
             candidates.extend(pair_candidates)
             evaluated_count += pair_evaluated
+        # Weak single-factor rules must remain available above so two weak
+        # marginal effects can still form a useful interaction. Once all
+        # interactions exist, however, rules that already fail an immutable
+        # training gate can never pass validation and must not consume the
+        # bounded holdout-testing budget.
+        candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.train_result.win_rate_lift > 0.0
+            and candidate.train_result.outcome_robust_lift_lower > 0.0
+        ]
         candidates.sort(key=self._training_rank_key, reverse=True)
         unique = self._deduplicate_by_training_selection(candidates, train)
         # Freeze a bounded training-ranked shortlist before touching validation.

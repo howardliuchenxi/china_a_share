@@ -20,7 +20,11 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.discovery.backtester import FactorBacktester
 from china_a_share.discovery.evolution_loop import EvolutionLoop
-from china_a_share.discovery.search import PAIRING_CANDIDATE_LIMIT, RuleSearchEngine
+from china_a_share.discovery.search import (
+    PAIRING_CANDIDATE_LIMIT,
+    VALIDATION_CANDIDATE_LIMIT,
+    RuleSearchEngine,
+)
 from china_a_share.tasks import MemoryAnalysisTaskStore
 
 
@@ -1501,6 +1505,90 @@ def test_training_formula_screening_defers_event_example_extraction():
     assert all(candidate.train_result.event_examples == [] for candidate in candidates)
 
 
+def test_training_failures_do_not_consume_the_holdout_validation_budget(monkeypatch):
+    blocked = [
+        FactorHypothesis(
+            formula=f"value >= {index}",
+            description="Training failure",
+            reasoning="Test evidence",
+            train_result=BacktestResult(
+                win_rate=0.49,
+                mean_return=-0.01,
+                eval_time_ms=0,
+                win_rate_lift=-0.01,
+                outcome_robust_lift_lower=-0.02,
+                lift_confidence_lower=-0.02,
+            ),
+        )
+        for index in range(VALIDATION_CANDIDATE_LIMIT)
+    ]
+    eligible = FactorHypothesis(
+        formula="value >= 100",
+        description="Eligible training rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.01,
+            eval_time_ms=0,
+            win_rate_lift=0.10,
+            outcome_robust_lift_lower=0.01,
+            lift_confidence_lower=-0.20,
+        ),
+    )
+    validated_formulas = []
+
+    monkeypatch.setattr(
+        RuleSearchEngine,
+        "_build_conditions",
+        lambda self, train, factors: [("value >= 0", "value")],
+    )
+    monkeypatch.setattr(
+        RuleSearchEngine,
+        "_evaluate_training_formulas",
+        lambda self, formulas, train: ([*blocked, eligible], len(blocked) + 1),
+    )
+    monkeypatch.setattr(
+        RuleSearchEngine,
+        "_deduplicate_by_training_selection",
+        lambda self, candidates, train: list(candidates),
+    )
+
+    def capture_validation(self, candidates, validation, *, training=None):
+        validated_formulas.extend(candidate.formula for candidate in candidates)
+        for candidate in candidates:
+            candidate.val_result = BacktestResult(
+                win_rate=0.60,
+                mean_return=0.01,
+                eval_time_ms=0,
+            )
+        return list(candidates)
+
+    monkeypatch.setattr(
+        RuleSearchEngine,
+        "_validate_candidates",
+        capture_validation,
+    )
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105"],
+            "value": [100.0],
+            "forward_return": [0.01],
+        }
+    )
+
+    candidates, evaluated_count = RuleSearchEngine(min_sample_count=1).search(
+        dataset,
+        dataset.copy(),
+        ["value"],
+        max_conditions=1,
+        top_n=1,
+    )
+
+    assert evaluated_count == VALIDATION_CANDIDATE_LIMIT + 1
+    assert validated_formulas == [eligible.formula]
+    assert [candidate.formula for candidate in candidates] == [eligible.formula]
+
+
 def test_training_rank_does_not_treat_zero_standard_error_as_certainty():
     degenerate = FactorHypothesis(
         formula="value >= 1",
@@ -2484,10 +2572,17 @@ def test_student_t_survival_matches_closed_form_cases(
     ) == pytest.approx(expected)
 
 
-def test_clustered_lift_significance_is_conservative_without_variation():
+@pytest.mark.parametrize(
+    ("lift", "standard_error"),
+    [(0.10, 0.0), (-0.01, 0.01)],
+)
+def test_clustered_lift_significance_rejects_non_testable_edges(
+    lift,
+    standard_error,
+):
     probability = RuleSearchEngine._clustered_lift_tail_probability(
-        0.10,
-        0.0,
+        lift,
+        standard_error,
         100,
     )
 
