@@ -1,4 +1,4 @@
-"""Tushare operation catalog exposed through provider-neutral contracts."""
+"""Read-only Tushare operation catalog exposed through neutral contracts."""
 
 from typing import Sequence, Set
 
@@ -30,6 +30,93 @@ STOCK_API_NAMES = (
     "tdx_index", "tdx_member", "ths_daily", "ths_hot", "ths_index",
     "ths_member", "top10_floatholders", "top10_holders", "top_inst",
     "top_list", "trade_cal", "weekly",
+)
+
+ETF_API_NAMES = (
+    "etf_basic", "etf_index", "etf_mins", "etf_sh_cons", "etf_share_size",
+    "etf_sz_cons", "fund_adj", "fund_daily", "idx_anns", "rt_etf_k",
+    "rt_etf_min", "rt_etf_min_daily", "rt_etf_sz_iopv",
+)
+
+INDEX_API_NAMES = (
+    "ci_daily", "ci_index_member", "daily_info", "idx_factor_pro",
+    "idx_mins", "index_basic", "index_classify", "index_daily",
+    "index_dailybasic", "index_global", "index_member_all", "index_monthly",
+    "index_weekly", "index_weight", "rt_idx_k", "rt_idx_min", "rt_sw_k",
+    "sw_daily", "sw_mins", "sz_daily_info",
+)
+
+FUND_API_NAMES = (
+    "fund_basic", "fund_company", "fund_div", "fund_factor_pro",
+    "fund_manager", "fund_nav", "fund_portfolio", "fund_share", "mkt_idx_bmk",
+)
+
+FUTURES_API_NAMES = (
+    "ft_limit", "ft_mins", "fut_basic", "fut_daily", "fut_holding",
+    "fut_index_daily", "fut_mapping", "fut_settle", "fut_trade_cal",
+    "fut_weekly_detail", "fut_weekly_monthly", "fut_wsr", "rt_fut_min",
+)
+
+SPOT_API_NAMES = ("sge_basic", "sge_daily")
+
+OPTION_API_NAMES = ("opt_basic", "opt_daily", "opt_mins")
+
+BOND_API_NAMES = (
+    "bc_bestotcqt", "bc_otcqt", "bond_blk", "bond_blk_detail", "cb_basic",
+    "cb_call", "cb_daily", "cb_factor_pro", "cb_issue", "cb_price_chg",
+    "cb_rate", "cb_rating", "cb_share", "eco_cal", "repo_daily",
+    "top10_cb_holders", "yc_cb",
+)
+
+FOREX_API_NAMES = ("fx_daily", "fx_obasic")
+
+HONG_KONG_API_NAMES = (
+    "hk_adjfactor", "hk_balancesheet", "hk_basic", "hk_cashflow",
+    "hk_daily", "hk_daily_adj", "hk_fina_indicator", "hk_income",
+    "hk_tradecal",
+)
+
+UNITED_STATES_API_NAMES = (
+    "us_adjfactor", "us_balancesheet", "us_basic", "us_cashflow",
+    "us_daily", "us_daily_adj", "us_fina_indicator", "us_income",
+    "us_tradecal",
+)
+
+MACRO_API_NAMES = (
+    "cn_cpi", "cn_gdp", "cn_m", "cn_pmi", "cn_ppi", "cn_schedule",
+    "gz_index", "hibor", "libor", "sf_month", "shibor", "shibor_lpr",
+    "shibor_quote", "us_tbr", "us_tltr", "us_trltr", "us_trycr", "us_tycr",
+    "wz_index",
+)
+
+TEXT_API_NAMES = (
+    "anns_d", "cctv_news", "irm_qa_sh", "irm_qa_sz", "major_news",
+    "monetary_policy", "news", "npr", "research_report",
+)
+
+READ_ONLY_PORTFOLIO_API_NAMES = ("p_get", "p_list")
+
+TUSHARE_API_CATEGORIES = {
+    "stock": STOCK_API_NAMES,
+    "etf": ETF_API_NAMES,
+    "index": INDEX_API_NAMES,
+    "fund": FUND_API_NAMES,
+    "futures": FUTURES_API_NAMES,
+    "spot": SPOT_API_NAMES,
+    "option": OPTION_API_NAMES,
+    "bond": BOND_API_NAMES,
+    "forex": FOREX_API_NAMES,
+    "hong_kong": HONG_KONG_API_NAMES,
+    "united_states": UNITED_STATES_API_NAMES,
+    "macro": MACRO_API_NAMES,
+    "text": TEXT_API_NAMES,
+    "portfolio_read": READ_ONLY_PORTFOLIO_API_NAMES,
+}
+
+READ_ONLY_API_NAMES = tuple(
+    operation
+    for operations in TUSHARE_API_CATEGORIES.values()
+    for operation in operations
 )
 
 
@@ -147,10 +234,10 @@ CORE_OPERATION_GUIDANCE = {
 
 
 class TushareOperationCatalog:
-    """Provide allowlisted Tushare stock operations and planner guidance."""
+    """Provide allowlisted read-only Tushare operations and planner guidance."""
 
     def __init__(self) -> None:
-        self._operation_names: Set[str] = set(STOCK_API_NAMES)
+        self._operation_names: Set[str] = set(READ_ONLY_API_NAMES)
 
     def search(self, prompt: str) -> Sequence[DataOperation]:
         """Return candidate operations ordered by catalog position."""
@@ -162,12 +249,12 @@ class TushareOperationCatalog:
                 description=CORE_OPERATION_GUIDANCE.get(
                     name,
                     (
-                        f"Tushare stock-data operation {name}. Use only parameters "
+                        f"Tushare read-only data operation {name}. Use only parameters "
                         "and fields defined by the official operation documentation."
                     ),
                 ),
             )
-            for name in STOCK_API_NAMES
+            for name in READ_ONLY_API_NAMES
         )
 
     def contains(self, operation: str) -> bool:

@@ -17,7 +17,7 @@ from china_a_share.cache import (
 from china_a_share.core.contracts import DataCacheRecord
 from china_a_share.providers.tushare import TushareCacheExpirationPolicy
 from china_a_share.providers.tushare import PROFILED_OPERATIONS
-from china_a_share.registry import STOCK_API_NAMES
+from china_a_share.registry import READ_ONLY_API_NAMES
 
 
 BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
@@ -331,7 +331,7 @@ def test_trade_calendar_uses_long_reference_ttl():
 
 
 def test_every_catalog_operation_has_an_explicit_cache_profile():
-    assert PROFILED_OPERATIONS == set(STOCK_API_NAMES)
+    assert PROFILED_OPERATIONS == set(READ_ONLY_API_NAMES)
 
 
 def test_fixed_float_holder_snapshot_uses_quarterly_disclosure_ttl():

@@ -31,7 +31,11 @@ from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 from china_a_share.planners.vertex_claude import VertexClaudeQueryPlanner
 from china_a_share.registry import TushareOperationCatalog
 from china_a_share.capabilities import build_capability_manifest
-from china_a_share.registry import STOCK_API_NAMES
+from china_a_share.registry import (
+    READ_ONLY_API_NAMES,
+    STOCK_API_NAMES,
+    TUSHARE_API_CATEGORIES,
+)
 
 
 class FakeResponse:
@@ -152,25 +156,61 @@ def test_catalog_and_validator_accept_stock_operation_plan():
 def test_runtime_manifest_covers_every_connected_tushare_operation():
     class FullyConnectedProvider:
         name = "tushare"
-        operation_names = STOCK_API_NAMES
+        operation_names = READ_ONLY_API_NAMES
 
         @staticmethod
         def supports(operation):
-            return operation in STOCK_API_NAMES
+            return operation in READ_ONLY_API_NAMES
 
     manifest = build_capability_manifest(
         FullyConnectedProvider(),
         {"limit_up_streak": lambda: None},
     )
 
-    assert manifest["provider_operation_count"] == len(STOCK_API_NAMES)
+    assert manifest["provider_operation_count"] == len(READ_ONLY_API_NAMES)
     assert manifest["tushare_catalog_fully_connected"] is True
     assert manifest["fingerprint"].startswith("sha256:")
     assert manifest["capabilities"][0]["id"] == "limit_up_streak"
+    assert manifest["tushare_category_coverage"]["stock"] == {
+        "documented": 108,
+        "connected": 108,
+    }
+    assert manifest["tushare_category_coverage"]["index"] == {
+        "documented": 20,
+        "connected": 20,
+    }
     assert (
         manifest["capabilities"][0]["parameters"]["streak_length"]["minimum"]
         == 1
     )
+
+
+def test_read_only_catalog_matches_the_official_category_snapshot():
+    expected_counts = {
+        "stock": 108,
+        "etf": 13,
+        "index": 20,
+        "fund": 9,
+        "futures": 13,
+        "spot": 2,
+        "option": 3,
+        "bond": 17,
+        "forex": 2,
+        "hong_kong": 9,
+        "united_states": 9,
+        "macro": 19,
+        "text": 9,
+        "portfolio_read": 2,
+    }
+
+    assert {
+        category: len(operations)
+        for category, operations in TUSHARE_API_CATEGORIES.items()
+    } == expected_counts
+    assert len(READ_ONLY_API_NAMES) == 235
+    assert len(set(READ_ONLY_API_NAMES)) == len(READ_ONLY_API_NAMES)
+    assert "p_save" not in READ_ONLY_API_NAMES
+    assert "p_delete" not in READ_ONLY_API_NAMES
 
 
 def test_registered_limit_up_capability_recovers_variable_streak_plan():

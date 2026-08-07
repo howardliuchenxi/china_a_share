@@ -10,7 +10,7 @@ from china_a_share.client import TushareTransport
 from china_a_share.core.contracts import DataOperation
 from china_a_share.core.ports import DataResponseCache
 from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
-from china_a_share.registry import STOCK_API_NAMES, TushareOperationCatalog
+from china_a_share.registry import READ_ONLY_API_NAMES, TushareOperationCatalog
 
 
 TUSHARE_PROVIDER_NAME = "tushare"
@@ -35,6 +35,16 @@ NO_PERSISTENCE_OPERATIONS = {
     "rt_min",
     "rt_min_daily",
     "ths_hot",
+    "p_get",
+    "p_list",
+    "rt_etf_k",
+    "rt_etf_min",
+    "rt_etf_min_daily",
+    "rt_etf_sz_iopv",
+    "rt_fut_min",
+    "rt_idx_k",
+    "rt_idx_min",
+    "rt_sw_k",
 }
 INTRADAY_OPERATIONS = {
     "stk_auction",
@@ -146,6 +156,16 @@ DAILY_OPERATIONS = {
     "top_list",
     "weekly",
 }
+GENERIC_READ_ONLY_OPERATIONS = (
+    set(READ_ONLY_API_NAMES)
+    - NO_PERSISTENCE_OPERATIONS
+    - INTRADAY_OPERATIONS
+    - REFERENCE_OPERATIONS
+    - DISCLOSURE_OPERATIONS
+    - DAILY_OPERATIONS
+    - {"trade_cal"}
+)
+DAILY_OPERATIONS.update(GENERIC_READ_ONLY_OPERATIONS)
 PROFILED_OPERATIONS = (
     NO_PERSISTENCE_OPERATIONS
     | INTRADAY_OPERATIONS
@@ -154,9 +174,9 @@ PROFILED_OPERATIONS = (
     | DAILY_OPERATIONS
     | {"trade_cal"}
 )
-if PROFILED_OPERATIONS != set(STOCK_API_NAMES):
-    missing = sorted(set(STOCK_API_NAMES).difference(PROFILED_OPERATIONS))
-    extra = sorted(PROFILED_OPERATIONS.difference(STOCK_API_NAMES))
+if PROFILED_OPERATIONS != set(READ_ONLY_API_NAMES):
+    missing = sorted(set(READ_ONLY_API_NAMES).difference(PROFILED_OPERATIONS))
+    extra = sorted(PROFILED_OPERATIONS.difference(READ_ONLY_API_NAMES))
     raise RuntimeError(
         f"Tushare cache profiles must cover the operation catalog; "
         f"missing={missing}, extra={extra}"
@@ -206,10 +226,10 @@ class TushareDataProvider:
     @property
     def operation_names(self) -> Sequence[str]:
         """Return every Tushare operation connected through the generic transport."""
-        return STOCK_API_NAMES
+        return READ_ONLY_API_NAMES
 
     def search_operations(self, prompt: str) -> Sequence[DataOperation]:
-        """Return Tushare stock operations relevant to the user prompt."""
+        """Return read-only Tushare operations available to the query planner."""
         return self._catalog.search(prompt)
 
     def supports(self, operation: str) -> bool:

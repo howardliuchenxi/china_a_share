@@ -5,7 +5,7 @@ import json
 import os
 from typing import Any, Dict, Iterable, Tuple
 
-from china_a_share.registry import STOCK_API_NAMES
+from china_a_share.registry import READ_ONLY_API_NAMES, TUSHARE_API_CATEGORIES
 
 
 ANALYSIS_CAPABILITIES: Tuple[Dict[str, Any], ...] = (
@@ -81,11 +81,20 @@ def build_capability_manifest(
         "provider": provider.name,
         "provider_operations": provider_operations,
         "provider_operation_count": len(provider_operations),
-        "tushare_catalog_operation_count": len(STOCK_API_NAMES),
+        "tushare_catalog_operation_count": len(READ_ONLY_API_NAMES),
         "tushare_catalog_fully_connected": (
             provider.name != "tushare"
-            or set(provider_operations) == set(STOCK_API_NAMES)
+            or set(provider_operations) == set(READ_ONLY_API_NAMES)
         ),
+        "tushare_category_coverage": {
+            category: {
+                "documented": len(operations),
+                "connected": sum(
+                    operation in provider_operations for operation in operations
+                ),
+            }
+            for category, operations in TUSHARE_API_CATEGORIES.items()
+        },
         "capabilities": capability_rows,
     }
     serialized = json.dumps(
