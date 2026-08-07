@@ -141,10 +141,12 @@ Reported evidence includes:
   harmonic penalty controls false discoveries under arbitrary dependence among
   overlapping and nested rules.
 
-The Student-t significance calculation uses `trading_day_count - 1` degrees of
-freedom and requires at least twenty independent validation signal dates.
-Shorter studies remain visible for exploration but receive `p = 1`, report
-`insufficient_significance_days`, and cannot pass FDR.
+The Student-t significance calculation uses the floored Kish effective
+signal-date count minus one degree of freedom and requires at least twenty
+effective validation signal dates. Date-concentrated or shorter studies remain
+visible for exploration but receive `p = 1`, report
+`insufficient_significance_days`, and cannot pass FDR. The user-configured raw
+distinct-date threshold remains a separate coverage requirement.
 
 The false-discovery family contains every frozen candidate sent to validation,
 including candidates retained with insufficient validation evidence. A rule

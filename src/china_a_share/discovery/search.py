@@ -133,7 +133,7 @@ class RuleSearchEngine:
         if candidate.val_result.outcome_robust_lift_lower <= 0.0:
             return "validation_outcome_attrition_not_robust"
         if (
-            candidate.val_result.trading_day_count
+            candidate.val_result.effective_trading_day_count
             < MINIMUM_SIGNIFICANCE_TRADING_DAYS
         ):
             return "insufficient_significance_days"
@@ -395,7 +395,7 @@ class RuleSearchEngine:
                 self._clustered_lift_tail_probability(
                     validation_result.win_rate_lift,
                     validation_result.lift_standard_error,
-                    validation_result.trading_day_count,
+                    validation_result.effective_trading_day_count,
                 )
                 if has_sufficient_evidence
                 else 1.0
@@ -441,19 +441,23 @@ class RuleSearchEngine:
     def _clustered_lift_tail_probability(
         lift: float,
         standard_error: float,
-        trading_day_count: int,
+        effective_trading_day_count: float,
     ) -> float:
         """Return a one-sided Student-t tail for date-clustered probability lift."""
-        if trading_day_count < MINIMUM_SIGNIFICANCE_TRADING_DAYS:
+        if effective_trading_day_count < MINIMUM_SIGNIFICANCE_TRADING_DAYS:
             return 1.0
         if lift <= 0.0:
             return 1.0
         if standard_error <= 0.0:
             return 1.0
         t_score = lift / standard_error
+        # Fractional Kish counts do not define a Student-t distribution. Floor
+        # the count so concentration can only reduce, never inflate, degrees
+        # of freedom relative to the measured effective date support.
+        degrees_freedom = math.floor(effective_trading_day_count) - 1
         return RuleSearchEngine._student_t_survival(
             t_score,
-            trading_day_count - 1,
+            degrees_freedom,
         )
 
     @staticmethod

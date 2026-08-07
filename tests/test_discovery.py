@@ -1966,6 +1966,7 @@ def test_validation_reports_the_first_failed_replication_gate(
             win_rate_lift=validation_lift,
             outcome_robust_lift_lower=validation_outcome_lower,
             trading_day_count=20,
+            effective_trading_day_count=20.0,
         ),
         q_value=q_value,
     )
@@ -2083,7 +2084,7 @@ def test_validation_keeps_training_ranked_candidates_with_insufficient_evidence(
     assert validated[0].validation_reason == "insufficient_validation_samples"
 
 
-def test_validation_reason_reports_insufficient_significance_days():
+def test_validation_reason_reports_insufficient_effective_significance_days():
     candidate = FactorHypothesis(
         formula="value >= 1",
         description="Test rule",
@@ -2101,7 +2102,8 @@ def test_validation_reason_reports_insufficient_significance_days():
             eval_time_ms=1,
             win_rate_lift=0.10,
             outcome_robust_lift_lower=0.10,
-            trading_day_count=19,
+            trading_day_count=100,
+            effective_trading_day_count=19.9,
         ),
         q_value=1.0,
     )
@@ -2145,7 +2147,7 @@ def test_clustered_lift_significance_uses_finite_date_degrees_of_freedom():
     probability = RuleSearchEngine._clustered_lift_tail_probability(
         1.7291328115,
         1.0,
-        20,
+        20.9,
     )
 
     assert probability == pytest.approx(0.05, abs=1e-6)
