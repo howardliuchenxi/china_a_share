@@ -65,10 +65,7 @@ class FactorBacktester:
                 ),
                 required_dates,
             ):
-                if not frame.empty:
-                    frames.append(frame.dropna(axis=1, how="all"))
-        if not frames:
-            raise ValueError("No data available for the requested research window.")
+                frames.append(frame.dropna(axis=1, how="all"))
 
         panel = pd.concat(frames, ignore_index=True)
         panel = panel.sort_values(["ts_code", "trade_date"])

@@ -379,6 +379,39 @@ def test_research_dataset_rejects_invalid_trading_calendar_dates():
         )
 
 
+def test_research_dataset_rejects_a_failed_trading_calendar_query():
+    class FailedCalendarExecutor(FakeQueryExecutor):
+        def execute(self, query, *, api_route, request_id):
+            result = super().execute(
+                query,
+                api_route=api_route,
+                request_id=request_id,
+            )
+            if query.operation == "trade_cal":
+                return result.model_copy(update={"status": QueryStatus.ERROR})
+            return result
+
+    executor = FailedCalendarExecutor([], {}, {})
+
+    with pytest.raises(ValueError, match="calendar could not be loaded"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
+def test_research_dataset_rejects_an_incomplete_forward_window():
+    executor = FakeQueryExecutor(["20260105"], {}, {})
+
+    with pytest.raises(ValueError, match="extends beyond available sessions"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
 def test_research_dataset_rejects_duplicate_security_rows():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],
@@ -523,6 +556,48 @@ def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
     assert result.max_drawdown == pytest.approx(-0.20)
     assert result.baseline_win_rate == pytest.approx(0.75)
     assert result.baseline_sample_count == 4
+
+
+def test_single_rule_backtest_builds_and_evaluates_one_dataset():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [{"ts_code": "000001.SZ", "pe_ttm": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            "20260105": [{"ts_code": "000001.SZ", "close": 10.0}],
+            "20260106": [{"ts_code": "000001.SZ", "close": 11.0}],
+        },
+    )
+
+    result = FactorBacktester(executor).run_backtest(
+        "pe_ttm <= 10",
+        "20260105",
+        "20260105",
+        forward_days=1,
+        target_return=0.05,
+    )
+
+    assert result.sample_count == 1
+    assert result.win_rate == pytest.approx(1.0)
+    assert result.target_return == pytest.approx(0.05)
+    assert result.dependence_lag_days == 0
+    assert result.eval_time_ms >= 0
+
+
+def test_rule_evaluation_rejects_missing_outcomes_and_invalid_formulas():
+    with pytest.raises(ValueError, match="missing forward_return"):
+        FactorBacktester.evaluate_rule(
+            pd.DataFrame({"factor": [1.0]}),
+            "factor >= 1",
+        )
+
+    with pytest.raises(ValueError, match="Invalid discovery rule"):
+        FactorBacktester.evaluate_rule(
+            pd.DataFrame({"factor": [1.0], "forward_return": [0.10]}),
+            "factor >>> 1",
+        )
 
 
 def test_rule_evaluation_uses_the_configured_target_return_threshold():
@@ -1303,3 +1378,34 @@ def test_evolution_loop_reports_finite_factor_coverage():
         "invalid": 0.0,
         "absent": 0.0,
     }
+
+
+def test_evolution_loop_persists_a_dataset_failure():
+    class FailedBacktester:
+        def build_dataset(self, start_date, end_date, **kwargs):
+            raise RuntimeError("market snapshot unavailable")
+
+    store = MemoryAnalysisTaskStore()
+    now = datetime.now(timezone.utc)
+    task = DiscoveryTask(
+        task_id="failed-discovery-loop",
+        status=AnalysisTaskStatus.QUEUED,
+        request=DiscoveryTaskRequest(
+            target_pool="A_SHARE",
+            train_start="20250101",
+            train_end="20251231",
+            val_start="20260101",
+            val_end="20260630",
+            factors=["pe_ttm"],
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    EvolutionLoop(store, FailedBacktester()).run(task.task_id)
+
+    failed = store.get(task.task_id)
+    assert failed.status == AnalysisTaskStatus.FAILED
+    assert failed.progress.current_stage == "failed"
+    assert failed.error.message == "market snapshot unavailable"
