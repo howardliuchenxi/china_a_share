@@ -85,6 +85,48 @@ const NON_MONETARY_FINANCIAL_FIELDS = new Set([
 const IDENTIFIER_COLUMN_PATTERN = /(^|_)(code|date|year|month|type|status|flag|count|num)$/;
 const PERCENT_COLUMN_PATTERN = /(^pct_|_pct$|_pct_|_ratio$|_rate$|_yield$)/;
 
+const SUMMARY_METADATA: Record<
+  string,
+  { label: string; description: string; percentage?: "value" | "ratio" }
+> = {
+  "Event count": {
+    label: "\u6709\u6548\u4e8b\u4ef6\u6837\u672c\u6570",
+    description: "\u6ee1\u8db3\u524d\u7f6e\u4e8b\u4ef6\u6761\u4ef6\uff0c\u4e14\u5728\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u6709\u53ef\u7528\u4ef7\u683c\u6570\u636e\u7684\u6837\u672c\u6570\u3002",
+  },
+  "Positive event count": {
+    label: "\u540e\u7eed\u6536\u76ca\u4e3a\u6b63\u7684\u6837\u672c\u6570",
+    description: "\u6709\u6548\u6837\u672c\u4e2d\uff0c\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u4ef7\u683c\u9ad8\u4e8e\u4e8b\u4ef6\u53d1\u751f\u65f6\u4ef7\u683c\u7684\u6837\u672c\u6570\u3002",
+  },
+  "Positive event ratio": {
+    label: "\u540e\u7eed\u6536\u76ca\u4e3a\u6b63\u7684\u6bd4\u4f8b",
+    description: "\u540e\u7eed\u6536\u76ca\u4e3a\u6b63\u7684\u6837\u672c\u6570 \u00f7 \u6709\u6548\u4e8b\u4ef6\u6837\u672c\u6570\u3002",
+    percentage: "ratio",
+  },
+  "Average return (%)": {
+    label: "\u4e8b\u4ef6\u540e\u5e73\u5747\u6536\u76ca\u7387",
+    description: "\u6240\u6709\u6709\u6548\u4e8b\u4ef6\u6837\u672c\uff0c\u4ece\u4e8b\u4ef6\u53d1\u751f\u65f6\u70b9\u5230\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u7684\u6536\u76ca\u7387\u7b97\u672f\u5e73\u5747\u503c\u3002",
+    percentage: "value",
+  },
+  "Minimum return (%)": {
+    label: "\u4e8b\u4ef6\u540e\u6700\u4f4e\u6536\u76ca\u7387",
+    description: "\u6240\u6709\u6709\u6548\u4e8b\u4ef6\u6837\u672c\u4e2d\uff0c\u4ece\u4e8b\u4ef6\u53d1\u751f\u65f6\u70b9\u5230\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u7684\u6700\u4f4e\u6536\u76ca\u7387\u3002",
+    percentage: "value",
+  },
+  "Maximum return (%)": {
+    label: "\u4e8b\u4ef6\u540e\u6700\u9ad8\u6536\u76ca\u7387",
+    description: "\u6240\u6709\u6709\u6548\u4e8b\u4ef6\u6837\u672c\u4e2d\uff0c\u4ece\u4e8b\u4ef6\u53d1\u751f\u65f6\u70b9\u5230\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u7684\u6700\u9ad8\u6536\u76ca\u7387\u3002",
+    percentage: "value",
+  },
+};
+
+function formatSummaryValue(label: string, value: number | null): string {
+  if (value === null) return "\u4e0d\u53ef\u8ba1\u7b97";
+  const percentage = SUMMARY_METADATA[label]?.percentage;
+  if (percentage === "ratio") return `${(value * 100).toFixed(2)}%`;
+  if (percentage === "value") return `${value.toFixed(2)}%`;
+  return value.toLocaleString("zh-CN");
+}
+
 function formatAdaptiveNumber(value: number, unit = ""): string {
   const absoluteValue = Math.abs(value);
   if (absoluteValue >= 100_000_000) {
@@ -457,8 +499,16 @@ function ResultTable({
         <dl className="summary-grid">
           {Object.entries(result.summary).map(([label, value]) => (
             <div key={label}>
-              <dt>{label}</dt>
-              <dd>{value === null ? "不可计算" : value.toLocaleString()}</dd>
+              <dt>
+                <span>{SUMMARY_METADATA[label]?.label ?? label}</span>
+                {SUMMARY_METADATA[label] && (
+                  <TermHelp
+                    label={SUMMARY_METADATA[label].label}
+                    description={SUMMARY_METADATA[label].description}
+                  />
+                )}
+              </dt>
+              <dd>{formatSummaryValue(label, value)}</dd>
             </div>
           ))}
         </dl>
