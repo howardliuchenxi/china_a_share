@@ -31,6 +31,17 @@ const unsupportedDirectApplicationFields = new Set([
   "return_5d_pct",
   "volatility_5d_pct",
 ]);
+const untestedValidationReasons = new Set([
+  "not_evaluated",
+  "insufficient_validation_samples",
+  "insufficient_validation_days",
+  "insufficient_validation_effective_days",
+  "insufficient_validation_securities",
+  "insufficient_validation_effective_securities",
+  "insufficient_validation_coverage",
+  "insufficient_validation_baseline_coverage",
+  "insufficient_significance_days",
+]);
 
 function percent(value: number, digits = 1) {
   return `${(value * 100).toFixed(digits)}%`;
@@ -54,6 +65,10 @@ function validationReason(hypothesis: FactorHypothesis) {
     case "passed": return "训练与验证同向，且通过 10% BY-FDR";
     default: return "尚未完成独立验证";
   }
+}
+
+function significanceWasTested(hypothesis: FactorHypothesis) {
+  return !untestedValidationReasons.has(hypothesis.validation_reason);
 }
 
 function thresholdSource(source: FactorHypothesis["threshold_source"]) {
@@ -183,6 +198,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const topValidationResult = topTrainingRule?.val_result ?? null;
   const topHasOutcomes = (topValidationResult?.sample_count ?? 0) > 0;
   const topHasBaseline = (topValidationResult?.baseline_sample_count ?? 0) > 0;
+  const topSignificanceWasTested = topTrainingRule
+    ? significanceWasTested(topTrainingRule)
+    : false;
   const coverageFactors = [...new Set([
     ...Object.keys(taskStatus?.progress.training_factor_coverage ?? {}),
     ...Object.keys(taskStatus?.progress.validation_factor_coverage ?? {}),
@@ -396,7 +414,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>相对可比样本提升</small><strong className={topHasOutcomes && topHasBaseline ? (topValidationResult!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative") : undefined}>{topHasOutcomes && topHasBaseline ? `${topValidationResult!.win_rate_lift >= 0 ? "+" : ""}${percent(topValidationResult!.win_rate_lift)}` : "—"}</strong><em>{topHasOutcomes && topHasBaseline ? `95% 区间 ${percent(topValidationResult!.lift_confidence_lower)} – ${percent(topValidationResult!.lift_confidence_upper)} · 可比基准命中率 ${percent(topValidationResult!.baseline_win_rate)}（N=${topValidationResult!.baseline_sample_count}）` : "规则或可比基准没有可观测结果，无法估计提升"}</em></div>
           <div><small>平均未来收益</small><strong>{topHasOutcomes ? percent(topValidationResult!.mean_return, 2) : "—"}</strong><em>{topHasOutcomes ? `中位数 ${percent(topValidationResult!.median_return, 2)}` : "无可观测验证结果"}</em></div>
           <div><small>5% 分位收益</small><strong className={topHasOutcomes ? (topValidationResult!.return_p05 >= 0 ? "metric-positive" : "metric-negative") : undefined}>{topHasOutcomes ? percent(topValidationResult!.return_p05, 2) : "—"}</strong><em>{topValidationResult!.sample_count} / {topValidationResult!.matched_sample_count} 个结果可观测</em></div>
-          <div><small>提升检验 q-value</small><strong>{topTrainingRule.q_value.toFixed(3)}</strong><em>{topTrainingRule.fdr_family_size} 个盲测候选 · {topTrainingRule.q_value <= 0.1 ? "通过 10% BY-FDR" : "未通过 10% BY-FDR"}</em></div>
+          <div><small>提升检验 q-value</small><strong>{topSignificanceWasTested ? topTrainingRule.q_value.toFixed(3) : "未检验"}</strong><em>{topSignificanceWasTested ? `${topTrainingRule.fdr_family_size} 个盲测候选 · ${topTrainingRule.q_value <= 0.1 ? "通过 10% BY-FDR" : "未通过 10% BY-FDR"}` : `证据不足，按 p=1.000 计入 ${topTrainingRule.fdr_family_size} 个盲测候选的 BY-FDR`}</em></div>
         </div>
         <p className="research-caveat">研究池限定为沪深北六位证券代码，并排除沪市 900xxx 与深市 200xxx B 股。排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序；即使训练候选在验证期证据不足，也会保留原名次并明确显示失败原因，不会让后续规则替补上位。标记为“验证通过”的规则必须满足全部证据门槛、在训练和验证窗口相对基准均为正向提升，并通过验证集 10% BY-FDR。每条规则的基准只包含该规则引用因子均为有限值的可比较事件，避免把因子缺失本身误认为阈值规律；规则禁止引用未来收益、未来价格或未来日期字段。每条规则在两个窗口都必须同时满足事件数、独立交易日、独立证券数和未来标签覆盖率门槛，避免单一个股的长期历史被误称为市场规律；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在，并按缺失结果全部失败或全部成功的边界扩展概率区间。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情或复权因子整批缺失、或任一数据源请求失败时，研究会直接失败。估值接口成功但无记录时仍保留行情标签，对应估值因子按缺失处理。这是事件研究结果，不等同于可直接交易的组合回测；信号日完整行情通常只能在收盘后确认，因此结果不代表能够按同一收盘价成交。当前尚未计入涨跌停成交约束、手续费和持仓重叠，也没有足以计算真实组合最大回撤的逐日持仓净值路径，因此不会伪造回撤值。命中率置信区间取日期聚类 HAC、日期集中度折算后的 score 区间和缺失标签边界的保守包络；相对提升区间再取 HAC 提升区间和规则—基准概率区间差的保守包络，既处理相邻信号共享收益，也防止全胜、全败或少量结果缺失时显示虚假确定性；正式显著性仍由计入规则与可比较样本重叠的提升检验及 BY-FDR 判定。嵌套分位规则共享大量样本，因此 q-value 使用可控制任意依赖候选族的 Benjamini–Yekutieli 谐波惩罚。验证期少于 20 个日期集中度折算有效日时仍可探索，但显著性固定为 p=1，不能通过 FDR。FDR 分母包含所有进入盲测的冻结候选，包括验证证据不足但仍保留展示的规则。统计关联仍不代表因果关系。</p>
         <p className="research-caveat">验证通过还要求训练与验证窗口的标签缺失最坏情形提升均大于零：规则内缺失结果按全部失败、规则外的可比基准缺失结果按全部成功计算，同时保持规则样本与基准样本的真实重叠关系。最低标签覆盖门槛同时约束规则命中事件和完整的因子可比基准。用户配置的交易日门槛同时约束原始不同日期数和按事件权重折算的有效日期数；正式显著性另有至少 20 个有效日的固定底线，Student-t 自由度按有效日数向下取整后计算。证券门槛同样同时约束原始不同证券数和有效证券数，防止少数日期或个股贡献绝大多数命中事件。</p>
@@ -424,7 +442,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
                 <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
               </> : <p className="confidence-note">验证期暂无可观测结果，概率、收益分布与相对提升均无法估计；请结合因子覆盖率和验证判定排查。</p>}
               <p className="confidence-note">保守相对提升：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.validation_score) : "—"} · 训练—验证提升差距：{hypothesis.val_result!.sample_count > 0 ? percent(hypothesis.generalization_gap) : "—"} · 规则覆盖差距：{percent(hypothesis.support_rate_gap)} · 覆盖保留比例：{percent(hypothesis.support_retention_ratio)}</p>
-              <p className="confidence-note">有限有效交易日 Student-t 提升检验 p-value：{hypothesis.p_value.toFixed(3)} · BY-FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}（{hypothesis.fdr_family_size} 个盲测候选）</p>
+              <p className="confidence-note">{significanceWasTested(hypothesis) ? `有限有效交易日 Student-t 提升检验 p-value：${hypothesis.p_value.toFixed(3)} · BY-FDR 校正 q-value：${hypothesis.q_value.toFixed(3)}（${hypothesis.fdr_family_size} 个盲测候选）` : `显著性未检验：证据门槛不足，按 p=1.000 计入 BY-FDR（${hypothesis.fdr_family_size} 个盲测候选，q=${hypothesis.q_value.toFixed(3)}）`}</p>
               <p className="confidence-note">验证判定：{validationReason(hypothesis)}</p>
             </div>
           </article>})}

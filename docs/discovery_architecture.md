@@ -187,6 +187,9 @@ selected missing outcomes fail and non-selected comparable-baseline missing
 outcomes succeed while preserving the actual selected/baseline overlap,
 and the validation q-value is at most 0.10. This prevents an observed-only
 p-value from overriding an attrition-sensitive economic conclusion.
+The frontend labels evidence-gated candidates as untested rather than presenting
+their conservative `p = 1` sentinel as an estimated Student-t probability; the
+sentinel and resulting q-value remain visible as part of the complete FDR family.
 
 ## Result interpretation
 

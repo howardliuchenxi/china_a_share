@@ -841,6 +841,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(missingValidationCard.locator(".window-comparison > div").nth(1)).toContainText("收益超过 5.0%—");
   await expect(missingValidationCard.locator(".window-comparison > div").nth(1)).toContainText("平均收益—");
   await expect(missingValidationCard).toContainText("保守相对提升：— · 训练—验证提升差距：—");
+  await expect(missingValidationCard).toContainText("显著性未检验：证据门槛不足，按 p=1.000 计入 BY-FDR");
+  await expect(missingValidationCard).not.toContainText("Student-t 提升检验 p-value");
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();
