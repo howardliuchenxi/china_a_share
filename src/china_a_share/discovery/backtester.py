@@ -6,7 +6,7 @@ import logging
 import math
 import re
 import time
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 
@@ -737,6 +737,7 @@ class FactorBacktester:
         standard_error = FactorBacktester._hac_standard_error(
             influence,
             dependence_lag_days,
+            effective_cluster_count=selected_day_count,
         )
         margin = 1.959963984540054 * standard_error
         hac_lower = max(0.0, probability - margin)
@@ -823,19 +824,27 @@ class FactorBacktester:
         return FactorBacktester._hac_standard_error(
             cluster_influence,
             dependence_lag_days,
+            effective_cluster_count=cluster_count,
         )
 
     @staticmethod
     def _hac_standard_error(
         ordered_influence: pd.Series,
         max_lags: int,
+        *,
+        effective_cluster_count: Optional[int] = None,
     ) -> float:
         """Return a Bartlett-kernel HAC error for ordered date influences."""
-        cluster_count = len(ordered_influence)
-        if cluster_count <= 1:
+        sequence_length = len(ordered_influence)
+        cluster_count = (
+            sequence_length
+            if effective_cluster_count is None
+            else effective_cluster_count
+        )
+        if sequence_length <= 1 or cluster_count <= 1:
             return 0.0
         values = ordered_influence.astype(float).to_numpy()
-        lag_count = min(max(0, max_lags), cluster_count - 1)
+        lag_count = min(max(0, max_lags), sequence_length - 1)
         long_run_variance = float((values**2).sum())
         for lag in range(1, lag_count + 1):
             weight = 1.0 - lag / (lag_count + 1.0)

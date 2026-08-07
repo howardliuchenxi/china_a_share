@@ -979,6 +979,27 @@ def test_hac_standard_error_is_zero_for_one_cluster():
     assert FactorBacktester._hac_standard_error(pd.Series([0.10]), 1) == 0.0
 
 
+def test_clustered_probability_does_not_count_zero_gap_as_effective_cluster():
+    frame = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260107"],
+            "forward_return": [0.10, -0.10],
+        }
+    )
+
+    _, _, standard_error, trading_day_count = (
+        FactorBacktester._clustered_confidence_interval(
+            frame,
+            target_return=0.0,
+            dependence_lag_days=0,
+            signal_dates=pd.Series(["20260105", "20260106", "20260107"]),
+        )
+    )
+
+    assert trading_day_count == 2
+    assert standard_error == pytest.approx(0.5)
+
+
 @pytest.mark.parametrize(
     ("forward_return", "bound"),
     [(0.10, "lower"), (-0.10, "upper")],
@@ -1064,7 +1085,11 @@ def test_lift_uncertainty_preserves_dates_without_comparable_factor_events():
 
     expected_influence = pd.Series([0.125, 0.0, -0.125])
     assert standard_error == pytest.approx(
-        FactorBacktester._hac_standard_error(expected_influence, 1)
+        FactorBacktester._hac_standard_error(
+            expected_influence,
+            1,
+            effective_cluster_count=2,
+        )
     )
 
 

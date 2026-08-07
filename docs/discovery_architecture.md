@@ -119,7 +119,8 @@ Reported evidence includes:
   the difference between selected and baseline probability intervals;
 - date-clustered HAC uncertainty that accounts for overlapping horizons;
 - zero-influence calendar gaps that preserve true trading-session HAC lags when
-  a factor is unavailable for an entire date;
+  a factor is unavailable for an entire date, while the finite-sample variance
+  correction counts only dates with comparable or selected observations;
 - a conservative probability interval combining HAC and a signal-date score
   interval;
 - finite-date, one-sided Student-t validation p-values and Benjamini-Yekutieli
