@@ -13,7 +13,7 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.discovery.backtester import FactorBacktester
 from china_a_share.discovery.evolution_loop import EvolutionLoop
-from china_a_share.discovery.search import RuleSearchEngine
+from china_a_share.discovery.search import PAIRING_CANDIDATE_LIMIT, RuleSearchEngine
 from china_a_share.tasks import MemoryAnalysisTaskStore
 
 
@@ -769,6 +769,25 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
 
     assert set(field for _, field in pairing_pool) == {"first", "second"}
     assert len(buckets) == len(set(buckets)) == 4
+
+
+def test_rule_search_prioritizes_factor_breadth_in_the_pairing_pool():
+    factor_names = [f"factor_{index}" for index in range(8)]
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
+            "forward_return": [-0.10] * 50 + [0.10] * 50,
+            **{factor: list(range(100)) for factor in factor_names},
+        }
+    )
+    search = RuleSearchEngine(min_sample_count=10)
+    conditions = search._build_conditions(dataset, factor_names)
+    candidates, _ = search._evaluate_training_formulas(conditions, dataset)
+
+    pairing_pool = search._select_pairing_conditions(candidates)
+
+    assert len(pairing_pool) == PAIRING_CANDIDATE_LIMIT
+    assert {field for _, field in pairing_pool} == set(factor_names)
 
 
 def test_rule_search_deduplicates_formulas_selecting_the_same_training_cohort():

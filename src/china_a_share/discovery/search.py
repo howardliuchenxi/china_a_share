@@ -136,9 +136,20 @@ class RuleSearchEngine:
     def _select_pairing_conditions(
         candidates: Sequence[FactorHypothesis],
     ) -> List[Tuple[str, str]]:
-        """Keep the strongest threshold per factor and inequality direction."""
+        """Cover distinct factors before adding their alternate directions."""
         selected = []
         seen_buckets = set()
+        seen_fields = set()
+        for candidate in candidates:
+            field = RuleSearchEngine._field_for_formula(candidate.formula)
+            if field in seen_fields:
+                continue
+            operator = candidate.formula.split()[1]
+            selected.append((candidate.formula, field))
+            seen_fields.add(field)
+            seen_buckets.add((field, operator))
+            if len(selected) == PAIRING_CANDIDATE_LIMIT:
+                return selected
         for candidate in candidates:
             field = RuleSearchEngine._field_for_formula(candidate.formula)
             operator = candidate.formula.split()[1]
@@ -148,7 +159,7 @@ class RuleSearchEngine:
             seen_buckets.add(bucket)
             selected.append((candidate.formula, field))
             if len(selected) == PAIRING_CANDIDATE_LIMIT:
-                break
+                return selected
         return selected
 
     @staticmethod

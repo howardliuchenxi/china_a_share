@@ -662,6 +662,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await page.getByRole("tab", { name: "策略挖掘" }).click();
 
   await expect(page.getByRole("heading", { name: "从历史数据反向发现规律" })).toBeVisible();
+  await expect(page.getByText(/配对池先覆盖不同因子，再补充反方向条件/)).toBeVisible();
   await page.getByRole("button", { name: "开始反向搜索" }).click();
 
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
