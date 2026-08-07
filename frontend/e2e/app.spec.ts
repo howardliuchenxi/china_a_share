@@ -688,6 +688,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".rule-card")).toContainText("收益超过 5.0%");
   await expect(page.locator(".rule-card")).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
   await expect(page.locator(".rule-card")).toContainText("验证判定：训练与验证同向，且通过 10% FDR");
+  await expect(page.locator(".rule-card")).toContainText("训练—验证提升差距：3.0%");
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();

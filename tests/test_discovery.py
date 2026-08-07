@@ -843,6 +843,32 @@ def test_rule_search_does_not_use_validation_outcomes_to_choose_the_winner():
     )
 
 
+def test_generalization_gap_tracks_relative_edge_across_market_regimes():
+    train_result = BacktestResult(
+        win_rate=0.70,
+        mean_return=0.05,
+        max_drawdown=-0.10,
+        eval_time_ms=1,
+        baseline_win_rate=0.50,
+        win_rate_lift=0.20,
+    )
+    validation_result = BacktestResult(
+        win_rate=0.50,
+        mean_return=0.03,
+        max_drawdown=-0.10,
+        eval_time_ms=1,
+        baseline_win_rate=0.30,
+        win_rate_lift=0.20,
+    )
+
+    gap = RuleSearchEngine._lift_generalization_gap(
+        train_result,
+        validation_result,
+    )
+
+    assert gap == pytest.approx(0.0)
+
+
 def test_rule_search_rejects_many_events_concentrated_on_one_day():
     dataset = pd.DataFrame(
         {

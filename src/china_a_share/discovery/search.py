@@ -6,7 +6,7 @@ from typing import List, Sequence, Tuple
 
 import pandas as pd
 
-from china_a_share.core.contracts import FactorHypothesis
+from china_a_share.core.contracts import BacktestResult, FactorHypothesis
 from china_a_share.discovery.backtester import FactorBacktester
 
 
@@ -290,8 +290,9 @@ class RuleSearchEngine:
             ):
                 continue
             train_result = candidate.train_result
-            generalization_gap = abs(
-                train_result.win_rate - validation_result.win_rate
+            generalization_gap = self._lift_generalization_gap(
+                train_result,
+                validation_result,
             )
             candidate.val_result = validation_result
             candidate.generalization_gap = generalization_gap
@@ -306,6 +307,16 @@ class RuleSearchEngine:
             )
             validated.append(candidate)
         return validated
+
+    @staticmethod
+    def _lift_generalization_gap(
+        train_result: BacktestResult,
+        validation_result: BacktestResult,
+    ) -> float:
+        """Return the absolute change in edge over each window's baseline."""
+        return abs(
+            train_result.win_rate_lift - validation_result.win_rate_lift
+        )
 
     @staticmethod
     def _training_rank_key(candidate: FactorHypothesis) -> tuple[float, float]:
