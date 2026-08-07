@@ -24,16 +24,13 @@ function percent(value: number, digits = 1) {
 }
 
 function validationReason(hypothesis: FactorHypothesis) {
-  if (!hypothesis.train_result || hypothesis.train_result.win_rate_lift <= 0) {
-    return "训练期未获得正提升";
+  switch (hypothesis.validation_reason) {
+    case "training_lift_not_positive": return "训练期未获得正提升";
+    case "validation_lift_not_positive": return "验证期未复现正提升";
+    case "fdr_not_passed": return "未通过 10% FDR";
+    case "passed": return "训练与验证同向，且通过 10% FDR";
+    default: return "尚未完成独立验证";
   }
-  if (!hypothesis.val_result || hypothesis.val_result.win_rate_lift <= 0) {
-    return "验证期未复现正提升";
-  }
-  if (hypothesis.q_value > 0.1) {
-    return "未通过 10% FDR";
-  }
-  return "训练与验证同向，且通过 10% FDR";
 }
 
 function MetricSet({ result }: { result: BacktestResult }) {

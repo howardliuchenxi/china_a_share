@@ -1175,6 +1175,16 @@ class FactorHypothesis(BaseModel):
         default=False,
         description="Whether both windows have positive lift and validation passes FDR.",
     )
+    validation_reason: Literal[
+        "not_evaluated",
+        "training_lift_not_positive",
+        "validation_lift_not_positive",
+        "fdr_not_passed",
+        "passed",
+    ] = Field(
+        default="not_evaluated",
+        description="Machine-readable reason for the validation decision.",
+    )
 
 
 class DiscoveryTaskProgress(BaseModel):

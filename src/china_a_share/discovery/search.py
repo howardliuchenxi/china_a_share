@@ -92,20 +92,23 @@ class RuleSearchEngine:
             family_size=len(validation_shortlist),
         )
         for candidate in validated:
-            candidate.validation_passed = self._passes_validation(candidate)
+            candidate.validation_reason = self._validation_reason(candidate)
+            candidate.validation_passed = candidate.validation_reason == "passed"
         # Validation outcomes never reorder the training-frozen shortlist.
         return validated[:top_n], evaluated_count
 
     @staticmethod
-    def _passes_validation(candidate: FactorHypothesis) -> bool:
-        """Require a positive edge in both windows plus validation significance."""
-        return bool(
-            candidate.train_result
-            and candidate.val_result
-            and candidate.train_result.win_rate_lift > 0.0
-            and candidate.val_result.win_rate_lift > 0.0
-            and candidate.q_value <= VALIDATION_FDR_THRESHOLD
-        )
+    def _validation_reason(candidate: FactorHypothesis) -> str:
+        """Return the first failed gate in the replication policy."""
+        if not candidate.train_result or not candidate.val_result:
+            return "not_evaluated"
+        if candidate.train_result.win_rate_lift <= 0.0:
+            return "training_lift_not_positive"
+        if candidate.val_result.win_rate_lift <= 0.0:
+            return "validation_lift_not_positive"
+        if candidate.q_value > VALIDATION_FDR_THRESHOLD:
+            return "fdr_not_passed"
+        return "passed"
 
     def _build_conditions(
         self,

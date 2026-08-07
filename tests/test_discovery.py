@@ -920,6 +920,11 @@ def test_rule_search_corrects_validation_significance_for_multiple_candidates():
         )
         for candidate in candidates
     )
+    assert all(
+        candidate.validation_passed
+        == (candidate.validation_reason == "passed")
+        for candidate in candidates
+    )
     ordered_by_p = sorted(candidates, key=lambda candidate: candidate.p_value)
     assert [candidate.q_value for candidate in ordered_by_p] == sorted(
         candidate.q_value for candidate in candidates
@@ -948,7 +953,21 @@ def test_false_discovery_rate_counts_ineligible_validation_candidates():
     assert all(candidate.fdr_family_size == 10 for candidate in candidates)
 
 
-def test_validation_rejects_a_rule_with_negative_training_lift():
+@pytest.mark.parametrize(
+    ("train_lift", "validation_lift", "q_value", "expected"),
+    [
+        (-0.05, 0.20, 0.01, "training_lift_not_positive"),
+        (0.05, -0.01, 0.01, "validation_lift_not_positive"),
+        (0.05, 0.20, 0.11, "fdr_not_passed"),
+        (0.05, 0.20, 0.10, "passed"),
+    ],
+)
+def test_validation_reports_the_first_failed_replication_gate(
+    train_lift,
+    validation_lift,
+    q_value,
+    expected,
+):
     candidate = FactorHypothesis(
         formula="value >= 1",
         description="Test rule",
@@ -958,19 +977,29 @@ def test_validation_rejects_a_rule_with_negative_training_lift():
             mean_return=-0.01,
             max_drawdown=-0.10,
             eval_time_ms=1,
-            win_rate_lift=-0.05,
+            win_rate_lift=train_lift,
         ),
         val_result=BacktestResult(
             win_rate=0.70,
             mean_return=0.05,
             max_drawdown=-0.05,
             eval_time_ms=1,
-            win_rate_lift=0.20,
+            win_rate_lift=validation_lift,
         ),
-        q_value=0.01,
+        q_value=q_value,
     )
 
-    assert RuleSearchEngine._passes_validation(candidate) is False
+    assert RuleSearchEngine._validation_reason(candidate) == expected
+
+
+def test_validation_reason_reports_an_unevaluated_candidate():
+    candidate = FactorHypothesis(
+        formula="value >= 1",
+        description="Test rule",
+        reasoning="Test evidence",
+    )
+
+    assert RuleSearchEngine._validation_reason(candidate) == "not_evaluated"
 
 
 def test_clustered_lift_significance_remains_finite_for_large_samples():

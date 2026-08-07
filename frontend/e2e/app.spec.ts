@@ -603,6 +603,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         q_value: 0.048,
         fdr_family_size: 18,
         validation_passed: true,
+        validation_reason: "passed",
         train_result: {
           win_rate: 0.63, mean_return: 0.071, median_return: 0.052,
           return_p05: -0.16,
