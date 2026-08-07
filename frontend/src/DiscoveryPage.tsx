@@ -197,7 +197,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </fieldset>
           {submitError && <p className="discovery-error" role="alert">{submitError}</p>}
           <div className="discovery-submit-row">
-            <p>当前版本搜索训练集分位数形成的单因子与双因子规则。</p>
+            <p>搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值，并组合跨因子条件或同因子区间。</p>
             <button type="submit" disabled={isSubmitting || taskStatus?.status === "running"}>{isSubmitting ? "正在提交…" : taskStatus?.status === "running" ? "研究进行中" : "开始反向搜索"}</button>
           </div>
         </form>

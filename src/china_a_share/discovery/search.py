@@ -10,9 +10,9 @@ from china_a_share.core.contracts import FactorHypothesis
 from china_a_share.discovery.backtester import FactorBacktester
 
 
-LOW_QUANTILE = 0.2
-HIGH_QUANTILE = 0.8
+SEARCH_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 PAIRING_CANDIDATE_LIMIT = 12
+VALIDATION_CANDIDATE_LIMIT = 50
 VALIDATION_FDR_THRESHOLD = 0.10
 
 
@@ -42,6 +42,8 @@ class RuleSearchEngine:
         top_n: int,
     ) -> Tuple[List[FactorHypothesis], int]:
         """Rank on training data, then report untouched validation evidence."""
+        train = self._finite_factor_frame(train, factors)
+        validation = self._finite_factor_frame(validation, factors)
         conditions = self._build_conditions(train, factors)
         single_candidates, single_evaluated = self._evaluate_training_formulas(
             conditions,
@@ -55,9 +57,21 @@ class RuleSearchEngine:
                 for candidate in single_candidates[:PAIRING_CANDIDATE_LIMIT]
             ]
             pairs = [
-                (f"({left}) and ({right})", f"{left_field} + {right_field}")
+                (
+                    f"({left}) and ({right})",
+                    (
+                        left_field
+                        if left_field == right_field
+                        else f"{left_field} + {right_field}"
+                    ),
+                )
                 for (left, left_field), (right, right_field) in combinations(strongest, 2)
-                if left_field != right_field
+                if self._conditions_are_compatible(
+                    left,
+                    left_field,
+                    right,
+                    right_field,
+                )
             ]
             pair_candidates, pair_evaluated = self._evaluate_training_formulas(
                 pairs,
@@ -73,7 +87,12 @@ class RuleSearchEngine:
                 continue
             seen.add(candidate.formula)
             unique.append(candidate)
-        validated = self._validate_candidates(unique, validation)
+        # Freeze a bounded training-ranked shortlist before touching validation.
+        validation_limit = max(top_n, VALIDATION_CANDIDATE_LIMIT)
+        validated = self._validate_candidates(
+            unique[:validation_limit],
+            validation,
+        )
         self._apply_false_discovery_rate(validated)
         for candidate in validated:
             candidate.validation_passed = (
@@ -96,15 +115,63 @@ class RuleSearchEngine:
             numeric = numeric[numeric.map(math.isfinite)]
             if numeric.nunique() < 2:
                 continue
-            low = float(numeric.quantile(LOW_QUANTILE))
-            high = float(numeric.quantile(HIGH_QUANTILE))
-            conditions.extend(
-                [
-                    (f"{factor} <= {low:.10g}", factor),
-                    (f"{factor} >= {high:.10g}", factor),
-                ]
-            )
+            seen_selections = set()
+            for operator in ("<=", ">="):
+                for quantile in SEARCH_QUANTILES:
+                    threshold = float(numeric.quantile(quantile))
+                    selection = (
+                        train[factor] <= threshold
+                        if operator == "<="
+                        else train[factor] >= threshold
+                    )
+                    signature = selection.to_numpy(dtype=bool).tobytes()
+                    if signature in seen_selections:
+                        continue
+                    seen_selections.add(signature)
+                    conditions.append(
+                        (f"{factor} {operator} {threshold:.10g}", factor)
+                    )
         return conditions
+
+    @staticmethod
+    def _finite_factor_frame(
+        frame: pd.DataFrame,
+        factors: Sequence[str],
+    ) -> pd.DataFrame:
+        """Coerce requested factors and hide non-finite values from every rule."""
+        cleaned = frame.copy()
+        for factor in factors:
+            if factor not in cleaned:
+                continue
+            numeric = pd.to_numeric(cleaned[factor], errors="coerce")
+            cleaned[factor] = numeric.where(numeric.map(math.isfinite))
+        return cleaned
+
+    @staticmethod
+    def _conditions_are_compatible(
+        left: str,
+        left_field: str,
+        right: str,
+        right_field: str,
+    ) -> bool:
+        """Allow cross-factor pairs and non-empty same-factor intervals."""
+        if left_field != right_field:
+            return True
+        _, left_operator, left_value = left.split()
+        _, right_operator, right_value = right.split()
+        if left_operator == right_operator:
+            return False
+        lower = (
+            float(left_value)
+            if left_operator == ">="
+            else float(right_value)
+        )
+        upper = (
+            float(left_value)
+            if left_operator == "<="
+            else float(right_value)
+        )
+        return lower <= upper
 
     def _evaluate_training_formulas(
         self,

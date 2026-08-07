@@ -152,7 +152,7 @@ class FactorBacktester:
                 selected["forward_return"], errors="coerce"
             )
         ).dropna(subset=["forward_return"])
-        evaluation_frame = evaluation_frame[
+        evaluation_frame = evaluation_frame.loc[
             evaluation_frame["forward_return"].map(math.isfinite)
         ]
         returns = evaluation_frame["forward_return"]

@@ -274,6 +274,21 @@ def test_rule_evaluation_uses_the_configured_target_return_threshold():
     assert result.baseline_win_rate == pytest.approx(2 / 3)
 
 
+def test_rule_evaluation_preserves_schema_for_an_empty_match():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260106"],
+            "factor": [1.0, 2.0],
+            "forward_return": [0.10, -0.10],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor > 10")
+
+    assert result.sample_count == 0
+    assert result.win_rate == 0.0
+
+
 def test_rule_evaluation_clusters_uncertainty_by_trading_day():
     dataset = pd.DataFrame(
         {
@@ -397,6 +412,57 @@ def test_rule_search_ignores_non_finite_factor_values():
 
     assert candidates
     assert all("inf" not in candidate.formula for candidate in candidates)
+    assert all(candidate.train_result.sample_count < 10 for candidate in candidates)
+
+
+def test_rule_search_deduplicates_equivalent_discrete_thresholds():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 21)],
+            "binary": [0.0] * 10 + [1.0] * 10,
+            "forward_return": [-0.10] * 10 + [0.10] * 10,
+        }
+    )
+
+    conditions = RuleSearchEngine(min_sample_count=2)._build_conditions(
+        dataset,
+        ["binary"],
+    )
+
+    selected_sets = [
+        tuple(dataset.query(formula).index)
+        for formula, _ in conditions
+    ]
+    assert len(selected_sets) == len(set(selected_sets))
+
+
+def test_rule_search_discovers_a_same_factor_middle_interval():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{i:04d}" for i in range(1, 101)],
+            "value": list(range(100)),
+            "forward_return": [
+                0.10 if 30 <= value < 70 else -0.10
+                for value in range(100)
+            ],
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(min_sample_count=10).search(
+        dataset,
+        dataset.copy(),
+        ["value"],
+        max_conditions=2,
+        top_n=20,
+    )
+
+    interval_rules = [
+        candidate
+        for candidate in candidates
+        if candidate.formula.count("value") == 2
+    ]
+    assert interval_rules
+    assert interval_rules[0].train_result.win_rate > 0.70
 
 
 def test_rule_search_does_not_use_validation_outcomes_to_choose_the_winner():
