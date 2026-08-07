@@ -20,6 +20,9 @@ from china_a_share.core.contracts import (
 
 DATA_FETCH_WORKERS = 20
 CALENDAR_EXTENSION_MULTIPLIER = 3
+# A full-month floor covers Spring Festival and exceptional exchange closures
+# when even a one-session forward label can be more than ten calendar days away.
+CALENDAR_EXTENSION_MINIMUM_DAYS = 31
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +45,10 @@ class FactorBacktester:
         start = datetime.strptime(start_date, "%Y%m%d")
         end = datetime.strptime(end_date, "%Y%m%d")
         extended_end = end + timedelta(
-            days=max(forward_days * CALENDAR_EXTENSION_MULTIPLIER, 10)
+            days=max(
+                forward_days * CALENDAR_EXTENSION_MULTIPLIER,
+                CALENDAR_EXTENSION_MINIMUM_DAYS,
+            )
         )
         trade_dates = self._load_trade_dates(
             start_date,
