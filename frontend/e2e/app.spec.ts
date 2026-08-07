@@ -636,6 +636,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           trading_day_count: 120,
           security_count: 86,
           max_security_event_share: 0.08,
+          max_signal_date_event_share: 0.06,
           cluster_standard_error: 0.04,
           lift_standard_error: 0.035,
           dependence_lag_days: 19,
@@ -656,6 +657,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           trading_day_count: 55,
           security_count: 48,
           max_security_event_share: 0.12,
+          max_signal_date_event_share: 0.15,
           cluster_standard_error: 0.06,
           lift_standard_error: 0.05,
           dependence_lag_days: 19,
@@ -739,7 +741,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topWindowComparison).toContainText("15.3%");
   await expect(topWindowComparison).toContainText("180 / 120 / 86");
   await expect(topWindowComparison).toContainText("最大单股事件占比");
+  await expect(topWindowComparison).toContainText("最大单日事件占比");
   await expect(topWindowComparison).toContainText("12.0%");
+  await expect(topWindowComparison).toContainText("15.0%");
   await expect(page.locator(".rule-list")).toContainText("规则覆盖差距：2.9%");
   await expect(page.locator(".rule-list")).toContainText("覆盖保留比例：119.6%");
   expect(statusPollCount).toBeGreaterThanOrEqual(2);
@@ -757,7 +761,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
-  await expect(page.getByText(/两者都是适用性诊断而非显著性通过门槛/)).toBeVisible();
+  await expect(page.getByText(/这些指标是适用性诊断而非显著性通过门槛/)).toBeVisible();
   await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
   await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");

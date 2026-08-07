@@ -953,6 +953,23 @@ def test_rule_evaluation_reports_single_security_event_concentration():
     assert result.max_security_event_share == pytest.approx(0.91)
 
 
+def test_rule_evaluation_reports_single_date_event_concentration():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260101"] * 81
+            + [f"202601{index:02d}" for index in range(2, 21)],
+            "ts_code": [f"{index:06d}.SZ" for index in range(1, 101)],
+            "factor": [1.0] * 100,
+            "forward_return": [0.10, -0.10] * 50,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.trading_day_count == 20
+    assert result.max_signal_date_event_share == pytest.approx(0.81)
+
+
 def test_rule_evaluation_clusters_uncertainty_by_trading_day():
     dataset = pd.DataFrame(
         {

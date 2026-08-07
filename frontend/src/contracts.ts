@@ -309,6 +309,7 @@ export interface BacktestResult {
   trading_day_count: number;
   security_count: number;
   max_security_event_share: number;
+  max_signal_date_event_share: number;
   cluster_standard_error: number;
   lift_standard_error: number;
   dependence_lag_days: number;

@@ -112,6 +112,8 @@ Reported evidence includes:
 - event count, distinct signal dates, and distinct securities;
 - maximum single-security event share, which reveals concentration hidden by a
   distinct-security count;
+- maximum single-date event share, which reveals temporal concentration hidden
+  by a distinct-signal-date count;
 - rule support among factor-comparable events;
 - absolute train-to-validation support-rate drift for applicability diagnostics;
 - validation-to-training support retention, which exposes relative applicability
