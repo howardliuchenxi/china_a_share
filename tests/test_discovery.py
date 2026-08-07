@@ -145,6 +145,27 @@ def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
     assert result.baseline_win_rate == pytest.approx(0.75)
 
 
+def test_rule_evaluation_uses_the_configured_target_return_threshold():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260106", "20260107"],
+            "factor": [1.0, 2.0, 3.0],
+            "forward_return": [0.04, 0.06, 0.10],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(
+        dataset,
+        "factor >= 1",
+        target_return=0.05,
+    )
+
+    assert result.target_return == pytest.approx(0.05)
+    assert result.positive_count == 2
+    assert result.win_rate == pytest.approx(2 / 3)
+    assert result.baseline_win_rate == pytest.approx(2 / 3)
+
+
 def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     train = pd.DataFrame(
         {
@@ -168,7 +189,8 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     assert any("value" in candidate.formula for candidate in candidates)
     assert all(candidate.train_result.sample_count >= 4 for candidate in candidates)
     assert all(candidate.val_result is not None for candidate in candidates)
-    assert candidates[0].val_result.mean_return >= candidates[-1].val_result.mean_return
+    assert candidates[0].validation_score >= candidates[-1].validation_score
+    assert all(candidate.generalization_gap >= 0 for candidate in candidates)
 
 
 def test_discovery_request_rejects_overlapping_training_and_validation_windows():
@@ -193,6 +215,20 @@ def test_discovery_request_rejects_factors_outside_the_research_dataset():
             val_end="20260630",
             factors=["pe_ttm", "revenue"],
         )
+
+
+def test_discovery_request_accepts_a_percentage_point_return_target():
+    request = DiscoveryTaskRequest(
+        target_pool="A_SHARE",
+        train_start="20250101",
+        train_end="20251231",
+        val_start="20260101",
+        val_end="20260630",
+        factors=["pe_ttm"],
+        target_return_pct=5.0,
+    )
+
+    assert request.target_return_pct == 5.0
 
 
 def test_memory_store_preserves_extended_discovery_request():

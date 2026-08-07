@@ -1028,6 +1028,12 @@ class DiscoveryTaskRequest(BaseModel):
         le=60,
         description="Trading sessions between the signal close and outcome close.",
     )
+    target_return_pct: float = Field(
+        default=0.0,
+        ge=-100.0,
+        le=1000.0,
+        description="Forward return threshold, in percentage points, defining a hit.",
+    )
     minimum_samples: int = Field(
         default=30,
         ge=5,
@@ -1084,6 +1090,7 @@ class BacktestResult(BaseModel):
     win_rate_lift: float = 0.0
     confidence_lower: float = 0.0
     confidence_upper: float = 0.0
+    target_return: float = 0.0
 
 
 class FactorHypothesis(BaseModel):
@@ -1096,6 +1103,15 @@ class FactorHypothesis(BaseModel):
     reasoning: str
     train_result: Optional[BacktestResult] = None
     val_result: Optional[BacktestResult] = None
+    validation_score: float = Field(
+        default=0.0,
+        description="Conservative score combining validation evidence and stability.",
+    )
+    generalization_gap: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Absolute train-to-validation win-rate difference.",
+    )
 
 
 class DiscoveryTaskProgress(BaseModel):

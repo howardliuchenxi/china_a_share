@@ -17,8 +17,9 @@ PAIRING_CANDIDATE_LIMIT = 12
 class RuleSearchEngine:
     """Search quantile rules while bounding samples and expression complexity."""
 
-    def __init__(self, *, min_sample_count: int):
+    def __init__(self, *, min_sample_count: int, target_return: float = 0.0):
         self._min_sample_count = min_sample_count
+        self._target_return = target_return
 
     def search(
         self,
@@ -50,8 +51,8 @@ class RuleSearchEngine:
             candidates.extend(self._evaluate_formulas(pairs, train, validation))
         candidates.sort(
             key=lambda candidate: (
+                candidate.validation_score,
                 candidate.val_result.mean_return,
-                candidate.val_result.win_rate_lift,
                 candidate.val_result.sample_count,
             ),
             reverse=True,
@@ -97,13 +98,29 @@ class RuleSearchEngine:
     ) -> List[FactorHypothesis]:
         candidates = []
         for formula, fields in formulas:
-            train_result = FactorBacktester.evaluate_rule(train, formula)
-            validation_result = FactorBacktester.evaluate_rule(validation, formula)
+            train_result = FactorBacktester.evaluate_rule(
+                train,
+                formula,
+                target_return=self._target_return,
+            )
+            validation_result = FactorBacktester.evaluate_rule(
+                validation,
+                formula,
+                target_return=self._target_return,
+            )
             if (
                 train_result.sample_count < self._min_sample_count
                 or validation_result.sample_count < self._min_sample_count
             ):
                 continue
+            generalization_gap = abs(
+                train_result.win_rate - validation_result.win_rate
+            )
+            validation_score = (
+                validation_result.confidence_lower
+                + validation_result.win_rate_lift
+                - generalization_gap
+            )
             candidates.append(
                 FactorHypothesis(
                     formula=formula,
@@ -114,6 +131,8 @@ class RuleSearchEngine:
                     ),
                     train_result=train_result,
                     val_result=validation_result,
+                    validation_score=validation_score,
+                    generalization_gap=generalization_gap,
                 )
             )
         candidates.sort(

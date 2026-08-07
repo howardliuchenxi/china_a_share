@@ -275,6 +275,7 @@ export interface DiscoveryTaskRequest {
   prompt: string;
   max_generations: number;
   forward_days: number;
+  target_return_pct: number;
   minimum_samples: number;
   max_conditions: number;
 }
@@ -292,6 +293,7 @@ export interface BacktestResult {
   win_rate_lift: number;
   confidence_lower: number;
   confidence_upper: number;
+  target_return: number;
 }
 
 export interface FactorHypothesis {
@@ -300,6 +302,8 @@ export interface FactorHypothesis {
   reasoning: string;
   train_result: BacktestResult | null;
   val_result: BacktestResult | null;
+  validation_score: number;
+  generalization_gap: number;
 }
 
 export interface DiscoveryTaskProgress {

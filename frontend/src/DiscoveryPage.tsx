@@ -42,6 +42,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [valEnd, setValEnd] = useState(params.get("dp_ve") || "20260630");
   const [prompt, setPrompt] = useState(params.get("dp_prompt") || "寻找未来一个月上涨概率较高且样本稳定的市场状态");
   const [forwardDays, setForwardDays] = useState(Number(params.get("dp_forward")) || 20);
+  const [targetReturnPct, setTargetReturnPct] = useState(Number(params.get("dp_target")) || 0);
   const [minimumSamples, setMinimumSamples] = useState(Number(params.get("dp_samples")) || 30);
   const [maxConditions, setMaxConditions] = useState(Number(params.get("dp_depth")) || 2);
   const [factors, setFactors] = useState<string[]>(() => {
@@ -68,12 +69,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     next.set("dp_vs", valStart);
     next.set("dp_ve", valEnd);
     next.set("dp_forward", String(forwardDays));
+    next.set("dp_target", String(targetReturnPct));
     next.set("dp_samples", String(minimumSamples));
     next.set("dp_depth", String(maxConditions));
     if (prompt) next.set("dp_prompt", prompt); else next.delete("dp_prompt");
     if (factors.length) next.set("dp_factors", factors.join(",")); else next.delete("dp_factors");
     window.history.replaceState({}, "", `${window.location.pathname}?${next.toString()}`);
-  }, [targetPool, trainStart, trainEnd, valStart, valEnd, forwardDays, minimumSamples, maxConditions, prompt, factors]);
+  }, [targetPool, trainStart, trainEnd, valStart, valEnd, forwardDays, targetReturnPct, minimumSamples, maxConditions, prompt, factors]);
 
   function toggleFactor(field: string) {
     setFactors(current => current.includes(field)
@@ -101,6 +103,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         prompt,
         max_generations: 1,
         forward_days: forwardDays,
+        target_return_pct: targetReturnPct,
         minimum_samples: minimumSamples,
         max_conditions: maxConditions,
       };
@@ -172,6 +175,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             <label><span>验证开始</span><input value={valStart} onChange={event => setValStart(event.target.value)} inputMode="numeric" /></label>
             <label><span>验证结束</span><input value={valEnd} onChange={event => setValEnd(event.target.value)} inputMode="numeric" /></label>
             <label><span>未来交易日</span><input type="number" min="1" max="60" value={forwardDays} onChange={event => setForwardDays(Number(event.target.value))} /></label>
+            <label><span>目标收益（%）</span><input type="number" min="-100" max="1000" step="0.5" value={targetReturnPct} onChange={event => setTargetReturnPct(Number(event.target.value))} /></label>
             <label><span>最小样本数</span><input type="number" min="5" max="10000" value={minimumSamples} onChange={event => setMinimumSamples(Number(event.target.value))} /></label>
             <label><span>最多条件数</span><select value={maxConditions} onChange={event => setMaxConditions(Number(event.target.value))}><option value={1}>1 个</option><option value={2}>2 个</option></select></label>
           </div>
@@ -211,7 +215,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       {bestRule && <section className="results-panel discovery-summary-panel">
         <div className="section-heading"><span>03</span><h2>验证集摘要</h2></div>
         <div className="headline-metrics">
-          <div><small>最佳规则上涨概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>95% 区间 {percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
+          <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>95% 区间 {percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
           <div><small>事件曲线最大回撤</small><strong>{percent(bestRule.val_result!.max_drawdown, 2)}</strong><em>{bestRule.val_result!.sample_count} 个验证样本</em></div>
@@ -232,6 +236,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>
               </div>
               <p className="confidence-note">验证集上涨概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
+              <p className="confidence-note">保守可信分：{hypothesis.validation_score.toFixed(3)} · 训练—验证差距：{percent(hypothesis.generalization_gap)}</p>
             </div>
           </article>)}
         </div>

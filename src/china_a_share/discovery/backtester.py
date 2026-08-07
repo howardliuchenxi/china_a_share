@@ -100,6 +100,7 @@ class FactorBacktester:
         forward_days: int = 5,
         api_route: str = "/api/discovery",
         request_id: str = "discovery",
+        target_return: float = 0.0,
     ) -> BacktestResult:
         """Build an event dataset and evaluate one validated rule."""
         started_at = time.perf_counter()
@@ -110,12 +111,21 @@ class FactorBacktester:
             api_route=api_route,
             request_id=request_id,
         )
-        result = self.evaluate_rule(dataset, formula)
+        result = self.evaluate_rule(
+            dataset,
+            formula,
+            target_return=target_return,
+        )
         result.eval_time_ms = int((time.perf_counter() - started_at) * 1000)
         return result
 
     @staticmethod
-    def evaluate_rule(dataset: pd.DataFrame, formula: str) -> BacktestResult:
+    def evaluate_rule(
+        dataset: pd.DataFrame,
+        formula: str,
+        *,
+        target_return: float = 0.0,
+    ) -> BacktestResult:
         """Evaluate one expression against pre-aligned event-study observations."""
         if "forward_return" not in dataset:
             raise ValueError("Research dataset is missing forward_return.")
@@ -131,12 +141,17 @@ class FactorBacktester:
                 mean_return=0.0,
                 max_drawdown=0.0,
                 eval_time_ms=0,
-                baseline_win_rate=float((baseline > 0).mean()) if len(baseline) else 0.0,
+                baseline_win_rate=(
+                    float((baseline > target_return).mean()) if len(baseline) else 0.0
+                ),
+                target_return=target_return,
             )
 
-        positive_count = int((returns > 0).sum())
+        positive_count = int((returns > target_return).sum())
         win_rate = positive_count / len(returns)
-        baseline_win_rate = float((baseline > 0).mean()) if len(baseline) else 0.0
+        baseline_win_rate = (
+            float((baseline > target_return).mean()) if len(baseline) else 0.0
+        )
         confidence_lower, confidence_upper = FactorBacktester._wilson_interval(
             positive_count,
             len(returns),
@@ -169,6 +184,7 @@ class FactorBacktester:
             win_rate_lift=float(win_rate - baseline_win_rate),
             confidence_lower=confidence_lower,
             confidence_upper=confidence_upper,
+            target_return=target_return,
         )
 
     def _load_trade_dates(

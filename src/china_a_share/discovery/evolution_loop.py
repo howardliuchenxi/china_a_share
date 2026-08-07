@@ -69,7 +69,10 @@ class EvolutionLoop:
             "search",
             f"正在搜索 {len(request.factors)} 个因子的分位数规则…",
         )
-        search = RuleSearchEngine(min_sample_count=request.minimum_samples)
+        search = RuleSearchEngine(
+            min_sample_count=request.minimum_samples,
+            target_return=request.target_return_pct / 100.0,
+        )
         leaderboard = search.search(
             train,
             validation,
