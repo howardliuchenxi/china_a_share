@@ -606,7 +606,7 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
             },
             {
                 "operation": "rolling_sum",
-                "field": "is_limit_up",
+                "field": "limit_up_flag",
                 "output_field": "streak_count",
                 "group_by": ["ts_code"],
                 "order_by": "trade_date",
@@ -671,6 +671,7 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
     ]
     assert steps[1].min_periods == 3
     assert steps[1].require_consecutive is True
+    assert steps[1].field == "is_limit_up"
     assert steps[2].field == "streak_count"
     assert steps[5].field == "future_close"
     assert steps[5].right_field == "close"

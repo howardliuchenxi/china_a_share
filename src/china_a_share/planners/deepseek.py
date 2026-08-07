@@ -437,6 +437,9 @@ class DeepSeekQueryPlanner:
                 and outcome.get("field")
                 and outcome.get("output_field")
             ):
+                # The membership output is the authoritative event marker; model-generated
+                # aliases such as limit_up_flag are not available in the source frame.
+                streak["field"] = event_membership.get("output_field")
                 streak["min_periods"] = streak["window"]
                 streak["require_consecutive"] = True
                 steps = [
