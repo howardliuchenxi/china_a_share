@@ -609,6 +609,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           cluster_standard_error: 0.04,
           lift_standard_error: 0.035,
           dependence_lag_days: 19,
+          return_price_basis: "split_and_dividend_adjusted_close",
         },
         val_result: {
           win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
@@ -620,6 +621,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           cluster_standard_error: 0.06,
           lift_standard_error: 0.05,
           dependence_lag_days: 19,
+          return_price_basis: "split_and_dividend_adjusted_close",
         },
       }],
     },

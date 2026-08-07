@@ -22,6 +22,7 @@ HISTORICAL_CACHE_TTL = timedelta(days=90)
 DISCLOSURE_CACHE_TTL = timedelta(days=90)
 MAX_PAGINATION_PAGES = 20
 PAGINATED_OPERATION_LIMITS = {
+    "adj_factor": 6_000,
     "daily": 6_000,
     "daily_basic": 6_000,
     "block_trade": 1_000,

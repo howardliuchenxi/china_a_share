@@ -224,7 +224,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>事件曲线最大回撤</small><strong>{percent(bestRule.val_result!.max_drawdown, 2)}</strong><em>{bestRule.val_result!.sample_count} 个验证样本</em></div>
           <div><small>提升检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>HAC 滞后 {bestRule.val_result!.dependence_lag_days} 日 · {bestRule.q_value <= 0.1 ? "通过 10% FDR" : "未通过 10% FDR"}</em></div>
         </div>
-        <p className="research-caveat">排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间与 q-value 按信号日聚类，并使用持有期感知的 HAC 误差处理相邻信号共享未来收益的问题；提升检验也计入规则与全样本基准的重叠。统计关联仍不代表因果关系。</p>
+        <p className="research-caveat">排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情、估值或复权因子整批缺失时，研究会直接失败而非使用残缺样本。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间与 q-value 按信号日聚类，并使用持有期感知的 HAC 误差处理相邻信号共享未来收益的问题；提升检验也计入规则与全样本基准的重叠。统计关联仍不代表因果关系。</p>
       </section>}
 
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">

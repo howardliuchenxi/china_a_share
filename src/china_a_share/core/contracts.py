@@ -1095,6 +1095,10 @@ class BacktestResult(BaseModel):
     cluster_standard_error: float = Field(default=0.0, ge=0.0)
     lift_standard_error: float = Field(default=0.0, ge=0.0)
     dependence_lag_days: int = Field(default=0, ge=0)
+    return_price_basis: str = Field(
+        default="split_and_dividend_adjusted_close",
+        description="Price basis used to calculate forward returns.",
+    )
 
 
 class FactorHypothesis(BaseModel):

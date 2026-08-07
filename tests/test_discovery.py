@@ -19,10 +19,11 @@ from china_a_share.tasks import MemoryAnalysisTaskStore
 class FakeQueryExecutor:
     """Return deterministic market snapshots for discovery tests."""
 
-    def __init__(self, trade_dates, basics, prices):
+    def __init__(self, trade_dates, basics, prices, adjustments=None):
         self._trade_dates = trade_dates
         self._basics = basics
         self._prices = prices
+        self._adjustments = adjustments
 
     def execute(self, query, *, api_route, request_id):
         if query.operation == "trade_cal":
@@ -35,6 +36,15 @@ class FakeQueryExecutor:
             rows = self._basics.get(query.params["trade_date"], [])
         elif query.operation == "daily":
             rows = self._prices.get(query.params["trade_date"], [])
+        elif query.operation == "adj_factor":
+            trade_date = query.params["trade_date"]
+            if self._adjustments is None:
+                rows = [
+                    {"ts_code": row["ts_code"], "adj_factor": 1.0}
+                    for row in self._prices.get(trade_date, [])
+                ]
+            else:
+                rows = self._adjustments.get(trade_date, [])
         else:
             raise AssertionError(f"Unexpected operation: {query.operation}")
         return QueryResult(
@@ -80,6 +90,33 @@ def test_research_dataset_aligns_features_with_future_trading_session_returns():
     assert dataset["pe_ttm"].tolist() == [10.0, 11.0]
 
 
+def test_research_dataset_uses_adjusted_closes_for_corporate_actions():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [{"ts_code": "000001.SZ", "pe_ttm": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            "20260105": [{"ts_code": "000001.SZ", "close": 10.0}],
+            "20260106": [{"ts_code": "000001.SZ", "close": 5.0}],
+        },
+        {
+            "20260105": [{"ts_code": "000001.SZ", "adj_factor": 1.0}],
+            "20260106": [{"ts_code": "000001.SZ", "adj_factor": 2.0}],
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+    )
+
+    assert dataset["forward_return"].tolist() == pytest.approx([0.0])
+    assert dataset["adjusted_close"].tolist() == pytest.approx([10.0])
+
+
 def test_research_dataset_preserves_missing_factor_values():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],
@@ -102,7 +139,7 @@ def test_research_dataset_preserves_missing_factor_values():
     assert pd.isna(dataset.iloc[0]["pe_ttm"])
 
 
-def test_research_dataset_does_not_skip_a_missing_target_session():
+def test_research_dataset_fails_when_a_required_session_is_missing():
     executor = FakeQueryExecutor(
         ["20260105", "20260106", "20260107"],
         {
@@ -116,13 +153,12 @@ def test_research_dataset_does_not_skip_a_missing_target_session():
         },
     )
 
-    dataset = FactorBacktester(executor).build_dataset(
-        "20260105",
-        "20260105",
-        forward_days=1,
-    )
-
-    assert dataset.empty
+    with pytest.raises(ValueError, match="20260106"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
 
 
 def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():

@@ -74,10 +74,12 @@ class FactorBacktester:
         panel["future_trade_date"] = panel["trade_date"].map(
             future_date_by_signal
         )
-        future_prices = panel[["ts_code", "trade_date", "close"]].rename(
+        future_prices = panel[
+            ["ts_code", "trade_date", "adjusted_close"]
+        ].rename(
             columns={
                 "trade_date": "future_trade_date",
-                "close": "future_close",
+                "adjusted_close": "future_adjusted_close",
             }
         )
         panel = panel.merge(
@@ -85,10 +87,14 @@ class FactorBacktester:
             on=["ts_code", "future_trade_date"],
             how="left",
         )
-        panel["forward_return"] = panel["future_close"] / panel["close"] - 1.0
+        panel["forward_return"] = (
+            panel["future_adjusted_close"] / panel["adjusted_close"] - 1.0
+        )
         dataset = panel[
             panel["trade_date"].between(start_date, end_date)
-        ].dropna(subset=["close", "future_close", "forward_return"])
+        ].dropna(
+            subset=["adjusted_close", "future_adjusted_close", "forward_return"]
+        )
         return dataset.reset_index(drop=True)
 
     def run_backtest(
@@ -274,26 +280,45 @@ class FactorBacktester:
                 api_route=api_route,
                 request_id=request_id,
             )
+            adjustment_result = self._executor.execute(
+                DataQuery(
+                    query_id=f"discovery-adjustment-{trade_date}",
+                    operation="adj_factor",
+                    params={"trade_date": trade_date},
+                    fields=["ts_code", "adj_factor"],
+                    purpose="Load point-in-time factors for adjusted returns.",
+                ),
+                api_route=api_route,
+                request_id=request_id,
+            )
             if (
                 basic_result.status != QueryStatus.SUCCESS
                 or price_result.status != QueryStatus.SUCCESS
+                or adjustment_result.status != QueryStatus.SUCCESS
                 or not basic_result.rows
                 or not price_result.rows
+                or not adjustment_result.rows
             ):
-                return pd.DataFrame()
+                raise ValueError(
+                    f"Incomplete discovery market data for trading session {trade_date}."
+                )
             basic = pd.DataFrame(basic_result.rows)
             price = pd.DataFrame(price_result.rows)
+            adjustment = pd.DataFrame(adjustment_result.rows)
             frame = pd.merge(basic, price, on="ts_code", how="inner")
+            frame = pd.merge(frame, adjustment, on="ts_code", how="inner")
+            frame["adjusted_close"] = pd.to_numeric(
+                frame["close"], errors="coerce"
+            ) * pd.to_numeric(frame["adj_factor"], errors="coerce")
             frame["trade_date"] = trade_date
             return frame
         except Exception:
-            logger.warning(
+            logger.exception(
                 "discovery_session_fetch_failed trade_date=%s request_id=%s",
                 trade_date,
                 request_id,
-                exc_info=True,
             )
-            return pd.DataFrame()
+            raise
 
     @staticmethod
     def _wilson_interval(successes: int, observations: int) -> tuple[float, float]:
