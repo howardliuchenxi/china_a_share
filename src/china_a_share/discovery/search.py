@@ -18,9 +18,16 @@ PAIRING_CANDIDATE_LIMIT = 12
 class RuleSearchEngine:
     """Search quantile rules while bounding samples and expression complexity."""
 
-    def __init__(self, *, min_sample_count: int, target_return: float = 0.0):
+    def __init__(
+        self,
+        *,
+        min_sample_count: int,
+        target_return: float = 0.0,
+        dependence_lag_days: int = 0,
+    ):
         self._min_sample_count = min_sample_count
         self._target_return = target_return
+        self._dependence_lag_days = dependence_lag_days
 
     def search(
         self,
@@ -110,11 +117,13 @@ class RuleSearchEngine:
                 train,
                 formula,
                 target_return=self._target_return,
+                dependence_lag_days=self._dependence_lag_days,
             )
             validation_result = FactorBacktester.evaluate_rule(
                 validation,
                 formula,
                 target_return=self._target_return,
+                dependence_lag_days=self._dependence_lag_days,
             )
             if (
                 train_result.sample_count < self._min_sample_count

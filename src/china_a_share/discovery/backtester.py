@@ -115,6 +115,7 @@ class FactorBacktester:
             dataset,
             formula,
             target_return=target_return,
+            dependence_lag_days=forward_days - 1,
         )
         result.eval_time_ms = int((time.perf_counter() - started_at) * 1000)
         return result
@@ -125,6 +126,7 @@ class FactorBacktester:
         formula: str,
         *,
         target_return: float = 0.0,
+        dependence_lag_days: int = 0,
     ) -> BacktestResult:
         """Evaluate one expression against pre-aligned event-study observations."""
         if "forward_return" not in dataset:
@@ -153,6 +155,7 @@ class FactorBacktester:
                     float((baseline > target_return).mean()) if len(baseline) else 0.0
                 ),
                 target_return=target_return,
+                dependence_lag_days=dependence_lag_days,
             )
 
         positive_count = int((returns > target_return).sum())
@@ -164,6 +167,7 @@ class FactorBacktester:
             research_frame,
             evaluation_frame.index,
             target_return,
+            dependence_lag_days,
         )
         (
             confidence_lower,
@@ -173,6 +177,8 @@ class FactorBacktester:
         ) = FactorBacktester._clustered_confidence_interval(
             evaluation_frame,
             target_return,
+            dependence_lag_days,
+            research_frame["trade_date"],
         )
         daily_returns = (
             evaluation_frame
@@ -202,6 +208,7 @@ class FactorBacktester:
             trading_day_count=trading_day_count,
             cluster_standard_error=cluster_standard_error,
             lift_standard_error=lift_standard_error,
+            dependence_lag_days=dependence_lag_days,
         )
 
     def _load_trade_dates(
@@ -310,37 +317,41 @@ class FactorBacktester:
     def _clustered_confidence_interval(
         frame: pd.DataFrame,
         target_return: float,
+        dependence_lag_days: int,
+        signal_dates: pd.Series,
     ) -> tuple[float, float, float, int]:
-        """Return a 95% interval with dependence clustered by signal date."""
+        """Return a 95% date-clustered HAC interval for an observed probability."""
         clusters = (
             frame.assign(hit=frame["forward_return"] > target_return)
             .groupby("trade_date")["hit"]
             .agg(["sum", "count"])
         )
-        cluster_count = len(clusters)
+        selected_day_count = len(clusters)
         successes = int(clusters["sum"].sum())
         observations = int(clusters["count"].sum())
-        if cluster_count <= 1:
+        if selected_day_count <= 1:
             lower, upper = FactorBacktester._wilson_interval(
                 successes,
                 observations,
             )
-            return lower, upper, 0.0, cluster_count
+            return lower, upper, 0.0, selected_day_count
         probability = successes / observations
-        residuals = clusters["sum"] - probability * clusters["count"]
-        variance = (
-            cluster_count
-            / (cluster_count - 1)
-            * float((residuals**2).sum())
-            / observations**2
+        ordered_dates = pd.Index(sorted(signal_dates.astype(str).unique()))
+        influence = (
+            (clusters["sum"] - probability * clusters["count"])
+            .reindex(ordered_dates, fill_value=0.0)
+            / observations
         )
-        standard_error = math.sqrt(max(0.0, variance))
+        standard_error = FactorBacktester._hac_standard_error(
+            influence,
+            dependence_lag_days,
+        )
         margin = 1.959963984540054 * standard_error
         return (
             max(0.0, probability - margin),
             min(1.0, probability + margin),
             standard_error,
-            cluster_count,
+            selected_day_count,
         )
 
     @staticmethod
@@ -348,6 +359,7 @@ class FactorBacktester:
         frame: pd.DataFrame,
         selected_index: pd.Index,
         target_return: float,
+        dependence_lag_days: int,
     ) -> float:
         """Estimate uncertainty of selected-versus-baseline lift by signal date."""
         observations = frame[["trade_date", "forward_return"]].copy()
@@ -376,12 +388,31 @@ class FactorBacktester:
             / selected_count
             - (observations["hit"] - baseline_rate) / observation_count
         )
-        cluster_influence = observations.groupby("trade_date")[
-            "lift_influence"
-        ].sum()
-        variance = (
-            cluster_count
-            / (cluster_count - 1)
-            * float((cluster_influence**2).sum())
+        cluster_influence = (
+            observations.groupby("trade_date")["lift_influence"]
+            .sum()
+            .sort_index()
         )
+        return FactorBacktester._hac_standard_error(
+            cluster_influence,
+            dependence_lag_days,
+        )
+
+    @staticmethod
+    def _hac_standard_error(
+        ordered_influence: pd.Series,
+        max_lags: int,
+    ) -> float:
+        """Return a Bartlett-kernel HAC error for ordered date influences."""
+        cluster_count = len(ordered_influence)
+        if cluster_count <= 1:
+            return 0.0
+        values = ordered_influence.astype(float).to_numpy()
+        lag_count = min(max(0, max_lags), cluster_count - 1)
+        long_run_variance = float((values**2).sum())
+        for lag in range(1, lag_count + 1):
+            weight = 1.0 - lag / (lag_count + 1.0)
+            covariance = float((values[lag:] * values[:-lag]).sum())
+            long_run_variance += 2.0 * weight * covariance
+        variance = cluster_count / (cluster_count - 1) * long_run_variance
         return math.sqrt(max(0.0, variance))

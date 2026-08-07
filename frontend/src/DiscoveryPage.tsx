@@ -222,9 +222,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
           <div><small>事件曲线最大回撤</small><strong>{percent(bestRule.val_result!.max_drawdown, 2)}</strong><em>{bestRule.val_result!.sample_count} 个验证样本</em></div>
-          <div><small>提升检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>{bestRule.q_value <= 0.1 ? "通过 10% FDR 阈值" : "未通过 10% FDR 阈值"}</em></div>
+          <div><small>提升检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>HAC 滞后 {bestRule.val_result!.dependence_lag_days} 日 · {bestRule.q_value <= 0.1 ? "通过 10% FDR" : "未通过 10% FDR"}</em></div>
         </div>
-        <p className="research-caveat">这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间按信号交易日聚类；q-value 检验规则相对同期全样本基准的提升，并计入两组样本重叠，以降低共同波动造成的虚假精确度。统计关联仍不代表因果关系。</p>
+        <p className="research-caveat">这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间与 q-value 按信号日聚类，并使用持有期感知的 HAC 误差处理相邻信号共享未来收益的问题；提升检验也计入规则与全样本基准的重叠。统计关联仍不代表因果关系。</p>
       </section>}
 
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">

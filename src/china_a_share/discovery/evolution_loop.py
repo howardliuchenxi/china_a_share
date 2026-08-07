@@ -81,6 +81,7 @@ class EvolutionLoop:
         search = RuleSearchEngine(
             min_sample_count=request.minimum_samples,
             target_return=request.target_return_pct / 100.0,
+            dependence_lag_days=request.forward_days - 1,
         )
         leaderboard, evaluated_count = search.search(
             train,

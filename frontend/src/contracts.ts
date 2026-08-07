@@ -297,6 +297,7 @@ export interface BacktestResult {
   trading_day_count: number;
   cluster_standard_error: number;
   lift_standard_error: number;
+  dependence_lag_days: number;
 }
 
 export interface FactorHypothesis {

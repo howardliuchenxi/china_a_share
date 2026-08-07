@@ -1094,6 +1094,7 @@ class BacktestResult(BaseModel):
     trading_day_count: int = Field(default=0, ge=0)
     cluster_standard_error: float = Field(default=0.0, ge=0.0)
     lift_standard_error: float = Field(default=0.0, ge=0.0)
+    dependence_lag_days: int = Field(default=0, ge=0)
 
 
 class FactorHypothesis(BaseModel):

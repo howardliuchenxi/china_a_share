@@ -200,6 +200,26 @@ def test_rule_evaluation_accounts_for_overlap_when_estimating_lift_uncertainty()
     assert result.lift_standard_error == pytest.approx(0.25)
 
 
+def test_rule_evaluation_uses_hac_error_for_overlapping_forward_windows():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260106", "20260107", "20260108"],
+            "factor": [1.0] * 4,
+            "forward_return": [0.10, 0.10, -0.10, -0.10],
+        }
+    )
+
+    independent = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+    overlapping = FactorBacktester.evaluate_rule(
+        dataset,
+        "factor == 1",
+        dependence_lag_days=1,
+    )
+
+    assert overlapping.dependence_lag_days == 1
+    assert overlapping.cluster_standard_error > independent.cluster_standard_error
+
+
 def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     train = pd.DataFrame(
         {
@@ -381,6 +401,10 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
     assert completed.progress.training_sample_count == 25
     assert completed.progress.training_samples_purged == 5
     assert completed.progress.leaderboard
+    assert all(
+        candidate.val_result.dependence_lag_days == 4
+        for candidate in completed.progress.leaderboard
+    )
     assert backtester.calls == [
         ("20250101", "20251231", 5),
         ("20260101", "20260630", 5),
