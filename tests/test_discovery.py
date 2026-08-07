@@ -936,6 +936,23 @@ def test_rule_evaluation_reports_missing_outcome_coverage():
     assert result.outcome_coverage_rate == pytest.approx(2 / 3)
 
 
+def test_rule_evaluation_reports_single_security_event_concentration():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
+            "ts_code": ["000001.SZ"] * 91
+            + [f"{index:06d}.SZ" for index in range(2, 11)],
+            "factor": [1.0] * 100,
+            "forward_return": [0.10, -0.10] * 50,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.security_count == 10
+    assert result.max_security_event_share == pytest.approx(0.91)
+
+
 def test_rule_evaluation_clusters_uncertainty_by_trading_day():
     dataset = pd.DataFrame(
         {

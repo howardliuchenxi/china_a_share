@@ -85,6 +85,7 @@ function MetricSet({ result }: { result: BacktestResult }) {
       <span><small>相对可比基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
       <span><small>样本 / 交易日 / 证券</small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
+      <span><small>最大单股事件占比</small><strong>{percent(result.max_security_event_share)}</strong></span>
       <span><small>规则覆盖（可比事件 {result.eligible_sample_count}）</small><strong>{percent(result.rule_support_rate)}</strong></span>
       <span><small>标签覆盖</small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
     </div>
@@ -378,7 +379,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             </div>
           </article>})}
         </div>
-        <p className="research-caveat">覆盖保留比例是验证覆盖率除以训练覆盖率，用于识别规则适用人群的扩张或收缩；它是适用性诊断而非显著性通过门槛。“带入分析页”仅对分析页能够保持同一计算口径的字段开放，并会生成今日筛选请求；含内部复权序列特征的规则在同口径执行器完成前不会被交给模型猜测。提交普通规则后仍需经过查询规划，请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
+        <p className="research-caveat">覆盖保留比例是验证覆盖率除以训练覆盖率，用于识别规则适用人群的扩张或收缩；最大单股事件占比用于识别虽满足独立证券数量、但仍被少数个股主导的样本。两者都是适用性诊断而非显著性通过门槛。“带入分析页”仅对分析页能够保持同一计算口径的字段开放，并会生成今日筛选请求；含内部复权序列特征的规则在同口径执行器完成前不会被交给模型猜测。提交普通规则后仍需经过查询规划，请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
       </section>}
     </div>
   );

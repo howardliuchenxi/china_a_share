@@ -285,6 +285,11 @@ class FactorBacktester:
             if "ts_code" in evaluation_frame
             else len(evaluation_frame)
         )
+        max_security_event_share = (
+            float(evaluation_frame["ts_code"].value_counts().max() / len(returns))
+            if "ts_code" in evaluation_frame and len(returns)
+            else (1.0 / len(returns) if len(returns) else 0.0)
+        )
         baseline_evaluation_frame = baseline_frame.assign(
             forward_return=pd.to_numeric(
                 baseline_frame["forward_return"], errors="coerce"
@@ -314,6 +319,7 @@ class FactorBacktester:
                 baseline_sample_count=len(baseline),
                 target_return=target_return,
                 security_count=security_count,
+                max_security_event_share=max_security_event_share,
                 dependence_lag_days=dependence_lag_days,
             )
 
@@ -386,6 +392,7 @@ class FactorBacktester:
             target_return=target_return,
             trading_day_count=trading_day_count,
             security_count=security_count,
+            max_security_event_share=max_security_event_share,
             cluster_standard_error=cluster_standard_error,
             lift_standard_error=lift_standard_error,
             dependence_lag_days=dependence_lag_days,

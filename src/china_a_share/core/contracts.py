@@ -1236,6 +1236,12 @@ class BacktestResult(BaseModel):
         ge=0,
         description="Distinct securities represented by observable rule outcomes.",
     )
+    max_security_event_share: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Largest share of observable rule events contributed by one security.",
+    )
     cluster_standard_error: float = Field(default=0.0, ge=0.0)
     lift_standard_error: float = Field(default=0.0, ge=0.0)
     dependence_lag_days: int = Field(default=0, ge=0)
