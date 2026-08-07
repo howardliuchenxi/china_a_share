@@ -1202,6 +1202,98 @@ def test_workflow_uses_daily_volume_and_joins_same_day_turnover():
     assert sort_step.field == "vol"
 
 
+def test_workflow_resolves_security_code_adjacent_to_chinese_text():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "income"
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "\u67e5\u770b600519.SH\u8fd1\u4e09\u5e74\u4e3b\u8425\u4e1a\u52a1\u6bdb\u5229\u7387\u53d8\u5316",
+    )
+
+    assert result.queries[0].operation == "fina_mainbz"
+    assert result.queries[0].params == {"ts_code": "600519.SH"}
+
+
+def test_workflow_rejects_market_wide_forecast_period_query():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "forecast"
+    plan.queries[0].params = {"period": "20260630"}
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "\u7edf\u8ba12026\u5e74\u4e0a\u534a\u5e74\u9884\u4e8f\u516c\u53f8\u6570\u91cf",
+    )
+
+    assert result.feasibility == "unsupported"
+    assert result.queries == []
+
+
+def test_deepseek_drops_non_numeric_query_aggregation_thresholds():
+    raw_plan = {
+        "queries": [
+            {
+                "aggregations": [
+                    {
+                        "label": "row_count",
+                        "field": "ts_code",
+                        "operator": "eq",
+                        "value": "not_null",
+                    },
+                    {
+                        "label": "invalid_count_operator",
+                        "field": "ts_code",
+                        "operator": "count",
+                        "value": 1,
+                    },
+                ]
+            }
+        ]
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    assert raw_plan["queries"][0]["aggregations"] == []
+
+
+def test_workflow_builds_daily_basic_query_when_model_omits_it():
+    plan = make_daily_plan()
+    plan.interpretation = "Screen valuations on 2026-08-07."
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "Find A-shares with PE below 15 and PB below 2 on the latest trading day.",
+    )
+
+    assert result.queries[0].operation == "daily_basic"
+    assert result.queries[0].params == {"trade_date": "20260807"}
+
+
+def test_workflow_removes_non_native_suspension_fields_and_pipeline():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "suspend_d"
+    plan.queries[0].params = {
+        "trade_date": "20260508",
+        "resume_date": "20260508",
+    }
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "resumed",
+            "steps": [{"operation": "drop_missing", "fields": ["resume_date"]}],
+        }
+    )
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "Which stocks resumed trading on 2026-05-08?",
+    )
+
+    assert "resume_date" not in result.queries[0].params
+    assert "resume_date" not in result.queries[0].fields
+    assert result.result_pipeline is None
+
+
 def test_latest_completed_date_uses_the_provider_trade_calendar():
     class CalendarProvider(FakeMarketDataProvider):
         def supports(self, operation):

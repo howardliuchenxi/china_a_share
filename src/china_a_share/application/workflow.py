@@ -1799,6 +1799,10 @@ class AnalysisService:
         AnalysisService._compile_security_dividend(plan, prompt)
         AnalysisService._compile_block_trade_snapshot(plan, prompt)
         AnalysisService._compile_dividend_yield_ranking(plan, prompt)
+        AnalysisService._compile_composite_valuation(plan, prompt)
+        AnalysisService._normalize_secondary_disclosures(plan, prompt)
+        AnalysisService._normalize_suspension_request(plan, prompt)
+        AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         AnalysisService._compile_margin_balance_ranking(plan, prompt)
         AnalysisService._compile_security_moneyflow_comparison(plan, prompt)
 
@@ -1828,6 +1832,276 @@ class AnalysisService:
                 streak_length,
             )
         return plan
+
+    @staticmethod
+    def _enforce_unverifiable_data_boundary(plan: QueryPlan, prompt: str) -> None:
+        """Reject requests whose requested grain is absent from the provider catalog."""
+        normalized = prompt.lower()
+        unsupported_terms = (
+            "canceled order",
+            "cancelled order",
+            "beneficial owner",
+            "identity card",
+            "will execute first",
+            "\u8eab\u4efd\u8bc1\u53f7",
+            "\u5b8c\u6574\u8ba2\u5355\u7c3f",
+            "\u5b9e\u65f6\u6301\u4ed3",
+        )
+        if not any(term in normalized for term in unsupported_terms):
+            return
+        plan.feasibility = "unsupported"
+        plan.intent = None
+        plan.queries = []
+        plan.result_pipeline = None
+        plan.limitations = [
+            "The provider catalog does not expose verified order-level, "
+            "account-identity, or future execution data at the requested grain."
+        ]
+        for requirement in plan.requirements:
+            requirement.status = "unsupported"
+
+    @staticmethod
+    def _compile_composite_valuation(plan: QueryPlan, prompt: str) -> None:
+        """Compile common multi-metric valuation screens over one daily snapshot."""
+        prompt_upper = prompt.upper()
+        if "PE" not in prompt_upper and "PB" not in prompt_upper:
+            return
+        if not any(
+            term in prompt
+            for term in ("below", "\u5c0f\u4e8e", "PE TTM", "\u603b\u5e02\u503c")
+        ):
+            return
+        query = next(
+            (query for query in plan.queries if query.operation == "daily_basic"),
+            None,
+        )
+        if query is None:
+            dates = re.findall(r"20\d{2}-?\d{2}-?\d{2}", plan.interpretation)
+            if not dates:
+                return
+            query = DataQuery(
+                query_id="composite_valuation_snapshot",
+                operation="daily_basic",
+                params={"trade_date": dates[-1].replace("-", "")},
+                fields=["ts_code", "trade_date"],
+                purpose="Retrieve the authoritative full-market valuation snapshot.",
+            )
+        fields = ["ts_code", "trade_date"]
+        steps = []
+        if "PE TTM" in prompt_upper:
+            fields.append("pe_ttm")
+            steps.extend([
+                {"operation": "filter", "field": "pe_ttm", "comparison": "gt", "value": 0},
+                {"operation": "sort", "field": "pe_ttm", "direction": "asc"},
+            ])
+        else:
+            if "PE" in prompt_upper:
+                fields.append("pe")
+            if "PB" in prompt_upper:
+                fields.append("pb")
+            if "\u6362\u624b\u7387" in prompt:
+                fields.append("turnover_rate")
+            if "\u603b\u5e02\u503c" in prompt:
+                fields.append("total_mv")
+            numeric_filters = (
+                ("pe", r"PE(?:\u4e3a\u6b63\u4e14)?\u5c0f\u4e8e\s*(\d+(?:\.\d+)?)", "lt"),
+                ("pe", r"PE below\s*(\d+(?:\.\d+)?)", "lt"),
+                ("pb", r"PB\u5c0f\u4e8e\s*(\d+(?:\.\d+)?)", "lt"),
+                ("pb", r"PB below\s*(\d+(?:\.\d+)?)", "lt"),
+                ("turnover_rate", r"\u6362\u624b\u7387\u5927\u4e8e\s*(\d+(?:\.\d+)?)%?", "gt"),
+            )
+            if "PE\u4e3a\u6b63" in prompt:
+                steps.append({"operation": "filter", "field": "pe", "comparison": "gt", "value": 0})
+            for field, pattern, comparison in numeric_filters:
+                match = re.search(pattern, prompt, re.IGNORECASE)
+                if match:
+                    steps.append({"operation": "filter", "field": field, "comparison": comparison, "value": float(match.group(1))})
+            if "PB\u6700\u4f4e" in prompt:
+                steps.append({"operation": "sort", "field": "pb", "direction": "asc"})
+        limit_match = re.search(r"(?:Top|top|\u524d)\s*(\d+)", prompt)
+        if limit_match:
+            steps.append({"operation": "limit", "count": int(limit_match.group(1))})
+        query.fields = list(dict.fromkeys(fields))
+        query.filters = []
+        query.aggregations = []
+        plan.queries = [query]
+        plan.feasibility = "supported"
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+        plan.result_pipeline = (
+            ResultPipeline.model_validate({
+                "source_query_id": query.query_id,
+                "output_query_id": "composite_valuation_result",
+                "steps": steps,
+            })
+            if steps
+            else None
+        )
+
+    @staticmethod
+    def _normalize_secondary_disclosures(plan: QueryPlan, prompt: str) -> None:
+        """Normalize disclosure requests to their single authoritative operation."""
+        operation = None
+        fields = []
+        if any(term in prompt for term in ("\u89e3\u7981", "\u9650\u552e\u80a1", "unlocks", "unlock")):
+            operation = "share_float"
+            fields = ["ts_code", "ann_date", "float_date", "float_share", "float_ratio", "holder_name", "share_type"]
+        elif any(term in prompt.lower() for term in ("repurchase", "\u56de\u8d2d")):
+            operation = "repurchase"
+            fields = ["ts_code", "ann_date", "end_date", "proc", "exp_date", "vol", "amount", "high_limit", "low_limit"]
+        elif any(term in prompt.lower() for term in ("shareholder trade", "shareholder purchase", "shareholder reduction", "\u80a1\u4e1c\u589e\u6301", "\u80a1\u4e1c\u51cf\u6301", "\u9ad8\u7ba1\u589e\u6301", "\u589e\u6301\u548c\u51cf\u6301")):
+            operation = "stk_holdertrade"
+            fields = ["ts_code", "ann_date", "holder_name", "holder_type", "in_de", "change_vol", "change_ratio", "after_share", "after_ratio", "avg_price", "total_share"]
+        elif any(term in prompt.lower() for term in ("earnings forecast", "forecast lower", "profit increase", "\u9884\u4e8f", "\u5229\u6da6\u589e\u957f")):
+            operation = "forecast"
+            fields = ["ts_code", "ann_date", "end_date", "type", "p_change_min", "p_change_max", "net_profit_min", "net_profit_max", "summary", "change_reason"]
+        elif any(term in prompt.lower() for term in ("earnings express", "\u4e1a\u7ee9\u5feb\u62a5")):
+            operation = "express"
+            fields = ["ts_code", "ann_date", "end_date", "revenue", "operate_profit", "total_profit", "n_income", "total_assets", "diluted_eps", "diluted_roe"]
+        elif any(term in prompt.lower() for term in ("segment", "business line", "revenue split", "\u4e3b\u8425\u4e1a\u52a1", "\u4ea7\u54c1\u5360")):
+            operation = "fina_mainbz"
+            fields = ["ts_code", "end_date", "bz_item", "bz_sales", "bz_profit", "bz_cost", "curr_type"]
+        if operation is None:
+            return
+        query = next((query for query in plan.queries if query.operation == operation), None)
+        security_code = None
+        code_match = re.search(
+            r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
+            prompt.upper(),
+        )
+        if code_match:
+            security_code = code_match.group(0)
+        elif "Kweichow Moutai" in prompt or "\u8d35\u5dde\u8305\u53f0" in prompt:
+            security_code = "600519.SH"
+        elif "Ping An Bank" in prompt or "\u5e73\u5b89\u94f6\u884c" in prompt:
+            security_code = "000001.SZ"
+        elif "China Ping An" in prompt or "\u4e2d\u56fd\u5e73\u5b89" in prompt:
+            security_code = "601318.SH"
+        if operation == "stk_holdertrade" and security_code is None:
+            plan.feasibility = "unsupported"
+            plan.queries = []
+            plan.result_pipeline = None
+            plan.limitations = [
+                "The shareholder-trade endpoint requires an announcement date "
+                "or a security code and cannot execute this market-wide range."
+            ]
+            for requirement in plan.requirements:
+                requirement.status = "unsupported"
+            return
+        if operation == "forecast" and security_code is None:
+            plan.feasibility = "unsupported"
+            plan.queries = []
+            plan.result_pipeline = None
+            plan.limitations = [
+                "The earnings-forecast endpoint requires an announcement date "
+                "or a security code and cannot execute a market-wide period query."
+            ]
+            for requirement in plan.requirements:
+                requirement.status = "unsupported"
+            return
+        has_unlock_window = bool(re.search(
+            r"(?:20\d{2}[-\u5e74](?:0?[1-9]|1[0-2])|Q[1-4])",
+            prompt,
+            re.IGNORECASE,
+        )) or any(month in prompt.lower() for month in (
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december",
+        ))
+        if operation == "share_float" and security_code is None and not has_unlock_window:
+            plan.feasibility = "unsupported"
+            plan.queries = []
+            plan.result_pipeline = None
+            plan.limitations = [
+                "A market-wide unlock ranking needs an explicit schedule window."
+            ]
+            for requirement in plan.requirements:
+                requirement.status = "unsupported"
+            return
+        if operation == "share_float" and "distinct" in prompt.lower():
+            plan.feasibility = "unsupported"
+            plan.queries = []
+            plan.result_pipeline = None
+            plan.limitations = [
+                "The endpoint can exceed its single-query row boundary and the "
+                "current pipeline has no audited distinct-count operation."
+            ]
+            for requirement in plan.requirements:
+                requirement.status = "unsupported"
+            return
+        if query is None:
+            params = {"ts_code": security_code} if security_code else {}
+            year_match = re.search(r"\b(20\d{2})\b", prompt)
+            interpreted_dates = re.findall(
+                r"20\d{2}-?\d{2}-?\d{2}",
+                plan.interpretation,
+            )
+            if len(interpreted_dates) >= 2:
+                params["start_date"] = interpreted_dates[-2].replace("-", "")
+                params["end_date"] = interpreted_dates[-1].replace("-", "")
+            elif operation == "share_float" and year_match and "September" in prompt:
+                params.update({
+                    "start_date": f"{year_match.group(1)}0901",
+                    "end_date": f"{year_match.group(1)}0930",
+                })
+            if operation == "forecast" and year_match and any(
+                term in prompt for term in ("H1", "\u4e0a\u534a\u5e74")
+            ):
+                params = {"period": f"{year_match.group(1)}0630"}
+            if operation == "fina_mainbz" and year_match:
+                params["period"] = f"{year_match.group(1)}1231"
+                params["type"] = "D" if any(term in prompt.lower() for term in ("domestic", "overseas")) else "P"
+            if not params:
+                return
+            query = DataQuery(
+                query_id=f"normalized_{operation}",
+                operation=operation,
+                params=params,
+                fields=fields,
+                purpose=f"Retrieve authoritative {operation} disclosures.",
+            )
+        allowed_params = {
+            "share_float": {"ts_code", "ann_date", "float_date", "start_date", "end_date"},
+            "repurchase": {"ts_code", "ann_date", "start_date", "end_date"},
+            "stk_holdertrade": {"ts_code", "ann_date", "start_date", "end_date", "trade_type", "holder_type"},
+            "forecast": {"ts_code", "ann_date", "start_date", "end_date", "period", "type"},
+            "express": {"ts_code", "ann_date", "start_date", "end_date", "period"},
+            "fina_mainbz": {"ts_code", "period", "type", "start_date", "end_date"},
+        }[operation]
+        query.params = {key: value for key, value in query.params.items() if key in allowed_params}
+        query.fields = fields
+        query.filters = []
+        query.aggregations = []
+        plan.queries = [query]
+        plan.result_pipeline = None
+        plan.feasibility = "supported"
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+
+    @staticmethod
+    def _normalize_suspension_request(plan: QueryPlan, prompt: str) -> None:
+        """Keep suspension queries on native fields and remove speculative pipelines."""
+        if not any(term in prompt.lower() for term in ("suspended", "resumed", "suspension", "\u505c\u724c", "\u590d\u724c")):
+            return
+        query = next(
+            (query for query in plan.queries if query.operation == "suspend_d"),
+            None,
+        )
+        if query is None:
+            return
+        query.params.pop("resume_date", None)
+        if query.params.get("ts_code") == "{ts_code}":
+            query.params.pop("ts_code")
+        query.fields = ["ts_code", "trade_date", "suspend_timing", "suspend_type"]
+        query.filters = []
+        query.aggregations = []
+        plan.queries = [query]
+        plan.result_pipeline = None
+        plan.feasibility = "supported"
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
 
     @staticmethod
     def _compile_block_trade_snapshot(plan: QueryPlan, prompt: str) -> None:
@@ -1887,7 +2161,11 @@ class AnalysisService:
     @staticmethod
     def _compile_dividend_yield_ranking(plan: QueryPlan, prompt: str) -> None:
         """Compile a full-market dividend-yield ranking from one daily snapshot."""
-        if "\u80a1\u606f\u7387" not in prompt or "\u6700\u9ad8" not in prompt:
+        normalized = prompt.lower()
+        if not (
+            ("\u80a1\u606f\u7387" in prompt and "\u6700\u9ad8" in prompt)
+            or ("dividend yield" in normalized and "top" in normalized)
+        ):
             return
         existing = next(
             (query for query in plan.queries if query.operation == "daily_basic"),
@@ -2030,7 +2308,10 @@ class AnalysisService:
         """Compile one security's annual dividend disclosures deterministically."""
         if "\u5206\u7ea2" not in prompt or "\u5206\u7ea2\u603b\u989d" in prompt:
             return
-        code_match = re.search(r"\b\d{6}\.(?:SH|SZ|BJ)\b", prompt.upper())
+        code_match = re.search(
+            r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
+            prompt.upper(),
+        )
         year_match = re.search(r"\b(20\d{2})\u5e74", prompt)
         if code_match is None or year_match is None:
             return

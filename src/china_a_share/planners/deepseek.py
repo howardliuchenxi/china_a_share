@@ -883,6 +883,14 @@ class DeepSeekQueryPlanner:
                 query["filters"] = []
             if query.get("aggregations") is None:
                 query["aggregations"] = []
+            query["aggregations"] = [
+                aggregation
+                for aggregation in query["aggregations"]
+                if isinstance(aggregation, dict)
+                and isinstance(aggregation.get("value"), (int, float))
+                and not isinstance(aggregation.get("value"), bool)
+                and aggregation.get("operator") in {"gt", "ge", "eq", "le", "lt"}
+            ]
 
         if isinstance(pipeline, dict) and isinstance(pipeline.get("steps"), list):
             steps = pipeline["steps"]
