@@ -763,7 +763,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByLabel("最少证券数")).toHaveAttribute("max", "30");
   await page.getByRole("button", { name: "开始反向搜索" }).click();
 
+  await expect(page.getByRole("alert")).toHaveText("研究任务状态暂时不可用，系统正在自动重试。");
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
+  await expect(page.getByText("研究任务状态暂时不可用，系统正在自动重试。")).toHaveCount(0);
   const topRuleCard = page.locator(".rule-card").first();
   const topWindowComparison = topRuleCard.locator(".window-comparison");
   await expect(page.getByText("本次研究配置（任务快照）", { exact: true })).toBeVisible();
@@ -881,6 +883,37 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator("#analysis-prompt")).toHaveValue(/筛选今日全部A股中严格满足以下条件的股票/);
   await expect(page.locator("#analysis-prompt")).toHaveValue(/不要改变运算符或阈值/);
   await expect(page.locator("#analysis-prompt")).toHaveValue(/pe_ttm <= 12 and turnover_rate >= 8/);
+});
+
+test("discovery page stops polling when a task no longer exists", async ({ page }) => {
+  await page.route("**/api/discovery/tasks", route => {
+    void route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        task_id: "missing-discovery-task",
+        status: "queued",
+        status_url: "/api/discovery/tasks/missing-discovery-task",
+      }),
+    });
+  });
+  let statusPollCount = 0;
+  await page.route("**/api/discovery/tasks/missing-discovery-task", route => {
+    statusPollCount += 1;
+    void route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Discovery task was not found." }),
+    });
+  });
+
+  await page.goto("/analysis");
+  await page.getByRole("tab", { name: "策略挖掘" }).click();
+  await page.getByRole("button", { name: "开始反向搜索" }).click();
+
+  await expect(page.getByRole("alert")).toHaveText("研究任务不存在或已过期，请重新提交。");
+  await page.waitForTimeout(2200);
+  expect(statusPollCount).toBe(1);
 });
 
 test("discovery page normalizes factors restored from the URL", async ({ page }) => {

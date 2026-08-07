@@ -199,6 +199,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [taskStatus, setTaskStatus] = useState<DiscoveryTaskStatusResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [pollError, setPollError] = useState("");
   const [showAllFactors, setShowAllFactors] = useState(false);
 
   const availableFactors = discoveryFactorEntries;
@@ -261,6 +262,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     }
     setIsSubmitting(true);
     setSubmitError("");
+    setPollError("");
     setTaskStatus(null);
     try {
       const payload: DiscoveryTaskRequest = {
@@ -307,16 +309,25 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         const response = await fetch(`/api/discovery/tasks/${taskId}`);
         if (!active) return;
         if (!response.ok) {
+          if (response.status === 404) {
+            setPollError("研究任务不存在或已过期，请重新提交。");
+            return;
+          }
+          setPollError("研究任务状态暂时不可用，系统正在自动重试。");
           timer = window.setTimeout(poll, 2000);
           return;
         }
         const data = await response.json() as DiscoveryTaskStatusResponse;
+        setPollError("");
         setTaskStatus(data);
         if (!terminalStatuses.has(data.status)) {
           timer = window.setTimeout(poll, 2000);
         }
       } catch {
-        if (active) timer = window.setTimeout(poll, 2000);
+        if (active) {
+          setPollError("无法连接研究任务服务，系统正在自动重试。");
+          timer = window.setTimeout(poll, 2000);
+        }
       }
     };
     void poll();
@@ -384,6 +395,8 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </div>
         </form>
       </section>
+
+      {pollError && <p className="discovery-error" role="alert">{pollError}</p>}
 
       {taskId && taskStatus && <section className="results-panel discovery-progress-panel">
         <div className="section-heading"><span>02</span><h2>研究进度</h2></div>
