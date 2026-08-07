@@ -21,6 +21,7 @@ MAX_EXHAUSTIVE_DISCRETE_VALUES = 10
 # contract. The schema therefore remains the single source of truth when the
 # factor catalog grows.
 PAIRING_CANDIDATE_LIMIT = len(DISCOVERY_FACTOR_FIELDS)
+PAIRING_THRESHOLDS_PER_DIRECTION = 2
 VALIDATION_CANDIDATE_LIMIT = 50
 VALIDATION_FDR_THRESHOLD = 0.10
 MINIMUM_SIGNIFICANCE_TRADING_DAYS = 20
@@ -227,9 +228,11 @@ class RuleSearchEngine:
     def _select_pairing_conditions(
         candidates: Sequence[FactorHypothesis],
     ) -> List[Tuple[str, str]]:
-        """Cover distinct factors before adding their alternate directions."""
+        """Cover factors and directions before filling the bounded threshold pool."""
         selected = []
+        selected_formulas = set()
         seen_buckets = set()
+        bucket_counts = {}
         seen_fields = set()
         for candidate in candidates:
             field = RuleSearchEngine._field_for_formula(candidate.formula)
@@ -237,8 +240,10 @@ class RuleSearchEngine:
                 continue
             operator = candidate.formula.split()[1]
             selected.append((candidate.formula, field))
+            selected_formulas.add(candidate.formula)
             seen_fields.add(field)
             seen_buckets.add((field, operator))
+            bucket_counts[(field, operator)] = 1
             if len(selected) == PAIRING_CANDIDATE_LIMIT:
                 return selected
         for candidate in candidates:
@@ -248,7 +253,26 @@ class RuleSearchEngine:
             if bucket in seen_buckets:
                 continue
             seen_buckets.add(bucket)
+            bucket_counts[bucket] = 1
             selected.append((candidate.formula, field))
+            selected_formulas.add(candidate.formula)
+            if len(selected) == PAIRING_CANDIDATE_LIMIT:
+                return selected
+        # Small factor selections otherwise test only one threshold in each
+        # direction. Add one next-best threshold per bucket after breadth is
+        # protected, avoiding an exhaustive cross-product while preserving
+        # the same hard cap on the number of pair formulas evaluated.
+        for candidate in candidates:
+            if candidate.formula in selected_formulas:
+                continue
+            field = RuleSearchEngine._field_for_formula(candidate.formula)
+            operator = candidate.formula.split()[1]
+            bucket = (field, operator)
+            if bucket_counts.get(bucket, 0) >= PAIRING_THRESHOLDS_PER_DIRECTION:
+                continue
+            selected.append((candidate.formula, field))
+            selected_formulas.add(candidate.formula)
+            bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
             if len(selected) == PAIRING_CANDIDATE_LIMIT:
                 return selected
         return selected

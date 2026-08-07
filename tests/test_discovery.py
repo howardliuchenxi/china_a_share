@@ -1937,11 +1937,26 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
     ]
 
     assert set(field for _, field in pairing_pool) == {"first", "second"}
-    assert len(buckets) == len(set(buckets)) == 4
+    assert set(buckets) == {
+        ("first", "<="),
+        ("first", ">="),
+        ("second", "<="),
+        ("second", ">="),
+    }
+    assert len(conditions) == 20
+    assert len(pairing_pool) == 8
+    assert len(pairing_pool) > len(set(buckets))
 
 
-def test_rule_search_fills_pairing_pool_with_alternate_directions():
-    factor_names = [f"factor_{index}" for index in range(13)]
+@pytest.mark.parametrize(
+    ("factor_count", "expected_direction_counts"),
+    [(10, {2}), (13, {1, 2})],
+)
+def test_rule_search_fills_pairing_pool_with_alternate_directions(
+    factor_count,
+    expected_direction_counts,
+):
+    factor_names = [f"factor_{index}" for index in range(factor_count)]
     dataset = pd.DataFrame(
         {
             "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
@@ -1964,8 +1979,7 @@ def test_rule_search_fills_pairing_pool_with_alternate_directions():
     }
 
     assert len(pairing_pool) == PAIRING_CANDIDATE_LIMIT
-    assert set(direction_counts.values()) == {1, 2}
-    assert sum(count == 2 for count in direction_counts.values()) == 12
+    assert set(direction_counts.values()) == expected_direction_counts
 
 
 def test_rule_search_rejects_same_factor_conditions_in_the_same_direction():
