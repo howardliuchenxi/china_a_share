@@ -177,6 +177,7 @@ def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
     assert result.win_rate == pytest.approx(2 / 3)
     assert result.mean_return == pytest.approx(0.0666666667)
     assert result.median_return == pytest.approx(0.10)
+    assert result.return_p05 == pytest.approx(-0.17)
     assert result.max_drawdown == pytest.approx(-0.20)
     assert result.baseline_win_rate == pytest.approx(0.75)
 
@@ -377,6 +378,14 @@ def test_rule_search_corrects_validation_significance_for_multiple_candidates():
     assert candidates
     assert all(0.0 <= candidate.p_value <= 1.0 for candidate in candidates)
     assert all(candidate.p_value <= candidate.q_value <= 1.0 for candidate in candidates)
+    assert all(
+        candidate.validation_passed
+        == (
+            candidate.q_value <= 0.10
+            and candidate.val_result.win_rate_lift > 0.0
+        )
+        for candidate in candidates
+    )
     ordered_by_p = sorted(candidates, key=lambda candidate: candidate.p_value)
     assert [candidate.q_value for candidate in ordered_by_p] == sorted(
         candidate.q_value for candidate in candidates

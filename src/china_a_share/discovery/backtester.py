@@ -201,6 +201,7 @@ class FactorBacktester:
             win_rate=float(win_rate),
             mean_return=float(returns.mean()),
             median_return=float(returns.median()),
+            return_p05=float(returns.quantile(0.05)),
             return_std=float(returns.std(ddof=0)),
             max_drawdown=float(drawdown.min()) if len(drawdown) else 0.0,
             eval_time_ms=0,

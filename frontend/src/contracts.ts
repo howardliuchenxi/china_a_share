@@ -289,6 +289,7 @@ export interface BacktestResult {
   sample_count: number;
   positive_count: number;
   median_return: number;
+  return_p05: number;
   return_std: number;
   baseline_win_rate: number;
   win_rate_lift: number;
@@ -312,6 +313,7 @@ export interface FactorHypothesis {
   generalization_gap: number;
   p_value: number;
   q_value: number;
+  validation_passed: boolean;
 }
 
 export interface DiscoveryTaskProgress {

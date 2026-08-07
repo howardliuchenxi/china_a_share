@@ -222,10 +222,11 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       {bestRule && <section className="results-panel discovery-summary-panel">
         <div className="section-heading"><span>03</span><h2>验证集摘要</h2></div>
         <div className="headline-metrics">
+          <div><small>独立验证结论</small><strong className={bestRule.validation_passed ? "metric-positive" : "metric-negative"}>{bestRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>训练排名已锁定</em></div>
           <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>按 {bestRule.val_result!.trading_day_count} 个交易日聚类：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
-          <div><small>事件曲线最大回撤</small><strong>{percent(bestRule.val_result!.max_drawdown, 2)}</strong><em>{bestRule.val_result!.sample_count} 个验证样本</em></div>
+          <div><small>5% 分位收益</small><strong className={bestRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(bestRule.val_result!.return_p05, 2)}</strong><em>{bestRule.val_result!.sample_count} 个验证事件</em></div>
           <div><small>提升检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>HAC 滞后 {bestRule.val_result!.dependence_lag_days} 日 · {bestRule.q_value <= 0.1 ? "通过 10% FDR" : "未通过 10% FDR"}</em></div>
         </div>
         <p className="research-caveat">排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。每条规则在训练和验证窗口都必须同时满足事件数与独立交易日门槛，避免单日大量股票制造伪稳定。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情、估值或复权因子整批缺失时，研究会直接失败而非使用残缺样本。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间与 q-value 按信号日聚类，并使用持有期感知的 HAC 误差处理相邻信号共享未来收益的问题；提升检验也计入规则与全样本基准的重叠。统计关联仍不代表因果关系。</p>
@@ -237,13 +238,14 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           {taskStatus.progress.leaderboard.map((hypothesis, index) => <article className="rule-card" key={hypothesis.formula}>
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
-              <div className="rule-heading"><div><h3>{hypothesis.description}</h3><code>{hypothesis.formula}</code></div><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>用于今日筛选</button></div>
+              <div className="rule-heading"><div><h3>{hypothesis.description}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>用于今日筛选</button></div></div>
               <p>{hypothesis.reasoning}</p>
               <div className="window-comparison">
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>
               </div>
               <p className="confidence-note">验证集上涨概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
+              <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
               <p className="confidence-note">保守可信分：{hypothesis.validation_score.toFixed(3)} · 训练—验证差距：{percent(hypothesis.generalization_gap)}</p>
               <p className="confidence-note">相对基准提升检验 p-value：{hypothesis.p_value.toFixed(3)} · FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}</p>
             </div>

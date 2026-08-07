@@ -13,6 +13,7 @@ from china_a_share.discovery.backtester import FactorBacktester
 LOW_QUANTILE = 0.2
 HIGH_QUANTILE = 0.8
 PAIRING_CANDIDATE_LIMIT = 12
+VALIDATION_FDR_THRESHOLD = 0.10
 
 
 class RuleSearchEngine:
@@ -74,6 +75,11 @@ class RuleSearchEngine:
             unique.append(candidate)
         validated = self._validate_candidates(unique, validation)
         self._apply_false_discovery_rate(validated)
+        for candidate in validated:
+            candidate.validation_passed = (
+                candidate.q_value <= VALIDATION_FDR_THRESHOLD
+                and candidate.val_result.win_rate_lift > 0.0
+            )
         # Validation outcomes never reorder the training-frozen shortlist.
         return validated[:top_n], evaluated_count
 

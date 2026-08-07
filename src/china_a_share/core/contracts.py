@@ -1091,6 +1091,10 @@ class BacktestResult(BaseModel):
     sample_count: int = Field(default=0, ge=0)
     positive_count: int = Field(default=0, ge=0)
     median_return: float = 0.0
+    return_p05: float = Field(
+        default=0.0,
+        description="Fifth percentile of event-level forward returns.",
+    )
     return_std: float = 0.0
     baseline_win_rate: float = 0.0
     win_rate_lift: float = 0.0
@@ -1137,6 +1141,10 @@ class FactorHypothesis(BaseModel):
         ge=0.0,
         le=1.0,
         description="Benjamini-Hochberg adjusted validation significance.",
+    )
+    validation_passed: bool = Field(
+        default=False,
+        description="Whether positive validation lift passes the configured FDR gate.",
     )
 
 

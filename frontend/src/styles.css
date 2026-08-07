@@ -1439,6 +1439,12 @@ table tbody tr:hover { background-color: #f1f3ee; }
   color: #315e4d;
   overflow-wrap: anywhere;
 }
+.rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  white-space: nowrap;
+}
 .rule-body > p {
   color: #6c7972;
   font-size: 0.78rem;
@@ -1469,6 +1475,7 @@ table tbody tr:hover { background-color: #f1f3ee; }
   .discovery-intro,
   .discovery-submit-row,
   .rule-heading { align-items: stretch; flex-direction: column; }
+  .rule-actions { justify-content: space-between; }
   .research-guardrails { justify-content: flex-start; }
   .discovery-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .research-progress-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

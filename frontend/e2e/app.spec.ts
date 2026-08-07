@@ -599,8 +599,10 @@ test("discovery page submits a bounded study and renders validation evidence", a
         generalization_gap: 0.03,
         p_value: 0.012,
         q_value: 0.048,
+        validation_passed: true,
         train_result: {
           win_rate: 0.63, mean_return: 0.071, median_return: 0.052,
+          return_p05: -0.16,
           max_drawdown: -0.12, eval_time_ms: 10, sample_count: 180,
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
           win_rate_lift: 0.11, confidence_lower: 0.56, confidence_upper: 0.70,
@@ -613,6 +615,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         },
         val_result: {
           win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
+          return_p05: -0.19,
           max_drawdown: -0.15, eval_time_ms: 8, sample_count: 75,
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
           win_rate_lift: 0.09, confidence_lower: 0.49, confidence_upper: 0.70,
@@ -655,6 +658,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
 
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
+  await expect(page.locator(".headline-metrics")).toContainText("验证通过");
+  await expect(page.locator(".headline-metrics")).toContainText("5% 分位收益");
   await expect(page.locator(".rule-card")).toContainText("75");
   await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
