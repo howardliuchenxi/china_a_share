@@ -93,6 +93,7 @@ class RuleSearchEngine:
             if factor not in train:
                 continue
             numeric = pd.to_numeric(train[factor], errors="coerce").dropna()
+            numeric = numeric[numeric.map(math.isfinite)]
             if numeric.nunique() < 2:
                 continue
             low = float(numeric.quantile(LOW_QUANTILE))

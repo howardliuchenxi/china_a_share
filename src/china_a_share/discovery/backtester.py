@@ -10,7 +10,12 @@ from typing import List
 import pandas as pd
 
 from china_a_share.application.workflow import DataQueryExecutor
-from china_a_share.core.contracts import BacktestResult, DataQuery, QueryStatus
+from china_a_share.core.contracts import (
+    BacktestResult,
+    DataQuery,
+    QueryResult,
+    QueryStatus,
+)
 
 
 DATA_FETCH_WORKERS = 20
@@ -147,10 +152,14 @@ class FactorBacktester:
                 selected["forward_return"], errors="coerce"
             )
         ).dropna(subset=["forward_return"])
+        evaluation_frame = evaluation_frame[
+            evaluation_frame["forward_return"].map(math.isfinite)
+        ]
         returns = evaluation_frame["forward_return"]
         baseline = pd.to_numeric(
             research_frame["forward_return"], errors="coerce"
         ).dropna()
+        baseline = baseline[baseline.map(math.isfinite)]
         if returns.empty:
             return BacktestResult(
                 win_rate=0.0,
@@ -292,25 +301,59 @@ class FactorBacktester:
                 api_route=api_route,
                 request_id=request_id,
             )
-            if (
-                basic_result.status != QueryStatus.SUCCESS
-                or price_result.status != QueryStatus.SUCCESS
-                or adjustment_result.status != QueryStatus.SUCCESS
-                or not basic_result.rows
-                or not price_result.rows
-                or not adjustment_result.rows
-            ):
+            basic = self._validated_session_rows(
+                basic_result,
+                trade_date,
+                "daily_basic",
+                {"ts_code"},
+            )
+            price = self._validated_session_rows(
+                price_result,
+                trade_date,
+                "daily",
+                {"ts_code", "close"},
+            )
+            adjustment = self._validated_session_rows(
+                adjustment_result,
+                trade_date,
+                "adj_factor",
+                {"ts_code", "adj_factor"},
+            )
+            frame = pd.merge(
+                basic,
+                price,
+                on="ts_code",
+                how="inner",
+                validate="one_to_one",
+            )
+            missing_adjustments = set(frame["ts_code"]) - set(
+                adjustment["ts_code"]
+            )
+            if missing_adjustments:
                 raise ValueError(
-                    f"Incomplete discovery market data for trading session {trade_date}."
+                    f"Missing adjustment factors for {len(missing_adjustments)} "
+                    f"securities on {trade_date}."
                 )
-            basic = pd.DataFrame(basic_result.rows)
-            price = pd.DataFrame(price_result.rows)
-            adjustment = pd.DataFrame(adjustment_result.rows)
-            frame = pd.merge(basic, price, on="ts_code", how="inner")
-            frame = pd.merge(frame, adjustment, on="ts_code", how="inner")
-            frame["adjusted_close"] = pd.to_numeric(
-                frame["close"], errors="coerce"
-            ) * pd.to_numeric(frame["adj_factor"], errors="coerce")
+            frame = pd.merge(
+                frame,
+                adjustment,
+                on="ts_code",
+                how="inner",
+                validate="one_to_one",
+            )
+            close = pd.to_numeric(frame["close"], errors="coerce")
+            adjustment_factor = pd.to_numeric(
+                frame["adj_factor"], errors="coerce"
+            )
+            valid_price = close.map(math.isfinite) & (close > 0.0)
+            valid_adjustment = adjustment_factor.map(math.isfinite) & (
+                adjustment_factor > 0.0
+            )
+            if not (valid_price & valid_adjustment).all():
+                raise ValueError(
+                    f"Invalid close or adjustment factor on {trade_date}."
+                )
+            frame["adjusted_close"] = close * adjustment_factor
             frame["trade_date"] = trade_date
             return frame
         except Exception:
@@ -320,6 +363,31 @@ class FactorBacktester:
                 request_id,
             )
             raise
+
+    @staticmethod
+    def _validated_session_rows(
+        result: QueryResult,
+        trade_date: str,
+        source: str,
+        required_fields: set[str],
+    ) -> pd.DataFrame:
+        """Validate one full-market session before any cross-source merge."""
+        if result.status != QueryStatus.SUCCESS or not result.rows:
+            raise ValueError(
+                f"Incomplete {source} data for trading session {trade_date}."
+            )
+        frame = pd.DataFrame(result.rows)
+        missing_fields = required_fields - set(frame.columns)
+        if missing_fields:
+            raise ValueError(
+                f"Missing {source} fields on {trade_date}: "
+                + ", ".join(sorted(missing_fields))
+            )
+        if frame["ts_code"].duplicated().any():
+            raise ValueError(
+                f"Duplicate {source} security rows on {trade_date}."
+            )
+        return frame
 
     @staticmethod
     def _clustered_confidence_interval(

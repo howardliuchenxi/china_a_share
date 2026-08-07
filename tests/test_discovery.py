@@ -161,6 +161,77 @@ def test_research_dataset_fails_when_a_required_session_is_missing():
         )
 
 
+def test_research_dataset_rejects_duplicate_security_rows():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [{"ts_code": "000001.SZ", "pe_ttm": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            "20260105": [
+                {"ts_code": "000001.SZ", "close": 10.0},
+                {"ts_code": "000001.SZ", "close": 10.0},
+            ],
+            "20260106": [{"ts_code": "000001.SZ", "close": 11.0}],
+        },
+    )
+
+    with pytest.raises(ValueError, match="Duplicate daily security rows"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
+def test_research_dataset_rejects_partial_adjustment_coverage():
+    securities = ["000001.SZ", "000002.SZ"]
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [{"ts_code": code, "pe_ttm": 10.0} for code in securities]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            date: [{"ts_code": code, "close": 10.0} for code in securities]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            date: [{"ts_code": "000001.SZ", "adj_factor": 1.0}]
+            for date in ["20260105", "20260106"]
+        },
+    )
+
+    with pytest.raises(ValueError, match="Missing adjustment factors for 1"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
+def test_research_dataset_rejects_non_finite_prices():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [{"ts_code": "000001.SZ", "pe_ttm": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            "20260105": [{"ts_code": "000001.SZ", "close": float("inf")}],
+            "20260106": [{"ts_code": "000001.SZ", "close": 11.0}],
+        },
+    )
+
+    with pytest.raises(ValueError, match="Invalid close or adjustment factor"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
 def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
     dataset = pd.DataFrame(
         {
@@ -305,6 +376,27 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     ]
     assert training_scores == sorted(training_scores, reverse=True)
     assert all(candidate.generalization_gap >= 0 for candidate in candidates)
+
+
+def test_rule_search_ignores_non_finite_factor_values():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 11)],
+            "value": [float("-inf"), *range(8), float("inf")],
+            "forward_return": [-0.10] * 5 + [0.10] * 5,
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(min_sample_count=2).search(
+        dataset,
+        dataset.copy(),
+        ["value"],
+        max_conditions=1,
+        top_n=10,
+    )
+
+    assert candidates
+    assert all("inf" not in candidate.formula for candidate in candidates)
 
 
 def test_rule_search_does_not_use_validation_outcomes_to_choose_the_winner():
