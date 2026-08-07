@@ -7,6 +7,8 @@ import china_a_share.api as api_module
 from china_a_share.api import create_app
 from china_a_share.client import TushareApiError
 from china_a_share.core.contracts import (
+    AnalysisRequest,
+    AnalysisTask,
     AnalysisTaskStatus,
     AnalysisTaskSubmission,
     AnalysisResponse,
@@ -75,6 +77,14 @@ class FakeDiscoveryCoordinator:
 
     def get(self, task_id):
         return self.task if self.task and self.task.task_id == task_id else None
+
+
+class FailingDiscoveryCoordinator:
+    def submit_discovery(self, request):
+        raise RuntimeError("task queue unavailable")
+
+    def get(self, task_id):
+        raise RuntimeError("task store unavailable")
 
 
 class FakeStockCatalogService:
@@ -305,6 +315,58 @@ def test_discovery_endpoint_rejects_duplicate_factors():
     )
 
     assert response.status_code == 422
+
+
+def test_discovery_status_hides_missing_and_non_discovery_tasks():
+    coordinator = FakeDiscoveryCoordinator()
+    client = TestClient(
+        create_app(FakeAnalysisService(), task_coordinator=coordinator)
+    )
+
+    missing = client.get("/api/discovery/tasks/missing-task")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Discovery task was not found."
+
+    now = datetime.now(timezone.utc)
+    coordinator.task = AnalysisTask(
+        task_id="analysis-task",
+        status=AnalysisTaskStatus.QUEUED,
+        request=AnalysisRequest(prompt="Show recent A-share prices."),
+        created_at=now,
+        updated_at=now,
+    )
+    wrong_type = client.get("/api/discovery/tasks/analysis-task")
+    assert wrong_type.status_code == 404
+    assert wrong_type.json()["detail"] == "Discovery task was not found."
+
+
+def test_discovery_endpoints_map_coordinator_failures_to_service_unavailable():
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            task_coordinator=FailingDiscoveryCoordinator(),
+        )
+    )
+    payload = {
+        "target_pool": "A_SHARE",
+        "train_start": "20250101",
+        "train_end": "20251231",
+        "val_start": "20260101",
+        "val_end": "20260630",
+        "factors": ["pe_ttm"],
+    }
+
+    submission = client.post("/api/discovery/tasks", json=payload)
+    assert submission.status_code == 503
+    assert submission.json()["detail"] == (
+        "Discovery task submission is temporarily unavailable."
+    )
+
+    task_status = client.get("/api/discovery/tasks/discovery-task")
+    assert task_status.status_code == 503
+    assert task_status.json()["detail"] == (
+        "Discovery task status is temporarily unavailable."
+    )
 
 
 def test_ui_feedback_config_exposes_only_public_values():

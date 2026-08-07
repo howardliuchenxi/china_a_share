@@ -278,6 +278,7 @@ def create_app(
     )
     def submit_discovery(
         request: DiscoveryTaskRequest,
+        http_request: Request,
     ):
         """Accept an automated alpha discovery task."""
         nonlocal active_task_coordinator
@@ -285,7 +286,22 @@ def create_app(
             active_task_coordinator = create_analysis_task_coordinator(
                 Settings.from_env()
             )
-        submission = active_task_coordinator.submit_discovery(request)
+        try:
+            submission = active_task_coordinator.submit_discovery(request)
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "discovery_task_submission_failed",
+                api_route=DISCOVERY_TASK_API_ROUTE,
+                request_id=http_request.state.request_id,
+                source="system",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Discovery task submission is temporarily unavailable.",
+            ) from exc
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
             content=submission.model_dump(mode="json"),
@@ -295,14 +311,32 @@ def create_app(
         f"{DISCOVERY_TASK_API_ROUTE}/{{task_id}}",
         response_model=DiscoveryTaskStatusResponse,
     )
-    def get_discovery_task(task_id: str) -> DiscoveryTaskStatusResponse:
+    def get_discovery_task(
+        task_id: str,
+        http_request: Request,
+    ) -> DiscoveryTaskStatusResponse:
         """Return current progress or the terminal result for one discovery task."""
         nonlocal active_task_coordinator
         if active_task_coordinator is None:
             active_task_coordinator = create_analysis_task_coordinator(
                 Settings.from_env()
             )
-        task = active_task_coordinator.get(task_id)
+        try:
+            task = active_task_coordinator.get(task_id)
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "discovery_task_status_failed",
+                api_route=DISCOVERY_TASK_API_ROUTE,
+                request_id=http_request.state.request_id,
+                source="system",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Discovery task status is temporarily unavailable.",
+            ) from exc
         if task is None or getattr(task, "task_type", "") != "discovery":
             raise HTTPException(status_code=404, detail="Discovery task was not found.")
         return DiscoveryTaskStatusResponse(
