@@ -1159,6 +1159,11 @@ class FactorHypothesis(BaseModel):
         le=1.0,
         description="Benjamini-Hochberg adjusted validation significance.",
     )
+    fdr_family_size: int = Field(
+        default=0,
+        ge=0,
+        description="Number of frozen candidates included in FDR correction.",
+    )
     validation_passed: bool = Field(
         default=False,
         description="Whether positive validation lift passes the configured FDR gate.",

@@ -314,6 +314,8 @@ class RuleSearchEngine:
             return
         if family_size < len(candidates):
             raise ValueError("FDR family cannot be smaller than validated candidates.")
+        for candidate in candidates:
+            candidate.fdr_family_size = family_size
         ordered = sorted(enumerate(candidates), key=lambda item: item[1].p_value)
         adjusted = [1.0] * len(ordered)
         running_minimum = 1.0

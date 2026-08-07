@@ -599,6 +599,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         generalization_gap: 0.03,
         p_value: 0.012,
         q_value: 0.048,
+        fdr_family_size: 18,
         validation_passed: true,
         train_result: {
           win_rate: 0.63, mean_return: 0.071, median_return: 0.052,
@@ -668,5 +669,6 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
+  await expect(page.getByText("18 个盲测候选 · 通过 10% FDR", { exact: true })).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
 });

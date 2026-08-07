@@ -901,6 +901,7 @@ def test_false_discovery_rate_counts_ineligible_validation_candidates():
     assert [candidate.q_value for candidate in candidates] == pytest.approx(
         [0.10, 0.20]
     )
+    assert all(candidate.fdr_family_size == 10 for candidate in candidates)
 
 
 def test_clustered_lift_significance_remains_finite_for_large_samples():

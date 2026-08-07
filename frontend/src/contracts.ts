@@ -317,6 +317,7 @@ export interface FactorHypothesis {
   generalization_gap: number;
   p_value: number;
   q_value: number;
+  fdr_family_size: number;
   validation_passed: boolean;
 }
 
