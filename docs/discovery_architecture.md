@@ -110,7 +110,9 @@ are read. Every frozen candidate remains in that order even when its validation
 evidence misses a configured sample, date, security, or outcome-coverage
 threshold. Such candidates receive `p = 1` and an explicit machine-readable
 failure reason instead of disappearing and allowing a lower training rank to
-take their place. Validation evidence never reorders the leaderboard.
+take their place. A factor absent from the entire validation window is treated
+as fully missing evidence under the same policy instead of raising an undefined
+field error for the whole task. Validation evidence never reorders the leaderboard.
 Each hypothesis records whether its thresholds came from continuous quantiles,
 observed discrete values, or a mixture, so displayed provenance matches the
 actual training-only generation path.

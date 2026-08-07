@@ -271,6 +271,10 @@ class RuleSearchEngine:
         cleaned = frame.reset_index(drop=True).copy()
         for factor in factors:
             if factor not in cleaned:
+                # A factor may be available during training but absent from an
+                # entire validation window. Preserve the frozen candidate and
+                # let its evidence gates fail instead of aborting the study.
+                cleaned[factor] = float("nan")
                 continue
             numeric = pd.to_numeric(cleaned[factor], errors="coerce")
             cleaned[factor] = numeric.where(numeric.map(math.isfinite))

@@ -1657,6 +1657,44 @@ def test_rule_search_ignores_missing_and_constant_factors():
     assert conditions == []
 
 
+def test_rule_search_retains_candidates_when_validation_factor_is_absent():
+    train = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 41)],
+            "factor": [0.0] * 20 + [1.0] * 20,
+            "forward_return": [-0.10] * 20 + [0.10] * 20,
+        }
+    )
+    validation = pd.DataFrame(
+        {
+            "trade_date": [f"2027{index:04d}" for index in range(1, 41)],
+            "forward_return": [-0.10, 0.10] * 20,
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(min_sample_count=10).search(
+        train,
+        validation,
+        ["factor"],
+        max_conditions=1,
+        top_n=10,
+    )
+
+    assert candidates
+    assert all(candidate.val_result is not None for candidate in candidates)
+    assert all(candidate.val_result.sample_count == 0 for candidate in candidates)
+    positive_training_candidate = next(
+        candidate
+        for candidate in candidates
+        if candidate.train_result.win_rate_lift > 0.0
+    )
+    assert (
+        positive_training_candidate.validation_reason
+        == "insufficient_validation_samples"
+    )
+    assert all(candidate.validation_passed is False for candidate in candidates)
+
+
 def test_rule_search_deduplicates_thresholds_after_formula_rounding():
     dataset = pd.DataFrame(
         {
