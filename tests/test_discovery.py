@@ -941,6 +941,28 @@ def test_rule_evaluation_reports_missing_outcome_coverage():
     assert result.sample_count == 2
     assert result.missing_outcome_count == 1
     assert result.outcome_coverage_rate == pytest.approx(2 / 3)
+    assert result.baseline_outcome_coverage_rate == pytest.approx(2 / 3)
+
+
+def test_training_screen_rejects_low_comparable_baseline_outcome_coverage():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 21)],
+            "factor": [1.0] * 10 + [0.0] * 10,
+            "forward_return": [0.10] * 10 + [None] * 10,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+    candidates, evaluated_count = RuleSearchEngine(
+        min_sample_count=5,
+        min_outcome_coverage=0.90,
+    )._evaluate_training_formulas([("factor == 1", "factor")], dataset)
+
+    assert result.outcome_coverage_rate == 1.0
+    assert result.baseline_outcome_coverage_rate == 0.5
+    assert evaluated_count == 1
+    assert candidates == []
 
 
 def test_probability_interval_includes_unobserved_outcome_extremes():
@@ -2043,6 +2065,10 @@ def test_validation_reports_the_first_failed_replication_gate(
             "insufficient_validation_effective_securities",
         ),
         ({"outcome_coverage_rate": 0.89}, "insufficient_validation_coverage"),
+        (
+            {"baseline_outcome_coverage_rate": 0.89},
+            "insufficient_validation_baseline_coverage",
+        ),
     ],
 )
 def test_validation_reason_identifies_the_failed_evidence_threshold(
@@ -2059,6 +2085,7 @@ def test_validation_reason_identifies_the_failed_evidence_threshold(
         security_count=5,
         effective_security_count=5.0,
         outcome_coverage_rate=1.0,
+        baseline_outcome_coverage_rate=1.0,
         win_rate_lift=0.10,
     ).model_copy(update=result_update)
     candidate = FactorHypothesis(

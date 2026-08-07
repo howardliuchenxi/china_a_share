@@ -1215,6 +1215,14 @@ class BacktestResult(BaseModel):
             "the comparable-event baseline."
         ),
     )
+    baseline_outcome_coverage_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Share of factor-comparable baseline events with observable outcomes."
+        ),
+    )
     win_rate_lift: float = 0.0
     outcome_robust_lift_lower: float = Field(
         default=-1.0,
@@ -1375,6 +1383,7 @@ class FactorHypothesis(BaseModel):
         "insufficient_validation_securities",
         "insufficient_validation_effective_securities",
         "insufficient_validation_coverage",
+        "insufficient_validation_baseline_coverage",
         "validation_lift_not_positive",
         "validation_outcome_attrition_not_robust",
         "insufficient_significance_days",

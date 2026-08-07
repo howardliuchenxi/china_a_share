@@ -143,6 +143,11 @@ class RuleSearchEngine:
             < self._min_outcome_coverage
         ):
             return "insufficient_validation_coverage"
+        if (
+            candidate.val_result.baseline_outcome_coverage_rate
+            < self._min_outcome_coverage
+        ):
+            return "insufficient_validation_baseline_coverage"
         if candidate.val_result.win_rate_lift <= 0.0:
             return "validation_lift_not_positive"
         if candidate.val_result.outcome_robust_lift_lower <= 0.0:
@@ -315,6 +320,8 @@ class RuleSearchEngine:
                 < self._min_security_count
                 or train_result.outcome_coverage_rate
                 < self._min_outcome_coverage
+                or train_result.baseline_outcome_coverage_rate
+                < self._min_outcome_coverage
             ):
                 continue
             threshold_source = self._threshold_source(formula, train)
@@ -391,6 +398,8 @@ class RuleSearchEngine:
                 or validation_result.effective_security_count
                 < self._min_security_count
                 or validation_result.outcome_coverage_rate
+                < self._min_outcome_coverage
+                or validation_result.baseline_outcome_coverage_rate
                 < self._min_outcome_coverage
             )
             train_result = candidate.train_result

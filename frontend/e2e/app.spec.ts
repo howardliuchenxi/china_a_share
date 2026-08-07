@@ -629,7 +629,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
           matched_sample_count: 184, eligible_sample_count: 1200, rule_support_rate: 0.1533,
           missing_outcome_count: 4, outcome_coverage_rate: 0.978,
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
-          baseline_sample_count: 1200,
+          baseline_sample_count: 1182,
+          baseline_outcome_coverage_rate: 0.985,
           win_rate_lift: 0.11, lift_confidence_lower: 0.04,
           outcome_robust_lift_lower: 0.09, outcome_robust_lift_upper: 0.13,
           lift_confidence_upper: 0.18, confidence_lower: 0.56, confidence_upper: 0.70,
@@ -653,7 +654,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
           matched_sample_count: 77, eligible_sample_count: 420, rule_support_rate: 0.1833,
           missing_outcome_count: 2, outcome_coverage_rate: 0.974,
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
-          baseline_sample_count: 420,
+          baseline_sample_count: 407,
+          baseline_outcome_coverage_rate: 0.969,
           win_rate_lift: 0.09, lift_confidence_lower: 0.02,
           outcome_robust_lift_lower: 0.07, outcome_robust_lift_upper: 0.11,
           lift_confidence_upper: 0.16, confidence_lower: 0.49, confidence_upper: 0.70,
@@ -745,6 +747,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
   await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
+  await expect(topWindowComparison).toContainText("可比基准标签覆盖");
+  await expect(topWindowComparison).toContainText("98.5%");
+  await expect(topWindowComparison).toContainText("96.9%");
   await expect(topWindowComparison).toContainText("15.3%");
   await expect(topWindowComparison).toContainText("180 / 120 / 86");
   await expect(topWindowComparison).toContainText("日期集中度折算后有效交易日");
@@ -760,7 +765,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".rule-list")).toContainText("规则覆盖差距：2.9%");
   await expect(page.locator(".rule-list")).toContainText("覆盖保留比例：119.6%");
   expect(statusPollCount).toBeGreaterThanOrEqual(2);
-  await expect(page.locator(".headline-metrics")).toContainText("N=420");
+  await expect(page.locator(".headline-metrics")).toContainText("N=407");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");
   await expect(page.locator(".headline-metrics")).toContainText("5% 分位收益");
@@ -773,6 +778,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();
   await expect(page.getByText(/按缺失结果全部失败或全部成功的边界扩展概率区间/)).toBeVisible();
   await expect(page.getByText(/交易日门槛同时约束原始不同日期数和按事件权重折算的有效日期数/)).toBeVisible();
+  await expect(page.getByText(/最低标签覆盖门槛同时约束规则命中事件和完整的因子可比基准/)).toBeVisible();
   await expect(page.getByText(/证券门槛同样同时约束原始不同证券数和有效证券数/)).toBeVisible();
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();

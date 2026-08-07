@@ -333,6 +333,11 @@ class FactorBacktester:
         outcome_coverage_rate = (
             len(returns) / matched_sample_count if matched_sample_count else 0.0
         )
+        baseline_outcome_coverage_rate = (
+            len(baseline) / eligible_sample_count
+            if eligible_sample_count
+            else 0.0
+        )
         if returns.empty:
             return BacktestResult(
                 win_rate=0.0,
@@ -347,6 +352,7 @@ class FactorBacktester:
                     float((baseline > target_return).mean()) if len(baseline) else 0.0
                 ),
                 baseline_sample_count=len(baseline),
+                baseline_outcome_coverage_rate=baseline_outcome_coverage_rate,
                 target_return=target_return,
                 security_count=security_count,
                 effective_security_count=effective_security_count,
@@ -452,6 +458,7 @@ class FactorBacktester:
             positive_count=positive_count,
             baseline_win_rate=baseline_win_rate,
             baseline_sample_count=len(baseline),
+            baseline_outcome_coverage_rate=baseline_outcome_coverage_rate,
             win_rate_lift=float(win_rate - baseline_win_rate),
             outcome_robust_lift_lower=outcome_robust_lift_lower,
             outcome_robust_lift_upper=outcome_robust_lift_upper,

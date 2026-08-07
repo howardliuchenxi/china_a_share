@@ -127,7 +127,8 @@ Reported evidence includes:
 - absolute train-to-validation support-rate drift for applicability diagnostics;
 - validation-to-training support retention, which exposes relative applicability
   collapse that can look small in percentage-point terms;
-- observable-outcome coverage;
+- observable-outcome coverage for both selected events and the complete
+  factor-comparable baseline; both must satisfy the configured coverage gate;
 - worst- and best-case probability bounds that treat every unobserved outcome
   as a failure or success, respectively;
 - hit rate, mean and median forward return, and fifth-percentile return;
