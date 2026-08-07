@@ -33,6 +33,7 @@ function validationReason(hypothesis: FactorHypothesis) {
   switch (hypothesis.validation_reason) {
     case "training_lift_not_positive": return "训练期未获得正提升";
     case "validation_lift_not_positive": return "验证期未复现正提升";
+    case "insufficient_significance_days": return "验证期不足 20 个独立信号日";
     case "fdr_not_passed": return "未通过 10% FDR";
     case "passed": return "训练与验证同向，且通过 10% FDR";
     default: return "尚未完成独立验证";

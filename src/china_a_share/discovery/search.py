@@ -112,6 +112,11 @@ class RuleSearchEngine:
             return "training_lift_not_positive"
         if candidate.val_result.win_rate_lift <= 0.0:
             return "validation_lift_not_positive"
+        if (
+            candidate.val_result.trading_day_count
+            < MINIMUM_SIGNIFICANCE_TRADING_DAYS
+        ):
+            return "insufficient_significance_days"
         if candidate.q_value > VALIDATION_FDR_THRESHOLD:
             return "fdr_not_passed"
         return "passed"

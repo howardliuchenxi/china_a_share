@@ -1443,11 +1443,39 @@ def test_validation_reports_the_first_failed_replication_gate(
             max_drawdown=-0.05,
             eval_time_ms=1,
             win_rate_lift=validation_lift,
+            trading_day_count=20,
         ),
         q_value=q_value,
     )
 
     assert RuleSearchEngine._validation_reason(candidate) == expected
+
+
+def test_validation_reason_reports_insufficient_significance_days():
+    candidate = FactorHypothesis(
+        formula="value >= 1",
+        description="Test rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            win_rate_lift=0.10,
+        ),
+        val_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            win_rate_lift=0.10,
+            trading_day_count=19,
+        ),
+        q_value=1.0,
+    )
+
+    assert (
+        RuleSearchEngine._validation_reason(candidate)
+        == "insufficient_significance_days"
+    )
 
 
 def test_validation_reason_reports_an_unevaluated_candidate():

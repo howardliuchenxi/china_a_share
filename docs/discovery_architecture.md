@@ -100,7 +100,7 @@ Reported evidence includes:
 
 The normal-tail significance calculation requires at least twenty independent
 validation signal dates. Shorter studies remain visible for exploration but
-receive `p = 1` and cannot pass FDR.
+receive `p = 1`, report `insufficient_significance_days`, and cannot pass FDR.
 
 The false-discovery family contains every frozen candidate sent to validation,
 including candidates later excluded for insufficient validation evidence. A
