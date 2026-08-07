@@ -677,7 +677,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await page.getByRole("tab", { name: "策略挖掘" }).click();
 
   await expect(page.getByRole("heading", { name: "从历史数据反向发现规律" })).toBeVisible();
-  await expect(page.getByText(/配对池先覆盖不同因子，再补充反方向条件/)).toBeVisible();
+  await expect(page.getByText(/24 个配对席位会先覆盖所有存在有效候选的因子/)).toBeVisible();
   await page.getByRole("button", { name: "开始反向搜索" }).click();
 
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
@@ -686,6 +686,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".research-config-grid")).toContainText("20260101 – 20260630");
   await expect(page.locator(".research-config-grid")).toContainText("20 个交易日");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
+  await expect(page.locator(".headline-metrics")).toContainText("训练榜首验证结论");
+  await expect(page.locator(".headline-metrics")).toContainText("1 / 1 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% FDR");
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
