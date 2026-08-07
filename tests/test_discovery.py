@@ -6,6 +6,8 @@ import pandas as pd
 import pytest
 
 from china_a_share.core.contracts import (
+    AnalysisRequest,
+    AnalysisTask,
     AnalysisTaskStatus,
     BacktestResult,
     DISCOVERY_FACTOR_FIELDS,
@@ -2751,6 +2753,34 @@ def test_evolution_loop_reports_finite_factor_coverage():
     }
 
 
+def test_evolution_loop_rejects_an_analysis_task_without_mutating_it():
+    class UnexpectedBacktester:
+        def build_dataset(self, start_date, end_date, **kwargs):
+            raise AssertionError("The backtester must not run for an analysis task.")
+
+    store = MemoryAnalysisTaskStore()
+    now = datetime.now(timezone.utc)
+    task = AnalysisTask(
+        task_id="analysis-task",
+        status=AnalysisTaskStatus.QUEUED,
+        request=AnalysisRequest(prompt="Show recent A-share prices."),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    with pytest.raises(
+        TypeError,
+        match="Task is not a discovery task: analysis-task",
+    ):
+        EvolutionLoop(store, UnexpectedBacktester()).run(task.task_id)
+
+    persisted = store.get(task.task_id)
+    assert isinstance(persisted, AnalysisTask)
+    assert persisted.status == AnalysisTaskStatus.QUEUED
+    assert persisted.error is None
+
+
 def test_evolution_loop_explains_every_no_candidate_evidence_gate(monkeypatch):
     class EmptySearchBacktester:
         def build_dataset(self, start_date, end_date, **kwargs):
@@ -2827,3 +2857,40 @@ def test_evolution_loop_persists_a_dataset_failure():
     assert failed.status == AnalysisTaskStatus.FAILED
     assert failed.progress.current_stage == "failed"
     assert failed.error.message == "market snapshot unavailable"
+
+
+def test_evolution_loop_persists_a_missing_future_trade_date_failure():
+    class MissingFutureDateBacktester:
+        def build_dataset(self, start_date, end_date, **kwargs):
+            return pd.DataFrame(
+                {
+                    "trade_date": ["20250102"],
+                    "pe_ttm": [10.0],
+                    "forward_return": [0.01],
+                }
+            )
+
+    store = MemoryAnalysisTaskStore()
+    now = datetime.now(timezone.utc)
+    task = DiscoveryTask(
+        task_id="missing-future-date-discovery-loop",
+        status=AnalysisTaskStatus.QUEUED,
+        request=DiscoveryTaskRequest(
+            target_pool="A_SHARE",
+            train_start="20250101",
+            train_end="20251231",
+            val_start="20260101",
+            val_end="20260630",
+            factors=["pe_ttm"],
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    EvolutionLoop(store, MissingFutureDateBacktester()).run(task.task_id)
+
+    failed = store.get(task.task_id)
+    assert failed.status == AnalysisTaskStatus.FAILED
+    assert failed.progress.current_stage == "failed"
+    assert failed.error.message == "Training dataset is missing future_trade_date."
