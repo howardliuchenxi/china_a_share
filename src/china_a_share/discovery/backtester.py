@@ -390,7 +390,7 @@ class FactorBacktester:
             lift_standard_error=lift_standard_error,
             dependence_lag_days=dependence_lag_days,
             event_examples=(
-                FactorBacktester._event_examples(evaluation_frame)
+                FactorBacktester._event_examples(evaluation_frame, feature_fields)
                 if include_event_examples
                 else []
             ),
@@ -399,6 +399,7 @@ class FactorBacktester:
     @staticmethod
     def _event_examples(
         evaluation_frame: pd.DataFrame,
+        feature_fields: List[str],
     ) -> List[DiscoveryEventExample]:
         """Return a deterministic bounded sample of recent observable events."""
         if evaluation_frame.empty:
@@ -423,6 +424,11 @@ class FactorBacktester:
         for row in recent.itertuples(index=False):
             ts_code = getattr(row, "ts_code", None)
             future_trade_date = getattr(row, "future_trade_date", None)
+            factor_values = {}
+            for field in feature_fields:
+                value = float(getattr(row, field))
+                if math.isfinite(value):
+                    factor_values[field] = value
             examples.append(
                 DiscoveryEventExample(
                     trade_date=str(row.trade_date),
@@ -433,6 +439,7 @@ class FactorBacktester:
                         else str(future_trade_date)
                     ),
                     forward_return=float(row.forward_return),
+                    factor_values=factor_values,
                 )
             )
         return examples

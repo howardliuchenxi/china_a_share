@@ -322,6 +322,8 @@ export interface BacktestResult {
     future_trade_date: string | null;
     /** Observed adjusted forward return as a ratio. */
     forward_return: number;
+    /** Signal-date values for only the factors referenced by the rule. */
+    factor_values: Record<string, number>;
   }>;
 }
 

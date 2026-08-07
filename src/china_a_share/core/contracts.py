@@ -1162,6 +1162,10 @@ class DiscoveryEventExample(BaseModel):
     forward_return: float = Field(
         description="Observed split-and-dividend-adjusted forward return as a ratio.",
     )
+    factor_values: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Finite signal-date values for only the factors referenced by the rule.",
+    )
 
 
 class BacktestResult(BaseModel):

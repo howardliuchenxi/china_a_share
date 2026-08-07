@@ -104,11 +104,12 @@ function EventExamples({
       <summary>核验最近 {result.event_examples.length} 条{windowLabel}命中事件</summary>
       <div className="table-scroll">
         <table>
-          <thead><tr><th>信号日</th><th>证券</th><th>结算日</th><th>未来收益</th></tr></thead>
+          <thead><tr><th>信号日</th><th>证券</th><th>命中因子</th><th>结算日</th><th>未来收益</th></tr></thead>
           <tbody>{result.event_examples.map((example, index) => (
             <tr key={`${example.trade_date}-${example.ts_code ?? index}`}>
               <td>{example.trade_date}</td>
               <td>{example.ts_code ?? "—"}</td>
+              <td>{Object.entries(example.factor_values).map(([field, value]) => `${discoveryFactorLabels.get(field) ?? field}=${value.toLocaleString("zh-CN", { maximumFractionDigits: 4 })}`).join(" · ") || "—"}</td>
               <td>{example.future_trade_date ?? "—"}</td>
               <td>{percent(example.forward_return, 2)}</td>
             </tr>

@@ -158,9 +158,10 @@ including event, date, security, support, and label-coverage breadth.
 Each window also carries at most five most-recent observable matched events,
 ordered deterministically by signal date and security. The UI keeps these audit
 rows collapsed by default and exposes signal date, security, outcome settlement
-date, and adjusted forward return so a researcher can trace summary statistics
-back to concrete examples without allowing response size to grow with the full
-event population. Training examples are extracted only after the bounded
+date, adjusted forward return, and the finite signal-date values of only the
+factors referenced by that rule. This lets a researcher verify both why the
+event matched and how it resolved without allowing response size to grow with
+the full event population. Training examples are extracted only after the bounded
 training-ranked validation shortlist is frozen, so formulas discarded during
 initial screening do not incur presentation-only work.
 

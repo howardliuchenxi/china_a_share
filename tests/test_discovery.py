@@ -895,6 +895,7 @@ def test_rule_evaluation_retains_bounded_recent_event_examples():
     assert result.event_examples[0].ts_code == "000007.SZ"
     assert result.event_examples[0].future_trade_date == "20260207"
     assert result.event_examples[0].forward_return == pytest.approx(0.07)
+    assert result.event_examples[0].factor_values == {"factor": 1.0}
 
 
 def test_rule_event_examples_are_stable_when_latest_date_exceeds_the_limit():
