@@ -192,6 +192,40 @@ def test_research_dataset_retains_signals_with_missing_future_prices():
     )
 
 
+def test_research_dataset_uses_future_prices_without_future_basic_rows():
+    securities = ["000001.SZ", "000002.SZ"]
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            "20260105": [
+                {"ts_code": code, "pe_ttm": 10.0}
+                for code in securities
+            ],
+            "20260106": [{"ts_code": "000001.SZ", "pe_ttm": 10.0}],
+        },
+        {
+            "20260105": [
+                {"ts_code": code, "close": 10.0}
+                for code in securities
+            ],
+            "20260106": [
+                {"ts_code": code, "close": 11.0}
+                for code in securities
+            ],
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+    )
+
+    assert len(dataset) == 2
+    assert dataset["forward_return"].notna().sum() == 2
+    assert dataset["forward_return"].tolist() == pytest.approx([0.10, 0.10])
+
+
 def test_research_dataset_preserves_missing_factor_values():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],

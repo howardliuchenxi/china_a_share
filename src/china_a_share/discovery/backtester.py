@@ -343,21 +343,18 @@ class FactorBacktester:
                 ]
             ]
             adjustment = adjustment[["ts_code", "adj_factor"]]
-            # Daily market fields are authoritative when daily_basic repeats
-            # names such as close or trade_date in its full-field response.
+            # Price and adjustment data define the tradable session universe.
+            # Valuation fields are optional because they are not required to
+            # calculate a future return label.
+            authoritative_fields = (
+                set(price.columns) | set(adjustment.columns) | {"trade_date"}
+            ) - {"ts_code"}
             overlapping_market_fields = (
-                (set(basic.columns) & set(price.columns)) - {"ts_code"}
+                set(basic.columns) & authoritative_fields
             )
             if overlapping_market_fields:
                 basic = basic.drop(columns=sorted(overlapping_market_fields))
-            frame = pd.merge(
-                basic,
-                price,
-                on="ts_code",
-                how="inner",
-                validate="one_to_one",
-            )
-            missing_adjustments = set(frame["ts_code"]) - set(
+            missing_adjustments = set(price["ts_code"]) - set(
                 adjustment["ts_code"]
             )
             if missing_adjustments:
@@ -366,10 +363,17 @@ class FactorBacktester:
                     f"securities on {trade_date}."
                 )
             frame = pd.merge(
-                frame,
+                price,
                 adjustment,
                 on="ts_code",
                 how="inner",
+                validate="one_to_one",
+            )
+            frame = pd.merge(
+                frame,
+                basic,
+                on="ts_code",
+                how="left",
                 validate="one_to_one",
             )
             close = pd.to_numeric(frame["close"], errors="coerce")
