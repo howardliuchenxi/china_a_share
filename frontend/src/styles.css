@@ -1331,6 +1331,14 @@ table tbody tr:hover { background-color: #f1f3ee; }
   border: 1px solid #dbe3de;
   border-radius: 8px;
 }
+.factor-selector-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-bottom: 0.75rem;
+  color: #69766f;
+  font-size: 0.85rem;
+}
 .factor-checkbox {
   display: flex;
   align-items: center;

@@ -193,6 +193,15 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       : [...current, field]);
   }
 
+  function selectAllFactors() {
+    setFactors(availableFactors.map(factor => factor.field));
+    setShowAllFactors(true);
+  }
+
+  function clearFactors() {
+    setFactors([]);
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!factors.length) {
@@ -301,6 +310,11 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </div>
           <fieldset className="factor-selector">
             <legend>候选因子 <strong>{factors.length}</strong></legend>
+            <div className="factor-selector-actions">
+              <span>可搜索 {availableFactors.length} 个</span>
+              <button type="button" className="expand-factors-button" onClick={selectAllFactors}>全选全部因子</button>
+              <button type="button" className="expand-factors-button" onClick={clearFactors}>清空重选</button>
+            </div>
             <div className="factor-grid">
               {(showAllFactors ? availableFactors : availableFactors.slice(0, 24)).map(factor => (
                 <label key={factor.field} className={`factor-checkbox ${factors.includes(factor.field) ? "is-selected" : ""}`}>

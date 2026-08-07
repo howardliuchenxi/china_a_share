@@ -824,3 +824,20 @@ test("discovery page deduplicates factors restored from the URL", async ({ page 
   await expect(page.getByRole("group", { name: /候选因子/ })).toContainText("2");
   await expect(page).toHaveURL(/dp_factors=pe_ttm%2Cpb/);
 });
+
+test("discovery page supports broad factor selection and fast reset", async ({ page }) => {
+  await page.goto("/analysis");
+  await page.getByRole("tab", { name: "策略挖掘" }).click();
+
+  await expect(page.getByText("可搜索 25 个", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "全选全部因子" }).click();
+  await expect(page.locator(".factor-selector legend strong")).toHaveText("25");
+  await expect(page.locator(".factor-checkbox.is-selected")).toHaveCount(25);
+  await expect(page.getByText("自由流通换手率")).toBeVisible();
+
+  await page.getByRole("button", { name: "清空重选" }).click();
+  await expect(page.locator(".factor-selector legend strong")).toHaveText("0");
+  await expect(page.locator(".factor-checkbox.is-selected")).toHaveCount(0);
+  await page.getByRole("button", { name: "开始反向搜索" }).click();
+  await expect(page.getByRole("alert")).toHaveText("请至少选择一个可搜索因子。");
+});

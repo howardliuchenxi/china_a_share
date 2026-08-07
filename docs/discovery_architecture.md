@@ -83,6 +83,9 @@ the frontend selector and that every selectable factor has a non-placeholder
 data-dictionary label. The backend sequence-factor subset must also exactly
 match the frontend direct-application denylist, preventing an internally
 derived adjusted-history rule from being handed to an incompatible executor.
+The frontend offers explicit select-all and clear controls for the complete
+catalog so broad reverse discovery does not require 25 manual checkbox actions;
+the selected list remains part of the reproducible URL and task snapshot.
 
 Candidates are ranked only on training data by the conservative lower 95%
 lift bound. This bound is the lower edge of the envelope combining the
