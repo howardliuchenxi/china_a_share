@@ -78,6 +78,9 @@ equivalent-cohort selection. When two conditions are allowed, the pairing pool
 reserves one slot for every factor admitted by the public discovery contract
 before adding alternate directions. The current 25-factor catalog therefore
 caps the pair search at 300 combinations without silently excluding a factor.
+Repository contract tests require that this backend factor set exactly matches
+the frontend selector and that every selectable factor has a non-placeholder
+data-dictionary label.
 
 Candidates are ranked only on training data by the conservative lower 95%
 lift bound. This bound is the lower edge of the envelope combining the

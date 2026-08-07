@@ -725,6 +725,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".factor-grid")).toContainText("复权5日波动率");
   await expect(page.locator(".factor-grid")).toContainText("复权5日最大回撤");
   await expect(page.locator(".factor-grid")).toContainText("复权5日峰值距离");
+  await expect(page.locator(".factor-grid")).toContainText("自由流通换手率");
   await page.locator(".factor-checkbox").filter({ hasText: "近3日上涨天数" }).locator("input").check();
   await expect(page.getByText(/25 个配对席位会先覆盖所有存在有效候选的因子/)).toBeVisible();
   await expect(page.getByText(/离散因子会枚举全部实际阈值/)).toBeVisible();

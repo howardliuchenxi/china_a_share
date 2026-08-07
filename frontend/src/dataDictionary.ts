@@ -17,6 +17,7 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "股息率", field: "dv_ratio", description: "衡量企业现金分红与市值的比例。", formula: "过去一年分红总额 / 总市值", source: "Tushare" },
   { label: "股息率TTM", field: "dv_ttm", description: "滚动股息率。", formula: "过去12个月分红总额 / 总市值", source: "Tushare" },
   { label: "换手率", field: "turnover_rate", description: "交易活跃度指标，一定时间内市场中股票转手买卖的频率。", formula: "区间成交股数 / 流通总股数", source: "Tushare" },
+  { label: "自由流通换手率", field: "turnover_rate_f", description: "成交量相对自由流通股本的比例，用于衡量可自由交易股份的换手活跃度。", formula: "成交量 / 自由流通股本 * 100%", source: "Tushare" },
   { label: "换手率变动", field: "turnover_change_pct", description: "换手率相较于基期的相对变化比例，用于衡量交易活跃度的上升或下降。", formula: "(期末换手率 - 基期换手率) / 基期换手率 * 100%", source: "A-Share Lab 衍生计算" },
   { label: "总市值", field: "total_mv", description: "公司发行的全部股份按市场价格计算的总价值。", formula: "总股本 * 最新股价", source: "Tushare" },
   { label: "流通市值", field: "circ_mv", description: "在二级市场可自由交易的股份总价值。", formula: "流通股本 * 最新股价", source: "Tushare" },

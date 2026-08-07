@@ -1,4 +1,6 @@
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -59,6 +61,39 @@ class FakeQueryExecutor:
             rows=rows,
             row_count=len(rows),
         )
+
+
+def test_frontend_discovery_catalog_matches_backend_contract_and_dictionary():
+    repository_root = Path(__file__).resolve().parents[1]
+    discovery_page = (
+        repository_root / "frontend/src/DiscoveryPage.tsx"
+    ).read_text(encoding="utf-8")
+    factor_block = re.search(
+        r"const discoveryFactorFields = new Set\(\[(.*?)\]\);",
+        discovery_page,
+        re.DOTALL,
+    )
+    assert factor_block is not None
+    frontend_factors = set(
+        re.findall(r'"([a-z][a-z0-9_]*)"', factor_block.group(1))
+    )
+    dictionary_source = (
+        repository_root / "frontend/src/dataDictionary.ts"
+    ).read_text(encoding="utf-8")
+    dictionary_labels = {
+        field: label
+        for label, field in re.findall(
+            r'\{ label: "([^"]+)", field: "([^"]+)"',
+            dictionary_source,
+        )
+    }
+
+    assert frontend_factors == DISCOVERY_FACTOR_FIELDS
+    assert DISCOVERY_FACTOR_FIELDS <= dictionary_labels.keys()
+    assert all(
+        dictionary_labels[field] not in {"", "Y", "N"}
+        for field in DISCOVERY_FACTOR_FIELDS
+    )
 
 
 def test_research_dataset_aligns_features_with_future_trading_session_returns():
