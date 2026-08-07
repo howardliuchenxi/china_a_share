@@ -80,8 +80,9 @@ def build_query_plan_system_prompt(
         "streak outcome pipeline is: match_source to create an event boolean; "
         "rolling_sum over that boolean using the requested window, group, and order; "
         "set require_consecutive to true so missing market sessions break the streak; "
-        "compare_scalar the streak count to the requested length; filter the match; "
-        "match_at_offset the numeric outcome field such as close; drop the missing "
+        "match_at_offset the numeric outcome field such as close before filtering, so "
+        "future rows remain available; filter the streak count to the requested length; "
+        "drop the missing "
         "future value; derive future value divided by event value; derive the ratio "
         "minus 1; compare_scalar the return with 0; optionally multiply the return by "
         "100; then summarize with one aggregations array. Omit redundant sort, "
@@ -445,13 +446,13 @@ class DeepSeekQueryPlanner:
                 steps = [
                     event_membership,
                     streak,
+                    outcome,
                     {
                         "operation": "filter",
                         "field": streak["output_field"],
                         "comparison": "eq",
                         "value": streak["window"],
                     },
-                    outcome,
                     {
                         "operation": "drop_missing",
                         "fields": [outcome["output_field"]],

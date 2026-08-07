@@ -2,11 +2,28 @@
 
 from datetime import date
 
+import pytest
+
 from china_a_share.time_range import (
+    resolve_consecutive_session_count,
     resolve_explicit_time_range,
     resolve_future_horizon,
     resolve_relative_time_range,
 )
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("连续两天涨停后第三天上涨的概率", 2),
+        ("统计三连板事件未来一个月收益", 3),
+        ("连续涨停四个交易日后未来两周", 4),
+        ("一周，明确按五个连续交易日计算", 5),
+        ("查询最近一个月涨停股票", None),
+    ],
+)
+def test_consecutive_session_counts_are_structured(prompt, expected):
+    assert resolve_consecutive_session_count(prompt) == expected
 
 
 def test_year_and_half_year_resolve_to_distinct_windows():

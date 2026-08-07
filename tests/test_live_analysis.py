@@ -32,15 +32,17 @@ REGRESSION_PROMPT = (
     "接下来一个月的上涨情况数据分析"
 )
 STREAK_PROMPTS = [
-    (REGRESSION_PROMPT, 1),
+    (REGRESSION_PROMPT, 3, 1),
     (
         "A股20260101～20260601连续涨停四个交易日的情况下，"
         "接下来一个月的上涨情况数据分析",
+        4,
         0,
     ),
     (
         "A股20260101～20260601连续涨停一周（明确按五个连续交易日）的情况下，"
         "接下来一个月的上涨情况数据分析",
+        5,
         0,
     ),
 ]
@@ -82,11 +84,15 @@ def live_analysis_service() -> AnalysisService:
     )
 
 
-@pytest.mark.parametrize(("prompt", "minimum_rows"), STREAK_PROMPTS)
+@pytest.mark.parametrize(
+    ("prompt", "streak_length", "minimum_events"),
+    STREAK_PROMPTS,
+)
 def test_live_limit_up_event_study_completes(
     live_analysis_service,
     prompt,
-    minimum_rows,
+    streak_length,
+    minimum_events,
 ) -> None:
     """Run parameterized streak prompts through real upstream APIs locally."""
     response = live_analysis_service.analyze(
@@ -108,12 +114,32 @@ def test_live_limit_up_event_study_completes(
     assert response.error is None
     assert response.plan is not None
     assert response.plan.result_pipeline is not None
+    assert {
+        "daily",
+        "limit_list_d",
+    }.issubset(query.operation for query in response.plan.queries)
+    rolling_step = next(
+        step
+        for step in response.plan.result_pipeline.steps
+        if step.operation == "rolling_sum"
+    )
+    assert rolling_step.window == streak_length
+    assert rolling_step.min_periods == streak_length
+    assert rolling_step.require_consecutive is True
+    outcome_step = next(
+        step
+        for step in response.plan.result_pipeline.steps
+        if step.operation == "match_at_offset"
+    )
+    assert (outcome_step.offset_value, outcome_step.offset_unit) == (1, "month")
     pipeline_output_id = response.plan.result_pipeline.output_query_id
     pipeline_result = next(
         result for result in response.results if result.query_id == pipeline_output_id
     )
     assert pipeline_result.status.value == "success"
-    assert pipeline_result.row_count >= minimum_rows
+    assert pipeline_result.row_count == 1
+    assert pipeline_result.rows[0]["event_count"] >= minimum_events
+    assert "average_return_pct" in pipeline_result.rows[0]
 
 
 def test_live_april_decline_top_10(live_analysis_service) -> None:
@@ -142,4 +168,3 @@ def test_live_april_decline_top_10(live_analysis_service) -> None:
     returns = [float(row["period_return_pct"]) for row in pipeline_result.rows]
     for i in range(len(returns) - 1):
         assert returns[i] <= returns[i+1], f"Monotonicity violated: {returns}"
-

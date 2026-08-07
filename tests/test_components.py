@@ -248,7 +248,7 @@ def test_future_horizon_rejects_a_next_day_substitution():
     ):
         AnalysisService._validate_planned_time_semantics(
             plan,
-            "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+            "A股20260101～20260601涨停事件接下来一个月的上涨情况数据分析",
         )
 
 
@@ -293,7 +293,7 @@ def test_future_horizon_accepts_the_exact_calendar_offset_and_data_coverage():
 
     result = AnalysisService._validate_planned_time_semantics(
         plan,
-        "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+        "A股20260101～20260601涨停事件接下来一个月的上涨情况数据分析",
     )
 
     assert result.result_pipeline.steps[0].offset_unit == "month"
@@ -340,11 +340,75 @@ def test_future_horizon_expands_an_existing_source_date_range():
 
     result = AnalysisService._validate_planned_time_semantics(
         plan,
-        "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+        "A股20260101～20260601涨停事件接下来一个月的上涨情况数据分析",
     )
 
     assert result.queries[0].params["start_date"] == "20260101"
     assert result.queries[0].params["end_date"] == "20260701"
+
+
+def test_limit_up_streak_requires_the_exact_complete_session_window():
+    plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="limit-ups",
+            operation="limit_list_d",
+            params={
+                "start_date": "20260101",
+                "end_date": "20260601",
+                "limit_type": "U",
+            },
+            fields=["ts_code", "trade_date"],
+            purpose="Identify native limit-up events.",
+        )
+    )
+    plan.queries[0].params = {
+        "start_date": "20260101",
+        "end_date": "20260601",
+    }
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "streaks",
+            "steps": [
+                {
+                    "operation": "match_source",
+                    "right_source_query_id": "limit-ups",
+                    "join_on": ["ts_code", "trade_date"],
+                    "output_field": "is_limit_up",
+                },
+                {
+                    "operation": "rolling_sum",
+                    "field": "is_limit_up",
+                    "output_field": "streak_count",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "window": 2,
+                    "min_periods": 2,
+                    "require_consecutive": True,
+                },
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match=r"requested consecutive session count \(3\)",
+    ):
+        AnalysisService._validate_planned_time_semantics(
+            plan,
+            "统计三连板事件数量",
+        )
+
+    plan.result_pipeline.steps[1].window = 3
+    plan.result_pipeline.steps[1].min_periods = 3
+
+    validated = AnalysisService._validate_planned_time_semantics(
+        plan,
+        "统计三连板事件数量",
+    )
+    assert validated.result_pipeline.steps[1].window == 3
 
 
 def test_limit_up_analysis_requires_the_native_limit_list():
@@ -661,8 +725,8 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
     assert [step.operation for step in steps] == [
         "match_source",
         "rolling_sum",
-        "filter",
         "match_at_offset",
+        "filter",
         "drop_missing",
         "derive",
         "derive",
@@ -673,7 +737,7 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
     assert steps[1].min_periods == 3
     assert steps[1].require_consecutive is True
     assert steps[1].field == "is_limit_up"
-    assert steps[2].field == "streak_count"
+    assert steps[3].field == "streak_count"
     assert steps[5].field == "future_close"
     assert steps[5].right_field == "close"
     assert steps[6].arithmetic_operator == "subtract"

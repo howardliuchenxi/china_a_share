@@ -42,6 +42,12 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "tier": "supported",
         "delivery": "sync",
         "operations": ["limit_list_d", "daily"],
+        "quality_invariants": [
+            "native_limit_up_source",
+            "consecutive_session_count",
+            "future_horizon",
+            "valid_sample_count",
+        ],
         "prompts": [
             "\u8fde\u7eed\u4e24\u5929\u6da8\u505c\u540e\u7b2c\u4e09\u5929\u4e0a\u6da8\u7684\u6982\u7387",
             "\u8fc7\u53bb\u4e00\u4e2a\u6708\u4e8c\u8fde\u677f\u7b2c\u4e09\u65e5\u6536\u6da8\u6bd4\u4f8b",
@@ -53,6 +59,12 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "tier": "supported",
         "delivery": "sync",
         "operations": ["limit_list_d", "daily"],
+        "quality_invariants": [
+            "native_limit_up_source",
+            "consecutive_session_count",
+            "future_horizon",
+            "valid_sample_count",
+        ],
         "prompts": [
             "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
             "统计20250101至20251231三连板事件未来三个月的收益表现",
@@ -64,6 +76,10 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "tier": "supported",
         "delivery": "sync",
         "operations": ["daily"],
+        "quality_invariants": [
+            "period_return_direction",
+            "sort_before_limit",
+        ],
         "prompts": [
             "A\u80a16\u6708\u6da8\u5e45\u6700\u5927\u7684\u516c\u53f8\u662f",
             "\u5927A\u57286\u6708\u4e0a\u6da8\u6700\u591a\u7684\u80a1\u7968\u524d\u5341",

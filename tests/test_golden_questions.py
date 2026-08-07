@@ -11,6 +11,14 @@ MINIMUM_GOLDEN_QUESTION_COUNT = 60
 MINIMUM_GOLDEN_FAMILY_COUNT = 20
 VALID_TIERS = {"supported", "approximation", "unsupported"}
 VALID_DELIVERY_MODES = {"sync", "async"}
+VALID_QUALITY_INVARIANTS = {
+    "consecutive_session_count",
+    "future_horizon",
+    "native_limit_up_source",
+    "period_return_direction",
+    "sort_before_limit",
+    "valid_sample_count",
+}
 
 
 def test_golden_question_matrix_has_broad_unique_coverage():
@@ -36,6 +44,9 @@ def test_golden_question_matrix_uses_known_contract_values():
         assert family["tier"] in VALID_TIERS
         assert family["delivery"] in VALID_DELIVERY_MODES
         assert set(family["operations"]).issubset(catalog_operations)
+        assert set(family.get("quality_invariants", [])).issubset(
+            VALID_QUALITY_INVARIANTS
+        )
         if family["tier"] == "unsupported":
             assert family["operations"] == []
         tier_counts[family["tier"]] += len(family["prompts"])

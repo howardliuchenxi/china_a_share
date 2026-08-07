@@ -32,6 +32,16 @@ FUTURE_HORIZON_PATTERN = re.compile(
     r"(?:接下来|未来|之后|此后)(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
     r"(?P<unit>个?交易日|天|周|个?月|季度|年)"
 )
+CONSECUTIVE_SESSION_PATTERNS = (
+    re.compile(
+        r"连续(?:涨停)?(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
+        r"(?:个)?(?:交易日|天)"
+    ),
+    re.compile(r"(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)连板"),
+    re.compile(
+        r"(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)个?连续交易日"
+    ),
+)
 
 
 def resolve_relative_time_range(
@@ -97,6 +107,18 @@ def resolve_future_horizon(prompt: str) -> Optional[Tuple[int, str]]:
     }
     unit = match.group("unit")
     return (amount * 3, "month") if unit == "季度" else (amount, units[unit])
+
+
+def resolve_consecutive_session_count(prompt: str) -> Optional[int]:
+    """Resolve an explicit consecutive-session or limit-board count."""
+    normalized = re.sub(r"\s+", "", prompt)
+    for pattern in CONSECUTIVE_SESSION_PATTERNS:
+        match = pattern.search(normalized)
+        if match is None:
+            continue
+        token = match.group("amount")
+        return int(token) if token.isdigit() else _parse_chinese_number(token)
+    return None
 
 
 def _parse_chinese_number(token: str) -> int:

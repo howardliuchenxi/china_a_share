@@ -29,6 +29,7 @@ from china_a_share.result_pipeline import ResultPipelineExecutor
 from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
 from china_a_share.time_range import (
     add_calendar_offset,
+    resolve_consecutive_session_count,
     resolve_explicit_time_range,
     resolve_future_horizon,
     resolve_relative_time_range,
@@ -1797,6 +1798,7 @@ class AnalysisService:
         normalized_prompt = prompt.lower()
         requests_limit_up = (
             "涨停" in prompt
+            or "连板" in prompt
             or "limit-up" in normalized_prompt
             or "limit up" in normalized_prompt
         )
@@ -1813,6 +1815,29 @@ class AnalysisService:
                 "fixed pct_chg thresholds are not valid across A-share boards "
                 "and special-treatment securities."
             )
+        streak_length = resolve_consecutive_session_count(prompt)
+        if (
+            requests_limit_up
+            and streak_length is not None
+            and plan.feasibility == "supported"
+        ):
+            rolling_steps = [
+                step
+                for step in (
+                    plan.result_pipeline.steps if plan.result_pipeline else []
+                )
+                if step.operation == "rolling_sum"
+            ]
+            if not any(
+                step.window == streak_length
+                and step.min_periods == streak_length
+                and step.require_consecutive
+                for step in rolling_steps
+            ):
+                raise PlanValidationError(
+                    "Limit-up streak analysis must preserve the requested consecutive "
+                    f"session count ({streak_length}) with a complete rolling_sum window."
+                )
         horizon = resolve_future_horizon(prompt)
         if horizon is None or plan.feasibility != "supported":
             return plan
@@ -1827,6 +1852,29 @@ class AnalysisService:
                 "The plan must preserve the requested future outcome horizon "
                 "with match_at_offset."
             )
+        if streak_length is not None and rolling_steps:
+            streak_output = rolling_steps[0].output_field
+            outcome_index = next(
+                index
+                for index, step in enumerate(plan.result_pipeline.steps)
+                if step in matching_steps
+            )
+            streak_filter_index = next(
+                (
+                    index
+                    for index, step in enumerate(plan.result_pipeline.steps)
+                    if step.operation == "filter"
+                    and step.field == streak_output
+                    and step.comparison == "eq"
+                    and step.value == streak_length
+                ),
+                None,
+            )
+            if streak_filter_index is None or outcome_index > streak_filter_index:
+                raise PlanValidationError(
+                    "Limit-up event outcomes must be matched before filtering streak "
+                    "rows so future observations remain available."
+                )
         event_range = resolve_explicit_time_range(prompt)
         if event_range is None:
             return plan
