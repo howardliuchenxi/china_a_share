@@ -92,12 +92,20 @@ class RuleSearchEngine:
             family_size=len(validation_shortlist),
         )
         for candidate in validated:
-            candidate.validation_passed = (
-                candidate.q_value <= VALIDATION_FDR_THRESHOLD
-                and candidate.val_result.win_rate_lift > 0.0
-            )
+            candidate.validation_passed = self._passes_validation(candidate)
         # Validation outcomes never reorder the training-frozen shortlist.
         return validated[:top_n], evaluated_count
+
+    @staticmethod
+    def _passes_validation(candidate: FactorHypothesis) -> bool:
+        """Require a positive edge in both windows plus validation significance."""
+        return bool(
+            candidate.train_result
+            and candidate.val_result
+            and candidate.train_result.win_rate_lift > 0.0
+            and candidate.val_result.win_rate_lift > 0.0
+            and candidate.q_value <= VALIDATION_FDR_THRESHOLD
+        )
 
     def _build_conditions(
         self,

@@ -5,6 +5,7 @@ import pytest
 
 from china_a_share.core.contracts import (
     AnalysisTaskStatus,
+    BacktestResult,
     DiscoveryTask,
     DiscoveryTaskRequest,
     FactorHypothesis,
@@ -914,6 +915,7 @@ def test_rule_search_corrects_validation_significance_for_multiple_candidates():
         candidate.validation_passed
         == (
             candidate.q_value <= 0.10
+            and candidate.train_result.win_rate_lift > 0.0
             and candidate.val_result.win_rate_lift > 0.0
         )
         for candidate in candidates
@@ -944,6 +946,31 @@ def test_false_discovery_rate_counts_ineligible_validation_candidates():
         [0.10, 0.20]
     )
     assert all(candidate.fdr_family_size == 10 for candidate in candidates)
+
+
+def test_validation_rejects_a_rule_with_negative_training_lift():
+    candidate = FactorHypothesis(
+        formula="value >= 1",
+        description="Test rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.40,
+            mean_return=-0.01,
+            max_drawdown=-0.10,
+            eval_time_ms=1,
+            win_rate_lift=-0.05,
+        ),
+        val_result=BacktestResult(
+            win_rate=0.70,
+            mean_return=0.05,
+            max_drawdown=-0.05,
+            eval_time_ms=1,
+            win_rate_lift=0.20,
+        ),
+        q_value=0.01,
+    )
+
+    assert RuleSearchEngine._passes_validation(candidate) is False
 
 
 def test_clustered_lift_significance_remains_finite_for_large_samples():

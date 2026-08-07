@@ -1173,7 +1173,7 @@ class FactorHypothesis(BaseModel):
     )
     validation_passed: bool = Field(
         default=False,
-        description="Whether positive validation lift passes the configured FDR gate.",
+        description="Whether both windows have positive lift and validation passes FDR.",
     )
 
 
