@@ -300,11 +300,19 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
 
         def build_dataset(self, start_date, end_date, **kwargs):
             self.calls.append((start_date, end_date, kwargs["forward_days"]))
+            is_training = start_date == "20250101"
+            future_dates = (
+                [f"202512{i:02d}" for i in range(1, 26)]
+                + [f"202601{i:02d}" for i in range(1, 6)]
+                if is_training
+                else [f"202602{i:02d}" for i in range(1, 31)]
+            )
             return pd.DataFrame(
                 {
-                    "trade_date": [f"202601{i:02d}" for i in range(1, 26)],
-                    "pe_ttm": list(range(25)),
-                    "forward_return": [-0.05] * 12 + [0.10] * 13,
+                    "trade_date": [f"202511{i:02d}" for i in range(1, 31)],
+                    "future_trade_date": future_dates,
+                    "pe_ttm": list(range(30)),
+                    "forward_return": [-0.05] * 15 + [0.10] * 15,
                 }
             )
 
@@ -336,6 +344,8 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
     assert completed.progress.current_stage == "completed"
     assert completed.progress.formulas_tested > 0
     assert completed.progress.candidates_evaluated >= completed.progress.formulas_tested
+    assert completed.progress.training_sample_count == 25
+    assert completed.progress.training_samples_purged == 5
     assert completed.progress.leaderboard
     assert backtester.calls == [
         ("20250101", "20251231", 5),

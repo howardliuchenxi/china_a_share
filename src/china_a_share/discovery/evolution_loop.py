@@ -60,6 +60,15 @@ class EvolutionLoop:
             forward_days=request.forward_days,
             request_id=task.task_id,
         )
+        if "future_trade_date" not in train:
+            raise ValueError("Training dataset is missing future_trade_date.")
+        original_training_sample_count = len(train)
+        # Purge labels that settle inside the validation period so training
+        # never learns from price outcomes belonging to the blind window.
+        train = train[train["future_trade_date"] < request.val_start].copy()
+        task.progress.training_samples_purged = (
+            original_training_sample_count - len(train)
+        )
         task.progress.training_sample_count = len(train)
         task.progress.validation_sample_count = len(validation)
         task.progress.current_generation = 1

@@ -589,6 +589,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
       current_log: "规律搜索与独立验证已完成。",
       current_stage: "completed",
       training_sample_count: 1200,
+      training_samples_purged: 80,
       validation_sample_count: 420,
       leaderboard: [{
         formula: "pe_ttm <= 12 and turnover_rate >= 8",
@@ -643,5 +644,6 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".rule-card")).toContainText("75");
-  await expect(page.locator(".research-caveat")).toContainText("不等同于可直接交易的组合回测");
+  await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
+  await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
 });

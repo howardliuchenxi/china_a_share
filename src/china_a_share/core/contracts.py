@@ -1141,6 +1141,11 @@ class DiscoveryTaskProgress(BaseModel):
         description="Stable research stage displayed while the task runs.",
     )
     training_sample_count: int = Field(default=0, ge=0)
+    training_samples_purged: int = Field(
+        default=0,
+        ge=0,
+        description="Training observations removed because labels overlap validation.",
+    )
     validation_sample_count: int = Field(default=0, ge=0)
     leaderboard: List[FactorHypothesis] = Field(default_factory=list)
 

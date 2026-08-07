@@ -205,11 +205,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>任务状态</small><strong>{taskStatus.status === "running" ? "运行中" : taskStatus.status === "succeeded" ? "已完成" : taskStatus.status === "queued" ? "排队中" : "失败"}</strong></div>
           <div><small>当前阶段</small><strong>{taskStatus.progress.current_stage}</strong></div>
           <div><small>训练样本</small><strong>{taskStatus.progress.training_sample_count.toLocaleString()}</strong></div>
+          <div><small>隔离清除</small><strong>{taskStatus.progress.training_samples_purged.toLocaleString()}</strong></div>
           <div><small>验证样本</small><strong>{taskStatus.progress.validation_sample_count.toLocaleString()}</strong></div>
           <div><small>已评估候选</small><strong>{taskStatus.progress.candidates_evaluated}</strong></div>
           <div><small>入榜规则</small><strong>{taskStatus.progress.formulas_tested}</strong></div>
         </div>
         <p className="live-log">{taskStatus.progress.current_log || "等待任务开始…"}</p>
+        {taskStatus.progress.training_samples_purged > 0 && <p className="research-caveat">已清除 {taskStatus.progress.training_samples_purged.toLocaleString()} 条未来结算日进入验证窗口的训练样本，防止标签泄漏。</p>}
         {taskStatus.error && <p className="discovery-error">{taskStatus.error.message}</p>}
       </section>}
 

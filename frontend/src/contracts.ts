@@ -316,6 +316,7 @@ export interface DiscoveryTaskProgress {
   current_log: string;
   current_stage: string;
   training_sample_count: number;
+  training_samples_purged: number;
   validation_sample_count: number;
   leaderboard: FactorHypothesis[];
 }
