@@ -119,6 +119,15 @@ const SUMMARY_FUNCTION_LABELS = {
   max: "\u6700\u5927\u503c",
 } as const;
 
+const SUMMARY_OUTPUT_DESCRIPTIONS: Record<string, string> = {
+  event_count: "\u6ee1\u8db3\u4e8b\u4ef6\u6761\u4ef6\uff0c\u4e14\u5728\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u6709\u53ef\u7528\u4ef7\u683c\u6570\u636e\u7684\u6837\u672c\u6570\u3002",
+  positive_event_count: "\u6709\u6548\u6837\u672c\u4e2d\uff0c\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u6536\u76ca\u4e3a\u6b63\u7684\u6837\u672c\u6570\u3002",
+  positive_event_ratio: "\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u6536\u76ca\u4e3a\u6b63\u7684\u6837\u672c\u5360\u5168\u90e8\u6709\u6548\u6837\u672c\u7684\u6bd4\u4f8b\u3002",
+  average_return_pct: "\u6240\u6709\u6709\u6548\u6837\u672c\u4ece\u4e8b\u4ef6\u53d1\u751f\u5230\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u7684\u5e73\u5747\u6536\u76ca\u7387\u3002",
+  minimum_return_pct: "\u6240\u6709\u6709\u6548\u6837\u672c\u4ece\u4e8b\u4ef6\u53d1\u751f\u5230\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u7684\u6700\u4f4e\u6536\u76ca\u7387\u3002",
+  maximum_return_pct: "\u6240\u6709\u6709\u6548\u6837\u672c\u4ece\u4e8b\u4ef6\u53d1\u751f\u5230\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9\u7684\u6700\u9ad8\u6536\u76ca\u7387\u3002",
+};
+
 const CALCULATION_OPERATION_LABELS: Record<string, string> = {
   latest_by_group: "\u6309\u5206\u7ec4\u53d6\u6700\u65b0\u8bb0\u5f55",
   derive: "\u8ba1\u7b97\u6d3e\u751f\u5b57\u6bb5",
@@ -165,6 +174,8 @@ function summaryDescription(
   const legacyDescription = LEGACY_SUMMARY_METADATA[label]?.description;
   if (legacyDescription) return legacyDescription;
   if (!metadata) return undefined;
+  const outputDescription = SUMMARY_OUTPUT_DESCRIPTIONS[metadata.output_field];
+  if (outputDescription) return outputDescription;
   const sourceLabel = resultColumnMetadata[metadata.source_field]?.label
     ?? metadata.source_field;
   return `${label}\uff1a\u5bf9\u201c${sourceLabel}\u201d\u5b57\u6bb5\u6267\u884c${SUMMARY_FUNCTION_LABELS[metadata.function]}\u7edf\u8ba1\u3002`;
@@ -649,6 +660,10 @@ function ResultTable({
               {result.summary_metadata?.[label]?.formula && (
                 <details className="summary-explanation">
                   <summary>{"\u67e5\u770b\u5b8c\u6574\u53e3\u5f84"}</summary>
+                  <p>
+                    <strong>{"\u6307\u6807\u542b\u4e49\uff1a"}</strong>
+                    {summaryDescription(label, result.summary_metadata[label])}
+                  </p>
                   <p>
                     <strong>{"\u8ba1\u7b97\u516c\u5f0f\uff1a"}</strong>
                     <code>{result.summary_metadata[label].formula}</code>
