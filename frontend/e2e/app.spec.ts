@@ -611,7 +611,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
           baseline_sample_count: 1200,
           win_rate_lift: 0.11, confidence_lower: 0.56, confidence_upper: 0.70,
-          target_return: 0,
+          target_return: 0.05,
           trading_day_count: 120,
           cluster_standard_error: 0.04,
           lift_standard_error: 0.035,
@@ -626,7 +626,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
           baseline_sample_count: 420,
           win_rate_lift: 0.09, confidence_lower: 0.49, confidence_upper: 0.70,
-          target_return: 0,
+          target_return: 0.05,
           trading_day_count: 55,
           cluster_standard_error: 0.06,
           lift_standard_error: 0.05,
@@ -679,9 +679,12 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText("18 个盲测候选 · 通过 10% FDR", { exact: true })).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
 
-  await page.getByLabel("目标收益（%）").fill("5");
+  await expect(page.locator(".rule-card")).toContainText("收益超过 5.0%");
+  await expect(page.locator(".rule-card")).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
+
+  await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();
-  await expect(page.getByText("超过 0.0% 的概率", { exact: true })).toBeVisible();
+  await expect(page.getByText("超过 5.0% 的概率", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid > div")).toHaveCount(3);
 });
 

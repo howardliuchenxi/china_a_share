@@ -25,7 +25,7 @@ function percent(value: number, digits = 1) {
 function MetricSet({ result }: { result: BacktestResult }) {
   return (
     <div className="rule-metrics">
-      <span><small>上涨概率</small><strong>{percent(result.win_rate)}</strong></span>
+      <span><small>收益超过 {percent(result.target_return)}</small><strong>{percent(result.win_rate)}</strong></span>
       <span><small>相对基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
       <span><small>样本 / 交易日</small><strong>{result.sample_count} / {result.trading_day_count}</strong></span>
@@ -262,7 +262,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>
               </div>
-              <p className="confidence-note">验证集上涨概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
+              <p className="confidence-note">验证集收益超过 {percent(hypothesis.val_result!.target_return)} 的概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
               <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
               <p className="confidence-note">保守可信分：{hypothesis.validation_score.toFixed(3)} · 训练—验证差距：{percent(hypothesis.generalization_gap)}</p>
               <p className="confidence-note">相对基准提升检验 p-value：{hypothesis.p_value.toFixed(3)} · FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}（{hypothesis.fdr_family_size} 个盲测候选）</p>
