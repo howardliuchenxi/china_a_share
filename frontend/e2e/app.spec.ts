@@ -673,7 +673,17 @@ test("discovery page submits a bounded study and renders validation evidence", a
       }),
     });
   });
+  let statusPollCount = 0;
   await page.route("**/api/discovery/tasks/discovery-e2e", route => {
+    statusPollCount += 1;
+    if (statusPollCount === 1) {
+      void route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Temporarily unavailable" }),
+      });
+      return;
+    }
     void route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -704,6 +714,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".window-comparison")).toContainText("15.3%");
   await expect(page.locator(".window-comparison")).toContainText("180 / 120 / 86");
   await expect(page.locator(".rule-list")).toContainText("规则覆盖差距：2.9%");
+  expect(statusPollCount).toBeGreaterThanOrEqual(2);
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");

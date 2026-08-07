@@ -175,7 +175,11 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     const poll = async () => {
       try {
         const response = await fetch(`/api/discovery/tasks/${taskId}`);
-        if (!response.ok || !active) return;
+        if (!active) return;
+        if (!response.ok) {
+          timer = window.setTimeout(poll, 2000);
+          return;
+        }
         const data = await response.json() as DiscoveryTaskStatusResponse;
         setTaskStatus(data);
         if (!terminalStatuses.has(data.status)) {
