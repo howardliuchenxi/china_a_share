@@ -16,6 +16,7 @@ SEARCH_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 PAIRING_CANDIDATE_LIMIT = 24
 VALIDATION_CANDIDATE_LIMIT = 50
 VALIDATION_FDR_THRESHOLD = 0.10
+MINIMUM_SIGNIFICANCE_TRADING_DAYS = 20
 ONE_SIDED_95_Z_SCORE = 1.6448536269514722
 
 
@@ -314,6 +315,7 @@ class RuleSearchEngine:
             candidate.p_value = self._clustered_lift_tail_probability(
                 validation_result.win_rate_lift,
                 validation_result.lift_standard_error,
+                validation_result.trading_day_count,
             )
             validated.append(candidate)
         return validated
@@ -356,8 +358,11 @@ class RuleSearchEngine:
     def _clustered_lift_tail_probability(
         lift: float,
         standard_error: float,
+        trading_day_count: int,
     ) -> float:
         """Return a one-sided normal tail for date-clustered probability lift."""
+        if trading_day_count < MINIMUM_SIGNIFICANCE_TRADING_DAYS:
+            return 1.0
         if lift <= 0.0:
             return 1.0
         if standard_error <= 0.0:

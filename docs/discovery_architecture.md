@@ -98,6 +98,10 @@ Reported evidence includes:
   interval;
 - one-sided validation p-values and Benjamini-Hochberg q-values.
 
+The normal-tail significance calculation requires at least twenty independent
+validation signal dates. Shorter studies remain visible for exploration but
+receive `p = 1` and cannot pass FDR.
+
 The false-discovery family contains every frozen candidate sent to validation,
 including candidates later excluded for insufficient validation evidence. A
 rule passes validation only when training and validation lift are both positive

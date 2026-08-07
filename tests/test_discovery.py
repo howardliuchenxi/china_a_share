@@ -1461,14 +1461,32 @@ def test_validation_reason_reports_an_unevaluated_candidate():
 
 
 def test_clustered_lift_significance_remains_finite_for_large_samples():
-    probability = RuleSearchEngine._clustered_lift_tail_probability(0.06, 0.01)
+    probability = RuleSearchEngine._clustered_lift_tail_probability(
+        0.06,
+        0.01,
+        100,
+    )
 
     assert 0.0 <= probability <= 1.0
     assert probability < 0.001
 
 
 def test_clustered_lift_significance_is_conservative_without_variation():
-    probability = RuleSearchEngine._clustered_lift_tail_probability(0.10, 0.0)
+    probability = RuleSearchEngine._clustered_lift_tail_probability(
+        0.10,
+        0.0,
+        100,
+    )
+
+    assert probability == 1.0
+
+
+def test_clustered_lift_significance_is_exploratory_below_twenty_days():
+    probability = RuleSearchEngine._clustered_lift_tail_probability(
+        0.20,
+        0.01,
+        19,
+    )
 
     assert probability == 1.0
 
