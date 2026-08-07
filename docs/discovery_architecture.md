@@ -203,7 +203,8 @@ research lead, not a causal claim or a deployable trading strategy.
 `DiscoveryPage` provides the research form, polling progress, immutable task
 snapshot, factor-coverage diagnostics, validation summary, and training-ranked
 leaderboard. Every rule shows training and validation evidence side by side,
-including event, date, security, support, and label-coverage breadth.
+including the absolute rule and comparable-baseline hit rates, relative lift,
+event, date, security, support, and label-coverage breadth.
 Each card presents a localized, human-readable condition above the unchanged
 executable formula, preserving both immediate interpretation and exact auditability.
 

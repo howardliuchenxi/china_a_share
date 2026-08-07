@@ -99,6 +99,7 @@ function MetricSet({ result }: { result: BacktestResult }) {
   return (
     <div className="rule-metrics">
       <span><small>收益超过 {percent(result.target_return)}</small><strong>{percent(result.win_rate)}</strong></span>
+      <span><small>可比基准命中率</small><strong>{percent(result.baseline_win_rate)}</strong></span>
       <span><small>相对可比基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
       <span><small>收益起点</small><strong>信号日复权收盘</strong></span>
@@ -386,7 +387,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         <div className="headline-metrics">
           <div><small>训练榜首验证结论</small><strong className={topTrainingRule.validation_passed ? "metric-positive" : "metric-negative"}>{topTrainingRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>{validationPassedCount} / {leaderboard.length} 条入榜规律验证通过 · {validationReason(topTrainingRule)}</em></div>
           <div><small>超过 {percent(topTrainingRule.val_result!.target_return)} 的概率</small><strong>{percent(topTrainingRule.val_result!.win_rate)}</strong><em>HAC + {topTrainingRule.val_result!.trading_day_count} 日 score 下限：{percent(topTrainingRule.val_result!.confidence_lower)} – {percent(topTrainingRule.val_result!.confidence_upper)}</em></div>
-          <div><small>相对可比样本提升</small><strong className={topTrainingRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{topTrainingRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(topTrainingRule.val_result!.win_rate_lift)}</strong><em>95% 区间 {percent(topTrainingRule.val_result!.lift_confidence_lower)} – {percent(topTrainingRule.val_result!.lift_confidence_upper)} · 基准 N={topTrainingRule.val_result!.baseline_sample_count}</em></div>
+          <div><small>相对可比样本提升</small><strong className={topTrainingRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{topTrainingRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(topTrainingRule.val_result!.win_rate_lift)}</strong><em>95% 区间 {percent(topTrainingRule.val_result!.lift_confidence_lower)} – {percent(topTrainingRule.val_result!.lift_confidence_upper)} · 可比基准命中率 {percent(topTrainingRule.val_result!.baseline_win_rate)}（N={topTrainingRule.val_result!.baseline_sample_count}）</em></div>
           <div><small>平均未来收益</small><strong>{percent(topTrainingRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(topTrainingRule.val_result!.median_return, 2)}</em></div>
           <div><small>5% 分位收益</small><strong className={topTrainingRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(topTrainingRule.val_result!.return_p05, 2)}</strong><em>{topTrainingRule.val_result!.sample_count} / {topTrainingRule.val_result!.matched_sample_count} 个结果可观测</em></div>
           <div><small>提升检验 q-value</small><strong>{topTrainingRule.q_value.toFixed(3)}</strong><em>{topTrainingRule.fdr_family_size} 个盲测候选 · {topTrainingRule.q_value <= 0.1 ? "通过 10% BY-FDR" : "未通过 10% BY-FDR"}</em></div>

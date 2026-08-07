@@ -745,12 +745,16 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".research-config-grid")).toContainText("信号日复权收盘 → 第 20 个未来交易日复权收盘");
   await expect(page.locator(".research-config-grid")).toContainText("30 / 20 / 10");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
+  await expect(page.locator(".headline-metrics")).toContainText("可比基准命中率 51.0%");
   await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首验证结论");
   await expect(page.locator(".headline-metrics")).toContainText("2 / 2 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
   await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
+  await expect(topWindowComparison).toContainText("可比基准命中率");
+  await expect(topWindowComparison).toContainText("52.0%");
+  await expect(topWindowComparison).toContainText("51.0%");
   await expect(topWindowComparison).toContainText("信号日复权收盘");
   await expect(topWindowComparison).toContainText("可比基准标签覆盖");
   await expect(topWindowComparison).toContainText("98.5%");
