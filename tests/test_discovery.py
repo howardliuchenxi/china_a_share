@@ -1438,6 +1438,37 @@ def test_discovery_request_rejects_duplicate_factors():
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        (
+            "minimum_trading_days",
+            "Minimum trading days cannot exceed minimum samples",
+        ),
+        (
+            "minimum_securities",
+            "Minimum securities cannot exceed minimum samples",
+        ),
+    ],
+)
+def test_discovery_request_rejects_impossible_breadth_thresholds(field, message):
+    request = {
+        "target_pool": "A_SHARE",
+        "train_start": "20250101",
+        "train_end": "20251231",
+        "val_start": "20260101",
+        "val_end": "20260630",
+        "factors": ["pe_ttm"],
+        "minimum_samples": 5,
+        "minimum_trading_days": 5,
+        "minimum_securities": 5,
+    }
+    request[field] = 6
+
+    with pytest.raises(ValueError, match=message):
+        DiscoveryTaskRequest(**request)
+
+
 def test_discovery_request_accepts_a_percentage_point_return_target():
     request = DiscoveryTaskRequest(
         target_pool="A_SHARE",
@@ -1545,6 +1576,7 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
             forward_days=5,
             minimum_samples=5,
             minimum_trading_days=5,
+            minimum_securities=5,
         ),
         created_at=now,
         updated_at=now,

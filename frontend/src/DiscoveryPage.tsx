@@ -220,8 +220,8 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             <label><span>未来交易日</span><input type="number" min="1" max="60" value={forwardDays} onChange={event => setForwardDays(Number(event.target.value))} /></label>
             <label><span>目标收益（%）</span><input type="number" min="-100" max="1000" step="0.5" value={targetReturnPct} onChange={event => setTargetReturnPct(Number(event.target.value))} /></label>
             <label><span>最小样本数</span><input type="number" min="5" max="10000" value={minimumSamples} onChange={event => setMinimumSamples(Number(event.target.value))} /></label>
-            <label><span>最少交易日</span><input type="number" min="2" max="1000" value={minimumTradingDays} onChange={event => setMinimumTradingDays(Number(event.target.value))} /></label>
-            <label><span>最少证券数</span><input type="number" min="2" max="1000" value={minimumSecurities} onChange={event => setMinimumSecurities(Number(event.target.value))} /></label>
+            <label><span>最少交易日</span><input type="number" min="2" max={minimumSamples} value={minimumTradingDays} onChange={event => setMinimumTradingDays(Number(event.target.value))} /></label>
+            <label><span>最少证券数</span><input type="number" min="2" max={minimumSamples} value={minimumSecurities} onChange={event => setMinimumSecurities(Number(event.target.value))} /></label>
             <label><span>最低标签覆盖（%）</span><input type="number" min="50" max="100" step="1" value={minimumOutcomeCoveragePct} onChange={event => setMinimumOutcomeCoveragePct(Number(event.target.value))} /></label>
             <label><span>最多条件数</span><select value={maxConditions} onChange={event => setMaxConditions(Number(event.target.value))}><option value={1}>1 个</option><option value={2}>2 个</option></select></label>
           </div>

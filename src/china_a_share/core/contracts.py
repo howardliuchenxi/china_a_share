@@ -1089,6 +1089,14 @@ class DiscoveryTaskRequest(BaseModel):
             raise ValueError("Validation start must not be after validation end.")
         if val_start <= train_end:
             raise ValueError("Validation window must start after the training window.")
+        if self.minimum_trading_days > self.minimum_samples:
+            raise ValueError(
+                "Minimum trading days cannot exceed minimum samples."
+            )
+        if self.minimum_securities > self.minimum_samples:
+            raise ValueError(
+                "Minimum securities cannot exceed minimum samples."
+            )
         if not self.factors:
             raise ValueError("At least one discovery factor is required.")
         if len(self.factors) != len(set(self.factors)):

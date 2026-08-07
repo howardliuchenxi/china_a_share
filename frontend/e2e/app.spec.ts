@@ -684,6 +684,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
 
   await expect(page.getByRole("heading", { name: "从历史数据反向发现规律" })).toBeVisible();
   await expect(page.getByText(/24 个配对席位会先覆盖所有存在有效候选的因子/)).toBeVisible();
+  await expect(page.getByLabel("最少交易日")).toHaveAttribute("max", "30");
+  await expect(page.getByLabel("最少证券数")).toHaveAttribute("max", "30");
   await page.getByRole("button", { name: "开始反向搜索" }).click();
 
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
