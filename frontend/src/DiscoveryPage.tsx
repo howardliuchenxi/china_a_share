@@ -230,7 +230,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </fieldset>
           {submitError && <p className="discovery-error" role="alert">{submitError}</p>}
           <div className="discovery-submit-row">
-            <p>搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；配对池先覆盖不同因子，再补充反方向条件，相同训练样本的规则只保留排名最高者。</p>
+            <p>搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；候选按“相对基准提升 − 单侧 95% 不确定性惩罚”排序，配对池先覆盖不同因子，再补充反方向条件，相同训练样本的规则只保留排名最高者。</p>
             <button type="submit" disabled={isSubmitting || taskStatus?.status === "running"}>{isSubmitting ? "正在提交…" : taskStatus?.status === "running" ? "研究进行中" : "开始反向搜索"}</button>
           </div>
         </form>
@@ -289,7 +289,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
               <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>带入分析页</button></div></div>
-              <p>该条件由训练窗口分位阈值生成并完成排名锁定，随后进入独立验证，验证结果未参与重新排序。</p>
+              <p>该条件由训练窗口分位阈值生成，按扣除单侧 95% 不确定性惩罚后的相对提升完成排名锁定，随后进入独立验证，验证结果未参与重新排序。</p>
               <div className="window-comparison">
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>

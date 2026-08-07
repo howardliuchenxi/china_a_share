@@ -831,12 +831,46 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     assert all(candidate.train_result.sample_count >= 4 for candidate in candidates)
     assert all(candidate.val_result is not None for candidate in candidates)
     training_scores = [
-        candidate.train_result.confidence_lower
-        + candidate.train_result.win_rate_lift
+        candidate.train_result.win_rate_lift
+        - 1.6448536269514722
+        * candidate.train_result.lift_standard_error
         for candidate in candidates
     ]
     assert training_scores == sorted(training_scores, reverse=True)
     assert all(candidate.generalization_gap >= 0 for candidate in candidates)
+
+
+def test_training_rank_penalizes_uncertain_lift():
+    precise = FactorHypothesis(
+        formula="value >= 1",
+        description="Precise rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.01,
+            max_drawdown=0.0,
+            eval_time_ms=0,
+            win_rate_lift=0.08,
+            lift_standard_error=0.01,
+        ),
+    )
+    uncertain = FactorHypothesis(
+        formula="value >= 2",
+        description="Uncertain rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.70,
+            mean_return=0.02,
+            max_drawdown=0.0,
+            eval_time_ms=0,
+            win_rate_lift=0.12,
+            lift_standard_error=0.05,
+        ),
+    )
+
+    assert RuleSearchEngine._training_rank_key(precise) > (
+        RuleSearchEngine._training_rank_key(uncertain)
+    )
 
 
 def test_rule_search_ignores_non_finite_factor_values():

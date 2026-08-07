@@ -332,9 +332,13 @@ class RuleSearchEngine:
 
     @staticmethod
     def _training_rank_key(candidate: FactorHypothesis) -> tuple[float, float]:
-        """Prefer robust training hit-rate evidence, then mean return."""
+        """Prefer conservative training lift, then mean return."""
         result = candidate.train_result
-        return result.confidence_lower + result.win_rate_lift, result.mean_return
+        conservative_lift = (
+            result.win_rate_lift
+            - ONE_SIDED_95_Z_SCORE * result.lift_standard_error
+        )
+        return conservative_lift, result.mean_return
 
     @staticmethod
     def _clustered_lift_tail_probability(
