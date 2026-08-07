@@ -22,6 +22,28 @@ MAX_ANALYSIS_IMAGE_BASE64_LENGTH = 4 * ((MAX_ANALYSIS_IMAGE_BYTES + 2) // 3)
 DATA_CACHE_SCHEMA_VERSION = 4
 PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9_-]*$"
 OPERATION_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
+DISCOVERY_FACTOR_FIELDS = {
+    "amount",
+    "circ_mv",
+    "close",
+    "dv_ratio",
+    "dv_ttm",
+    "float_share",
+    "free_share",
+    "open",
+    "pb",
+    "pct_chg",
+    "pe",
+    "pe_ttm",
+    "ps",
+    "ps_ttm",
+    "total_mv",
+    "total_share",
+    "turnover_rate",
+    "turnover_rate_f",
+    "vol",
+    "volume_ratio",
+}
 
 
 class AnalysisStatus(str, Enum):
@@ -1037,6 +1059,11 @@ class DiscoveryTaskRequest(BaseModel):
             raise ValueError("Validation window must start after the training window.")
         if not self.factors:
             raise ValueError("At least one discovery factor is required.")
+        unsupported_factors = sorted(set(self.factors) - DISCOVERY_FACTOR_FIELDS)
+        if unsupported_factors:
+            raise ValueError(
+                "Unsupported discovery factors: " + ", ".join(unsupported_factors)
+            )
         return self
 
 

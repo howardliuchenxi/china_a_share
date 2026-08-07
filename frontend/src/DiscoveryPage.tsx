@@ -11,6 +11,12 @@ interface DiscoveryPageProps {
 }
 
 const terminalStatuses = new Set(["succeeded", "failed"]);
+const discoveryFactorFields = new Set([
+  "amount", "circ_mv", "close", "dv_ratio", "dv_ttm", "float_share",
+  "free_share", "open", "pb", "pct_chg", "pe", "pe_ttm", "ps",
+  "ps_ttm", "total_mv", "total_share", "turnover_rate",
+  "turnover_rate_f", "vol", "volume_ratio",
+]);
 
 function percent(value: number, digits = 1) {
   return `${(value * 100).toFixed(digits)}%`;
@@ -49,7 +55,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [showAllFactors, setShowAllFactors] = useState(false);
 
   const availableFactors = DATA_DICTIONARY_ENTRIES.filter(entry =>
-    !["ts_code", "name", "trade_date", "end_date", "ann_date", "calculation_status"].includes(entry.field),
+    discoveryFactorFields.has(entry.field),
   );
   const bestRule = taskStatus?.progress.leaderboard[0] ?? null;
 

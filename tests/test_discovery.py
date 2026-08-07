@@ -183,6 +183,18 @@ def test_discovery_request_rejects_overlapping_training_and_validation_windows()
         )
 
 
+def test_discovery_request_rejects_factors_outside_the_research_dataset():
+    with pytest.raises(ValueError, match="Unsupported discovery factors: revenue"):
+        DiscoveryTaskRequest(
+            target_pool="A_SHARE",
+            train_start="20250101",
+            train_end="20251231",
+            val_start="20260101",
+            val_end="20260630",
+            factors=["pe_ttm", "revenue"],
+        )
+
+
 def test_memory_store_preserves_extended_discovery_request():
     store = MemoryAnalysisTaskStore()
     now = datetime.now(timezone.utc)
