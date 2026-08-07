@@ -499,6 +499,56 @@ def test_research_dataset_excludes_b_shares_before_adjustment_validation():
     assert dataset["forward_return"].tolist() == pytest.approx([0.10])
 
 
+def test_research_dataset_rejects_a_session_containing_only_b_shares():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [{"ts_code": "200001.SZ", "pe_ttm": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            date: [{"ts_code": "200001.SZ", "close": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            date: [{"ts_code": "200001.SZ", "adj_factor": 1.0}]
+            for date in ["20260105", "20260106"]
+        },
+    )
+
+    with pytest.raises(ValueError, match="No A-share daily data"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
+def test_research_dataset_rejects_missing_adjustment_fields():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [{"ts_code": "000001.SZ", "pe_ttm": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            date: [{"ts_code": "000001.SZ", "close": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            date: [{"ts_code": "000001.SZ"}]
+            for date in ["20260105", "20260106"]
+        },
+    )
+
+    with pytest.raises(ValueError, match="Missing adj_factor fields"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
 @pytest.mark.parametrize(
     ("code", "expected"),
     [
@@ -688,6 +738,11 @@ def test_rule_evaluation_does_not_claim_precision_from_one_trading_day():
     assert result.trading_day_count == 1
     assert result.confidence_lower == 0.0
     assert result.confidence_upper == 1.0
+    assert result.cluster_standard_error == 0.0
+
+
+def test_hac_standard_error_is_zero_for_one_cluster():
+    assert FactorBacktester._hac_standard_error(pd.Series([0.10]), 1) == 0.0
 
 
 @pytest.mark.parametrize(
@@ -825,6 +880,17 @@ def test_rule_search_deduplicates_equivalent_discrete_thresholds():
         for formula, _ in conditions
     ]
     assert len(selected_sets) == len(set(selected_sets))
+
+
+def test_rule_search_ignores_missing_and_constant_factors():
+    dataset = pd.DataFrame({"constant": [1.0, 1.0]})
+
+    conditions = RuleSearchEngine(min_sample_count=2)._build_conditions(
+        dataset,
+        ["missing", "constant"],
+    )
+
+    assert conditions == []
 
 
 def test_rule_search_deduplicates_thresholds_after_formula_rounding():
@@ -1126,6 +1192,24 @@ def test_false_discovery_rate_counts_ineligible_validation_candidates():
         [0.10, 0.20]
     )
     assert all(candidate.fdr_family_size == 10 for candidate in candidates)
+
+
+def test_false_discovery_rate_rejects_an_incomplete_test_family():
+    candidates = [
+        FactorHypothesis(
+            formula=f"value >= {index}",
+            description="Test rule",
+            reasoning="Test evidence",
+            p_value=0.01,
+        )
+        for index in range(2)
+    ]
+
+    with pytest.raises(ValueError, match="FDR family cannot be smaller"):
+        RuleSearchEngine._apply_false_discovery_rate(
+            candidates,
+            family_size=1,
+        )
 
 
 @pytest.mark.parametrize(
