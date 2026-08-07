@@ -91,6 +91,7 @@ class FactorBacktester:
             future_prices,
             on=["ts_code", "future_trade_date"],
             how="left",
+            validate="many_to_one",
         )
         panel["forward_return"] = (
             panel["future_adjusted_close"] / panel["adjusted_close"] - 1.0
@@ -263,11 +264,29 @@ class FactorBacktester:
         )
         if result.status != QueryStatus.SUCCESS:
             raise ValueError("Discovery trading calendar could not be loaded.")
-        return sorted(
+        trade_dates = [
             str(row["cal_date"])
             for row in result.rows
             if str(row.get("is_open", "1")) in {"1", "1.0"}
-        )
+        ]
+        for trade_date in trade_dates:
+            if (
+                len(trade_date) != 8
+                or not trade_date.isdigit()
+                or not start_date <= trade_date <= end_date
+            ):
+                raise ValueError(
+                    f"Invalid discovery trading date: {trade_date}."
+                )
+            try:
+                datetime.strptime(trade_date, "%Y%m%d")
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid discovery trading date: {trade_date}."
+                ) from exc
+        if len(trade_dates) != len(set(trade_dates)):
+            raise ValueError("Discovery trading calendar contains duplicate dates.")
+        return sorted(trade_dates)
 
     def _fetch_session(
         self,

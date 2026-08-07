@@ -327,6 +327,56 @@ def test_research_dataset_fails_when_a_required_session_is_missing():
         )
 
 
+def test_research_dataset_rejects_duplicate_trading_calendar_dates():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106", "20260106"],
+        {
+            date: [{"ts_code": "000001.SZ", "pe_ttm": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            date: [{"ts_code": "000001.SZ", "close": 10.0}]
+            for date in ["20260105", "20260106"]
+        },
+    )
+
+    with pytest.raises(ValueError, match="contains duplicate dates"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
+def test_research_dataset_rejects_invalid_trading_calendar_dates():
+    class InvalidCalendarExecutor(FakeQueryExecutor):
+        def execute(self, query, *, api_route, request_id):
+            if query.operation == "trade_cal":
+                return QueryResult(
+                    query_id=query.query_id,
+                    provider="fake",
+                    operation=query.operation,
+                    status=QueryStatus.SUCCESS,
+                    columns=["cal_date", "is_open"],
+                    rows=[{"cal_date": "20260199", "is_open": "1"}],
+                    row_count=1,
+                )
+            return super().execute(
+                query,
+                api_route=api_route,
+                request_id=request_id,
+            )
+
+    executor = InvalidCalendarExecutor([], {}, {})
+
+    with pytest.raises(ValueError, match="Invalid discovery trading date"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260105",
+            forward_days=1,
+        )
+
+
 def test_research_dataset_rejects_duplicate_security_rows():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],
