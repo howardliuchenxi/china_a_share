@@ -348,9 +348,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </label>
           <div className="discovery-settings-grid">
             <label><span>训练开始</span><input value={trainStart} onChange={event => setTrainStart(event.target.value)} inputMode="numeric" /></label>
-            <label><span>训练结束</span><input value={trainEnd} onChange={event => setTrainEnd(event.target.value)} inputMode="numeric" /></label>
+            <label><span>训练信号结束</span><input value={trainEnd} onChange={event => setTrainEnd(event.target.value)} inputMode="numeric" /></label>
             <label><span>验证开始</span><input value={valStart} onChange={event => setValStart(event.target.value)} inputMode="numeric" /></label>
-            <label><span>验证结束</span><input value={valEnd} onChange={event => setValEnd(event.target.value)} inputMode="numeric" /></label>
+            <label><span>验证信号结束</span><input value={valEnd} onChange={event => setValEnd(event.target.value)} inputMode="numeric" /></label>
             <label><span>未来交易日</span><input type="number" min="1" max="60" value={forwardDays} onChange={event => setForwardDays(Number(event.target.value))} /></label>
             <label><span>目标收益（%）</span><input type="number" min="-100" max="1000" step="0.5" value={targetReturnPct} onChange={event => setTargetReturnPct(Number(event.target.value))} /></label>
             <label><span>最小样本数</span><input type="number" min="5" max="10000" value={minimumSamples} onChange={event => setMinimumSamples(Number(event.target.value))} /></label>
@@ -359,6 +359,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             <label><span>最低标签覆盖（%）</span><input type="number" min="50" max="100" step="1" value={minimumOutcomeCoveragePct} onChange={event => setMinimumOutcomeCoveragePct(Number(event.target.value))} /></label>
             <label><span>最多条件数</span><select value={maxConditions} onChange={event => setMaxConditions(Number(event.target.value))}><option value={1}>1 个</option><option value={2}>2 个</option></select></label>
           </div>
+          <p className="research-caveat">训练与验证的结束日期都是最后一个信号日，不是未来收益结算日。验证信号结束后必须已经产生至少 {forwardDays} 个真实交易日的行情，才能完整计算所选未来收益周期；系统不会自动缩短窗口或用尚未发生的价格填充结果。</p>
           <fieldset className="factor-selector">
             <legend>候选因子 <strong>{factors.length}</strong></legend>
             <div className="factor-selector-actions">

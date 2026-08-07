@@ -743,6 +743,10 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByRole("heading", { name: "从历史数据反向发现规律" })).toBeVisible();
   await expect(page.getByText("未来标签隔离", { exact: true })).toBeVisible();
   await expect(page.getByText(/信号日复权收盘到未来交易日复权收盘的事件收益/)).toBeVisible();
+  await expect(page.getByLabel("训练信号结束")).toHaveValue("20251231");
+  await expect(page.getByLabel("验证信号结束")).toHaveValue("20260630");
+  await expect(page.getByText(/验证信号结束后必须已经产生至少 20 个真实交易日的行情/)).toBeVisible();
+  await expect(page.getByText(/不会自动缩短窗口或用尚未发生的价格填充结果/)).toBeVisible();
   await expect(page.locator(".factor-grid")).toContainText("近3日上涨天数");
   await expect(page.locator(".factor-grid")).toContainText("复权5日收益率");
   await expect(page.locator(".factor-grid")).toContainText("复权5日波动率");

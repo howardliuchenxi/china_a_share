@@ -1023,9 +1023,14 @@ class DiscoveryTaskRequest(BaseModel):
 
     target_pool: Literal["A_SHARE"] = Field(description="Validated research universe.")
     train_start: str = Field(description="Start date for training (YYYYMMDD).")
-    train_end: str = Field(description="End date for training (YYYYMMDD).")
+    train_end: str = Field(description="Last training signal date (YYYYMMDD).")
     val_start: str = Field(description="Start date for validation blind test (YYYYMMDD).")
-    val_end: str = Field(description="End date for validation blind test (YYYYMMDD).")
+    val_end: str = Field(
+        description=(
+            "Last validation signal date (YYYYMMDD); the requested forward-return "
+            "horizon must already have settled after this date."
+        )
+    )
     factors: List[str] = Field(description="Selected base factor fields to use.", default_factory=list)
     prompt: str = Field(
         description="Optional research note stored with the deterministic request.",
@@ -1125,9 +1130,14 @@ class DiscoveryResearchConfig(BaseModel):
         description="Validated research universe."
     )
     train_start: str = Field(description="Training-window start date (YYYYMMDD).")
-    train_end: str = Field(description="Training-window end date (YYYYMMDD).")
+    train_end: str = Field(description="Last training-window signal date (YYYYMMDD).")
     val_start: str = Field(description="Validation-window start date (YYYYMMDD).")
-    val_end: str = Field(description="Validation-window end date (YYYYMMDD).")
+    val_end: str = Field(
+        description=(
+            "Last validation-window signal date (YYYYMMDD), before the separate "
+            "forward-return settlement horizon."
+        )
+    )
     factors: List[str] = Field(description="Requested factor fields in search order.")
     forward_days: int = Field(description="Trading-session forward-return horizon.")
     target_return_pct: float = Field(
