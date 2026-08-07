@@ -515,6 +515,18 @@ def test_pipeline_matches_another_source_and_summarizes_a_parameterized_streak()
         "Event count": 1,
         "Probability (%)": 100.0,
     }
+    assert result.summary_metadata["Event count"].model_dump() == {
+        "output_field": "event_count",
+        "source_field": "next_up",
+        "function": "count",
+        "value_format": "number",
+    }
+    assert result.summary_metadata["Probability (%)"].model_dump() == {
+        "output_field": "probability_pct",
+        "source_field": "next_up_pct",
+        "function": "mean",
+        "value_format": "percentage_points",
+    }
 
 
 @pytest.mark.parametrize("streak_length", [3, 4, 5])

@@ -190,6 +190,17 @@ export interface QueryResult {
   row_count: number;
   /** Controlled local counts calculated from this result. */
   summary: Record<string, number | null>;
+  /** Calculation and formatting semantics keyed by summary entry label. */
+  summary_metadata?: Record<string, {
+    /** Stable machine-readable field containing the summary value. */
+    output_field: string;
+    /** Input field aggregated to produce the summary value. */
+    source_field: string;
+    /** Aggregation applied to the source field. */
+    function: "count" | "sum" | "mean" | "min" | "max";
+    /** Formatting and scaling semantics for the numeric value. */
+    value_format: "number" | "percentage_points" | "ratio";
+  }>;
   /** Upstream error details when this query failed. */
   error: ServiceError | null;
 }

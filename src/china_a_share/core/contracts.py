@@ -748,6 +748,29 @@ class ServiceError(BaseModel):
     )
 
 
+class SummaryMetricMetadata(BaseModel):
+    """Calculation and display semantics for one summary metric."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    output_field: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Stable machine-readable field containing the summary value.",
+    )
+    source_field: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Input field aggregated to produce the summary value.",
+    )
+    function: Literal["count", "sum", "mean", "min", "max"] = Field(
+        description="Aggregation applied to the source field.",
+    )
+    value_format: Literal["number", "percentage_points", "ratio"] = Field(
+        description="Formatting and scaling semantics for the numeric value.",
+    )
+
+
 class QueryResult(BaseModel):
     """Normalized table result or provider error for one data query."""
 
@@ -789,6 +812,10 @@ class QueryResult(BaseModel):
             "Local counts or rates requested by the validated query plan; null "
             "means the value is not computable from an empty valid sample."
         ),
+    )
+    summary_metadata: Dict[str, SummaryMetricMetadata] = Field(
+        default_factory=dict,
+        description="Display and calculation metadata for each summary entry.",
     )
     error: Optional[ServiceError] = Field(
         default=None,

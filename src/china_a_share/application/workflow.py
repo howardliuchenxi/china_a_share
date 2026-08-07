@@ -21,6 +21,7 @@ from china_a_share.core.contracts import (
     ServiceError,
     ResultPipeline,
     ResultPipelineStep,
+    SummaryMetricMetadata,
 )
 from china_a_share.core.errors import DataProviderError, PlannerError, VisionError
 from china_a_share.core.ports import MarketDataProvider, QueryPlanner, VisionAnalyzer
@@ -508,6 +509,15 @@ class DataQueryExecutor:
                 rows=safe_frame.to_dict(orient="records"),
                 row_count=len(safe_frame),
                 summary=summary,
+                summary_metadata={
+                    aggregation.label: SummaryMetricMetadata(
+                        output_field=aggregation.field,
+                        source_field=aggregation.field,
+                        function="count",
+                        value_format="number",
+                    )
+                    for aggregation in query.aggregations
+                },
             )
 
         except DataProviderError as exc:

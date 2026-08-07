@@ -85,7 +85,7 @@ const NON_MONETARY_FINANCIAL_FIELDS = new Set([
 const IDENTIFIER_COLUMN_PATTERN = /(^|_)(code|date|year|month|type|status|flag|count|num)$/;
 const PERCENT_COLUMN_PATTERN = /(^pct_|_pct$|_pct_|_ratio$|_rate$|_yield$)/;
 
-const SUMMARY_METADATA: Record<
+const LEGACY_SUMMARY_METADATA: Record<
   string,
   { label: string; description: string; percentage?: "value" | "ratio" }
 > = {
@@ -119,11 +119,43 @@ const SUMMARY_METADATA: Record<
   },
 };
 
-function formatSummaryValue(label: string, value: number | null): string {
+const SUMMARY_FUNCTION_LABELS = {
+  count: "\u8ba1\u6570",
+  sum: "\u6c42\u548c",
+  mean: "\u5e73\u5747\u503c",
+  min: "\u6700\u5c0f\u503c",
+  max: "\u6700\u5927\u503c",
+} as const;
+
+function summaryDescription(
+  label: string,
+  metadata: NonNullable<QueryResult["summary_metadata"]>[string] | undefined,
+): string | undefined {
+  const legacyDescription = LEGACY_SUMMARY_METADATA[label]?.description;
+  if (legacyDescription) return legacyDescription;
+  if (!metadata) return undefined;
+  const sourceLabel = resultColumnMetadata[metadata.source_field]?.label
+    ?? metadata.source_field;
+  return `${label}\uff1a\u5bf9\u201c${sourceLabel}\u201d\u5b57\u6bb5\u6267\u884c${SUMMARY_FUNCTION_LABELS[metadata.function]}\u7edf\u8ba1\u3002`;
+}
+
+function formatSummaryValue(
+  label: string,
+  value: number | null,
+  metadata: NonNullable<QueryResult["summary_metadata"]>[string] | undefined,
+): string {
   if (value === null) return "\u4e0d\u53ef\u8ba1\u7b97";
-  const percentage = SUMMARY_METADATA[label]?.percentage;
-  if (percentage === "ratio") return `${(value * 100).toFixed(2)}%`;
-  if (percentage === "value") return `${value.toFixed(2)}%`;
+  const valueFormat = metadata?.value_format;
+  const legacyPercentage = LEGACY_SUMMARY_METADATA[label]?.percentage;
+  if (valueFormat === "ratio" || (!valueFormat && legacyPercentage === "ratio")) {
+    return `${(value * 100).toFixed(2)}%`;
+  }
+  if (
+    valueFormat === "percentage_points"
+    || (!valueFormat && legacyPercentage === "value")
+  ) {
+    return `${value.toFixed(2)}%`;
+  }
   return value.toLocaleString("zh-CN");
 }
 
@@ -500,15 +532,15 @@ function ResultTable({
           {Object.entries(result.summary).map(([label, value]) => (
             <div key={label}>
               <dt>
-                <span>{SUMMARY_METADATA[label]?.label ?? label}</span>
-                {SUMMARY_METADATA[label] && (
+                <span>{LEGACY_SUMMARY_METADATA[label]?.label ?? label}</span>
+                {summaryDescription(label, result.summary_metadata?.[label]) && (
                   <TermHelp
-                    label={SUMMARY_METADATA[label].label}
-                    description={SUMMARY_METADATA[label].description}
+                    label={LEGACY_SUMMARY_METADATA[label]?.label ?? label}
+                    description={summaryDescription(label, result.summary_metadata?.[label])!}
                   />
                 )}
               </dt>
-              <dd>{formatSummaryValue(label, value)}</dd>
+              <dd>{formatSummaryValue(label, value, result.summary_metadata?.[label])}</dd>
             </div>
           ))}
         </dl>
@@ -1347,6 +1379,7 @@ export default function App() {
               const combinedRows = group.results!.flatMap((r) => r.rows);
               const combinedRowCount = group.results!.reduce((sum, r) => sum + r.row_count, 0);
               const combinedSummary: Record<string, number | null> = {};
+              const combinedSummaryMetadata: NonNullable<QueryResult["summary_metadata"]> = {};
               for (const r of group.results!) {
                 for (const [key, val] of Object.entries(r.summary)) {
                   if (val === null) {
@@ -1357,6 +1390,7 @@ export default function App() {
                     combinedSummary[key] = (combinedSummary[key] || 0) + val;
                   }
                 }
+                Object.assign(combinedSummaryMetadata, r.summary_metadata);
               }
               const virtualResult: QueryResult = {
                 query_id: group.key,
@@ -1367,6 +1401,7 @@ export default function App() {
                 rows: combinedRows,
                 row_count: combinedRowCount,
                 summary: combinedSummary,
+                summary_metadata: combinedSummaryMetadata,
                 error: null,
               };
               return (

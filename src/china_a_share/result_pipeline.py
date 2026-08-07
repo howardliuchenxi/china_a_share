@@ -11,6 +11,7 @@ from china_a_share.core.contracts import (
     QueryStatus,
     ResultPipeline,
     ResultPipelineStep,
+    SummaryMetricMetadata,
 )
 
 
@@ -66,6 +67,17 @@ class ResultPipelineExecutor:
                 )
                 for aggregation in summarize_step.aggregations
             }
+        summary_metadata = {}
+        if summarize_step is not None:
+            summary_metadata = {
+                aggregation.label or aggregation.output_field: SummaryMetricMetadata(
+                    output_field=aggregation.output_field,
+                    source_field=aggregation.field,
+                    function=aggregation.function,
+                    value_format=self._summary_value_format(aggregation.output_field),
+                )
+                for aggregation in summarize_step.aggregations
+            }
         return QueryResult(
             query_id=pipeline.output_query_id,
             provider=source.provider,
@@ -75,7 +87,17 @@ class ResultPipelineExecutor:
             rows=rows,
             row_count=len(rows),
             summary=summary,
+            summary_metadata=summary_metadata,
         )
+
+    @staticmethod
+    def _summary_value_format(output_field: str) -> str:
+        """Return explicit value semantics for common metric naming contracts."""
+        if output_field.endswith("_pct"):
+            return "percentage_points"
+        if output_field.endswith("_ratio"):
+            return "ratio"
+        return "number"
 
     def _validate_result_invariants(
         self,
