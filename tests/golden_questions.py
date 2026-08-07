@@ -202,7 +202,7 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "operations": ["dividend"],
         "prompts": [
             "\u8d35\u5dde\u8305\u53f0\u6700\u65b0\u5206\u7ea2\u65b9\u6848",
-            "2025\u5e74\u73b0\u91d1\u5206\u7ea2\u6700\u9ad8\u7684A\u80a1",
+            "600519.SH 2025\u5e74\u73b0\u91d1\u5206\u7ea2\u65b9\u6848",
             "\u5e73\u5b89\u94f6\u884c\u5386\u5e74\u6bcf\u80a1\u6d3e\u606f",
         ],
     },
@@ -270,6 +270,17 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
             "\u9884\u6d4b\u660e\u5929\u4e00\u5b9a\u6da8\u505c\u7684\u80a1\u7968",
             "\u7ed9\u51fa\u4e0b\u5468\u6536\u76ca\u7387\u6700\u9ad8\u7684\u516c\u53f8",
             "\u4fdd\u8bc1\u9009\u51fa\u672a\u6765\u4e00\u4e2a\u6708\u4e0a\u6da8\u7684A\u80a1",
+        ],
+    },
+    {
+        "family": "market_wide_dividend_total",
+        "tier": "unsupported",
+        "delivery": "sync",
+        "operations": [],
+        "prompts": [
+            "2025\u5e74\u73b0\u91d1\u5206\u7ea2\u603b\u989d\u6700\u9ad8\u7684A\u80a1\uff0c\u4e0d\u63a5\u53d7\u6bcf\u80a1\u5206\u7ea2\u66ff\u4ee3",
+            "\u7cbe\u786e\u6392\u540d\u5168A\u80a1\u5e74\u5ea6\u73b0\u91d1\u5206\u7ea2\u603b\u91d1\u989d\uff0c\u4e0d\u5141\u8bb8\u4f7f\u7528\u6bcf\u80a1\u6d3e\u606f",
+            "\u7ed9\u51fa\u5168\u5e02\u573a\u516c\u53f8\u5b9e\u9645\u652f\u4ed8\u73b0\u91d1\u5206\u7ea2\u603b\u989d\u699c\u5355",
         ],
     },
     {

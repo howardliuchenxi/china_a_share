@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date, datetime
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
@@ -424,6 +425,51 @@ def test_limit_up_analysis_requires_the_native_limit_list():
         )
 
 
+def test_future_performance_request_cannot_be_marked_supported():
+    plan = make_daily_plan()
+
+    with pytest.raises(
+        PlanValidationError,
+        match="Future price or return rankings are not supported",
+    ):
+        AnalysisService._validate_planned_time_semantics(
+            plan,
+            "给出下周收益率最高的公司",
+        )
+
+
+def test_current_day_prompt_receives_a_trusted_completed_trading_date():
+    provider = FakeMarketDataProvider(frame=pd.DataFrame())
+    service = AnalysisService(
+        Mock(),
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+
+    enriched = service._append_resolved_time_range(
+        "request-current-day",
+        "今天A股上涨、下跌和平盘各有多少只？",
+    )
+
+    assert "<trusted_analysis_window>" in enriched
+    start = re.search(r"event_start_date=(\d{8})", enriched)
+    end = re.search(r"event_end_date=(\d{8})", enriched)
+    assert start is not None
+    assert end is not None
+    assert start.group(1) == end.group(1)
+
+
+def test_dividend_rejects_non_native_provider_parameters():
+    validator = ASharePlanValidator(FakeMarketDataProvider())
+
+    with pytest.raises(
+        PlanValidationError,
+        match="dividend uses unsupported provider parameters: year",
+    ):
+        validator._validate_params("dividend", {"year": 2025})
+
+
 def test_planner_parses_deepseek_json_plan():
     plan = make_daily_plan()
     session = FakeSession(
@@ -446,6 +492,9 @@ def test_planner_parses_deepseek_json_plan():
     assert "Preserve every numeric value" in system_prompt
     assert "rolling_sum" in system_prompt
     assert "match_source" in system_prompt
+    assert "\u4e2d\u56fd\u5e73\u5b89 is 601318.SH" in system_prompt
+    assert "full-market request as a fan-out template" in system_prompt
+    assert "return separate query results unless" in system_prompt
 
 
 def test_planner_retries_one_contract_invalid_response():
@@ -472,6 +521,34 @@ def test_planner_retries_one_contract_invalid_response():
     assert "previous query plan was rejected" in retry_messages[-1]["content"]
     assert "violates the contract" in retry_messages[-1]["content"]
     assert "invalid JSON at line 1, column 20" in retry_messages[-1]["content"]
+
+
+def test_planner_normalizes_null_pipeline_collections_to_defaults():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["result_pipeline"] = {
+        "source_query_id": "market_direction",
+        "output_query_id": "sorted",
+        "steps": [
+            {
+                "operation": "sort",
+                "field": "change",
+                "join_on": None,
+                "fields": None,
+                "group_by": None,
+                "aggregations": None,
+            }
+        ],
+    }
+
+    result = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+        json.dumps(plan)
+    )
+
+    step = result.result_pipeline.steps[0]
+    assert step.join_on == []
+    assert step.fields == []
+    assert step.group_by == []
+    assert step.aggregations == []
 
 
 def test_planner_retries_with_field_level_contract_feedback():
@@ -2011,6 +2088,20 @@ def test_executor_filters_numeric_rows_and_excludes_missing_values():
     assert result.row_count == 2
     assert [row["ts_code"] for row in result.rows] == ["000001.SZ", "000009.SZ"]
     assert all(row["pe"] <= 10 for row in result.rows)
+
+
+def test_executor_preserves_requested_columns_for_an_empty_result():
+    result = DataQueryExecutor(
+        FakeMarketDataProvider(frame=pd.DataFrame())
+    ).execute(
+        make_daily_plan().queries[0],
+        api_route="/api/analysis",
+        request_id="request-empty",
+    )
+
+    assert result.status == "success"
+    assert result.rows == []
+    assert result.columns == ["ts_code", "change"]
 
 
 def test_validator_rejects_filter_field_missing_from_requested_fields():

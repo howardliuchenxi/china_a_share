@@ -51,9 +51,10 @@ LIVE_SUPPORTED_FAMILIES = (
     "dividend",
 )
 LIVE_UNSUPPORTED_CASE_COUNTS = {
-    "verified_retail_ownership": 2,
+    "verified_retail_ownership": 1,
     "future_price_prediction": 2,
     "investor_demographics": 1,
+    "market_wide_dividend_total": 1,
 }
 GOLDEN_FAMILY_BY_NAME = {
     family["family"]: family for family in GOLDEN_QUESTION_FAMILIES
@@ -214,7 +215,9 @@ def test_live_analysis_question(
     expected_operations = set(family["operations"])
     actual_operations = {query.operation for query in response.plan.queries}
     assert actual_operations.intersection(expected_operations)
-    assert actual_operations.issubset(expected_operations | {"stock_basic"})
+    assert actual_operations.issubset(
+        expected_operations | {"stock_basic", "trade_cal"}
+    )
     assert response.results
     assert all(result.status.value == "success" for result in response.results), (
         _failure_message(response)

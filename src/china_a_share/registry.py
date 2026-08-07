@@ -71,6 +71,16 @@ CORE_OPERATION_GUIDANCE = {
         "up_stat, limit_times, and limit. The returned row count is the number of "
         "matching securities; do not create a conditional count over ts_code."
     ),
+    "dividend": (
+        "A-share dividend disclosures. Native parameters are ts_code, ann_date, "
+        "record_date, ex_date, and imp_ann_date; year, start_date, and end_date "
+        "are not native parameters. A market-wide annual ranking must use a "
+        "stock_basic universe plus a dividend fan-out template, then filter the "
+        "returned end_date or announcement date locally. Common fields include "
+        "ts_code, end_date, ann_date, div_proc, cash_div_tax, record_date, "
+        "ex_date, pay_date, and stk_div. This fan-out plan is supported and must not "
+        "be rejected merely because each dividend call requires ts_code."
+    ),
     "top10_floatholders": (
         "Top ten unrestricted float-holder snapshots. Parameters include ts_code, "
         "period, ann_date, start_date, and end_date. Fields include ts_code, ann_date, "

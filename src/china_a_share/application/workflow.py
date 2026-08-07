@@ -53,6 +53,7 @@ FANOUT_OPERATIONS = {
     "balancesheet",
     "cashflow",
     "fina_indicator",
+    "dividend",
 }
 UNIVERSE_OPERATIONS = {"stock_basic", "ths_member"}
 VALID_THS_INDEX_SUFFIX = ".TI"
@@ -387,6 +388,15 @@ class ASharePlanValidator:
         """Reject parameters that escape the A-share market boundary."""
         if not isinstance(params, dict):
             raise PlanValidationError("Provider parameters must be a JSON object.")
+        if operation == "dividend":
+            invalid_params = set(params).difference(
+                {"ts_code", "ann_date", "record_date", "ex_date", "imp_ann_date"}
+            )
+            if invalid_params:
+                raise PlanValidationError(
+                    "dividend uses unsupported provider parameters: "
+                    + ", ".join(sorted(invalid_params))
+                )
         if operation in {"weekly", "monthly"} and not (
             params.get("ts_code") or params.get("trade_date")
         ):
@@ -476,6 +486,10 @@ class DataQueryExecutor:
                 request_id=request_id,
                 query_id=query.query_id,
             )
+            if frame.empty and query.fields:
+                # Preserve the validated schema so downstream no-op pipelines can
+                # sort or filter an empty provider response without losing columns.
+                frame = frame.reindex(columns=query.fields)
             if query.transform == "cr10_float_trend":
                 frame = self._build_cr10_float_trend(
                     frame,
@@ -1822,6 +1836,18 @@ class AnalysisService:
             or "limit-up" in normalized_prompt
             or "limit up" in normalized_prompt
         )
+        requests_future_performance = (
+            any(token in prompt for token in ("明天", "下周", "下个月"))
+            and any(
+                token in prompt
+                for token in ("收益", "涨", "跌", "价格", "涨停")
+            )
+        )
+        if requests_future_performance and plan.feasibility == "supported":
+            raise PlanValidationError(
+                "Future price or return rankings are not supported by historical "
+                "market-data operations."
+            )
         if (
             requests_limit_up
             and plan.feasibility == "supported"
@@ -1944,6 +1970,18 @@ class AnalysisService:
             resolve_explicit_time_range(prompt)
             or resolve_relative_time_range(prompt, end_date)
         )
+        if resolved is None and any(token in prompt for token in ("今天", "今日")):
+            resolved = (end_date, end_date)
+        elif resolved is None and "昨天" in prompt:
+            previous_date = self._latest_completed_trading_date(
+                request_id,
+                now - timedelta(days=1),
+            )
+            resolved = (previous_date, previous_date)
+        elif resolved is None and any(
+            token in prompt for token in ("最近交易日", "最新交易日")
+        ):
+            resolved = (end_date, end_date)
         horizon = resolve_future_horizon(prompt)
         if resolved is None and horizon is None:
             return prompt

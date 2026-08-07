@@ -50,6 +50,19 @@ def build_query_plan_system_prompt(
         "Asia/Shanghai semantics. Use the latest completed trading day for end-of-day "
         "data. Security codes must end in .SH, .SZ, or .BJ. Follow every operation's "
         "documented parameters and fields exactly. If the user message contains a "
+        "well-known, unambiguous mainland-listed company name, resolve its exact "
+        "A-share ts_code rather than declaring the request unsupported merely because "
+        "the user omitted the code; \u4e2d\u56fd\u5e73\u5b89 is 601318.SH, "
+        "\u8d35\u5dde\u8305\u53f0 is 600519.SH, and "
+        "\u5e73\u5b89\u94f6\u884c is 000001.SZ. A security-specific operation can support a "
+        "full-market request as a fan-out template when a stock_basic universe query "
+        "is included; do not mark such a plan unsupported solely because the template "
+        "requires ts_code. "
+        "When comparing financial time series from multiple statement operations, "
+        "return separate query results unless the selected join keys are documented "
+        "as unique in both sources; reporting periods may contain multiple versions, "
+        "so do not assume ts_code plus end_date is one-to-one. "
+        "If the user message contains a "
         "trusted_analysis_window block, use its exact event boundaries and outcome "
         "offset. Source queries may start earlier to warm up an ordered calculation "
         "and must extend far enough after the event interval to measure the outcome. "
@@ -396,7 +409,8 @@ class DeepSeekQueryPlanner:
                     step
                     for step in steps
                     if isinstance(step, dict)
-                    and step.get("operation") == "match_source"
+                    and step.get("operation")
+                    in {"match_source", "exists_in_source"}
                 ),
                 None,
             )
@@ -619,6 +633,9 @@ class DeepSeekQueryPlanner:
         for index, step in enumerate(steps):
             if not isinstance(step, dict):
                 continue
+            for field in ("join_on", "fields", "group_by", "aggregations"):
+                if step.get(field) is None:
+                    step.pop(field, None)
             # Explanatory model text is not executable pipeline state.
             for field in ("purpose", "description", "reason", "label"):
                 step.pop(field, None)

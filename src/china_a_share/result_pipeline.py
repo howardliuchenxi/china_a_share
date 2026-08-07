@@ -299,7 +299,19 @@ class ResultPipelineExecutor:
                     f"Result row count ({len(frame)}) exceeds requested limit ({limit_step.count})."
                 )
 
-        sort_step = next((s for s in pipeline.steps if s.operation == "sort"), None)
+        sort_indexes = [
+            index
+            for index, step in enumerate(pipeline.steps)
+            if step.operation == "sort"
+        ]
+        sort_step = None
+        if sort_indexes:
+            sort_index = sort_indexes[-1]
+            if all(
+                step.operation == "limit"
+                for step in pipeline.steps[sort_index + 1 :]
+            ):
+                sort_step = pipeline.steps[sort_index]
         if sort_step is not None and sort_step.field is not None:
             field = sort_step.field
             if field in frame.columns and not frame.empty:

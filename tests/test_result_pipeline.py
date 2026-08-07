@@ -49,6 +49,27 @@ def test_result_pipeline_selects_latest_derives_sorts_and_limits():
     assert result.summary["source_row_count"] == 4
 
 
+def test_pipeline_does_not_require_an_earlier_sort_after_group_selection():
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "retail-proxy",
+            "output_query_id": "latest-by-security",
+            "steps": [
+                {"operation": "sort", "field": "end_date", "direction": "asc"},
+                {
+                    "operation": "latest_by_group",
+                    "group_by": ["ts_code"],
+                    "order_by": "end_date",
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source_result())
+
+    assert result.row_count == 3
+
+
 def test_result_pipeline_filters_by_quantile():
     pipeline = ResultPipeline.model_validate(
         {
