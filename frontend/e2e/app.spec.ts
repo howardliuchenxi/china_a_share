@@ -700,6 +700,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
+  await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
   await expect(page.getByText("18 个盲测候选 · 通过 10% FDR", { exact: true })).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
 

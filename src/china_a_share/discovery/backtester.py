@@ -365,6 +365,19 @@ class FactorBacktester:
                 ]
             ]
             adjustment = adjustment[["ts_code", "adj_factor"]]
+            price = price.loc[
+                price["ts_code"].map(self._is_a_share_code).astype(bool)
+            ].copy()
+            basic = basic.loc[
+                basic["ts_code"].map(self._is_a_share_code).astype(bool)
+            ].copy()
+            adjustment = adjustment.loc[
+                adjustment["ts_code"].map(self._is_a_share_code).astype(bool)
+            ].copy()
+            if price.empty:
+                raise ValueError(
+                    f"No A-share daily data for trading session {trade_date}."
+                )
             # Price and adjustment data define the tradable session universe.
             # Valuation fields are optional because they are not required to
             # calculate a future return label.
@@ -420,6 +433,19 @@ class FactorBacktester:
                 request_id,
             )
             raise
+
+    @staticmethod
+    def _is_a_share_code(value: object) -> bool:
+        """Accept six-digit mainland stock codes while excluding known B shares."""
+        code, separator, exchange = str(value).partition(".")
+        if separator != "." or len(code) != 6 or not code.isdigit():
+            return False
+        if exchange not in {"SH", "SZ", "BJ"}:
+            return False
+        return not (
+            (exchange == "SH" and code.startswith("900"))
+            or (exchange == "SZ" and code.startswith("200"))
+        )
 
     @staticmethod
     def _validated_session_rows(

@@ -429,6 +429,59 @@ def test_research_dataset_rejects_partial_adjustment_coverage():
         )
 
 
+def test_research_dataset_excludes_b_shares_before_adjustment_validation():
+    securities = ["000001.SZ", "200001.SZ", "900901.SH"]
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            date: [
+                {"ts_code": code, "pe_ttm": 10.0}
+                for code in securities
+            ]
+            for date in ["20260105", "20260106"]
+        },
+        {
+            "20260105": [
+                {"ts_code": code, "close": 10.0}
+                for code in securities
+            ],
+            "20260106": [
+                {"ts_code": code, "close": 11.0}
+                for code in securities
+            ],
+        },
+        {
+            date: [{"ts_code": "000001.SZ", "adj_factor": 1.0}]
+            for date in ["20260105", "20260106"]
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+    )
+
+    assert dataset["ts_code"].tolist() == ["000001.SZ"]
+    assert dataset["forward_return"].tolist() == pytest.approx([0.10])
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("600000.SH", True),
+        ("000001.SZ", True),
+        ("430001.BJ", True),
+        ("900901.SH", False),
+        ("200001.SZ", False),
+        ("000001.HK", False),
+        ("invalid", False),
+    ],
+)
+def test_a_share_code_filter_has_explicit_market_boundaries(code, expected):
+    assert FactorBacktester._is_a_share_code(code) is expected
+
+
 def test_research_dataset_rejects_non_finite_prices():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],
