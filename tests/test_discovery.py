@@ -244,8 +244,39 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     assert any("value" in candidate.formula for candidate in candidates)
     assert all(candidate.train_result.sample_count >= 4 for candidate in candidates)
     assert all(candidate.val_result is not None for candidate in candidates)
-    assert candidates[0].validation_score >= candidates[-1].validation_score
+    training_scores = [
+        candidate.train_result.confidence_lower
+        + candidate.train_result.win_rate_lift
+        for candidate in candidates
+    ]
+    assert training_scores == sorted(training_scores, reverse=True)
     assert all(candidate.generalization_gap >= 0 for candidate in candidates)
+
+
+def test_rule_search_does_not_use_validation_outcomes_to_choose_the_winner():
+    train = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 21)],
+            "value": list(range(20)),
+            "forward_return": [-0.10] * 10 + [0.10] * 10,
+        }
+    )
+    validation = train.assign(forward_return=-train["forward_return"])
+
+    candidates, _ = RuleSearchEngine(min_sample_count=4).search(
+        train,
+        validation,
+        ["value"],
+        max_conditions=1,
+        top_n=1,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].formula.startswith("value >=")
+    assert (
+        candidates[0].val_result.win_rate
+        < candidates[0].val_result.baseline_win_rate
+    )
 
 
 def test_rule_search_corrects_validation_significance_for_multiple_candidates():
@@ -270,7 +301,10 @@ def test_rule_search_corrects_validation_significance_for_multiple_candidates():
     assert candidates
     assert all(0.0 <= candidate.p_value <= 1.0 for candidate in candidates)
     assert all(candidate.p_value <= candidate.q_value <= 1.0 for candidate in candidates)
-    assert candidates[0].q_value <= candidates[-1].q_value
+    ordered_by_p = sorted(candidates, key=lambda candidate: candidate.p_value)
+    assert [candidate.q_value for candidate in ordered_by_p] == sorted(
+        candidate.q_value for candidate in candidates
+    )
 
 
 def test_clustered_lift_significance_remains_finite_for_large_samples():

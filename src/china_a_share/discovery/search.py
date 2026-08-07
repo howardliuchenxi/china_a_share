@@ -38,12 +38,11 @@ class RuleSearchEngine:
         max_conditions: int,
         top_n: int,
     ) -> Tuple[List[FactorHypothesis], int]:
-        """Return FDR-adjusted candidates and the number of evaluated formulas."""
+        """Rank on training data, then report untouched validation evidence."""
         conditions = self._build_conditions(train, factors)
-        single_candidates, single_evaluated = self._evaluate_formulas(
+        single_candidates, single_evaluated = self._evaluate_training_formulas(
             conditions,
             train,
-            validation,
         )
         candidates = list(single_candidates)
         evaluated_count = single_evaluated
@@ -57,21 +56,13 @@ class RuleSearchEngine:
                 for (left, left_field), (right, right_field) in combinations(strongest, 2)
                 if left_field != right_field
             ]
-            pair_candidates, pair_evaluated = self._evaluate_formulas(
+            pair_candidates, pair_evaluated = self._evaluate_training_formulas(
                 pairs,
                 train,
-                validation,
             )
             candidates.extend(pair_candidates)
             evaluated_count += pair_evaluated
-        self._apply_false_discovery_rate(candidates)
-        candidates.sort(
-            key=lambda candidate: (
-                candidate.q_value,
-                -candidate.validation_score,
-                -candidate.val_result.mean_return,
-            ),
-        )
+        candidates.sort(key=self._training_rank_key, reverse=True)
         unique = []
         seen = set()
         for candidate in candidates:
@@ -79,9 +70,10 @@ class RuleSearchEngine:
                 continue
             seen.add(candidate.formula)
             unique.append(candidate)
-            if len(unique) == top_n:
-                break
-        return unique, evaluated_count
+        validated = self._validate_candidates(unique, validation)
+        self._apply_false_discovery_rate(validated)
+        # Validation outcomes never reorder the training-frozen shortlist.
+        return validated[:top_n], evaluated_count
 
     def _build_conditions(
         self,
@@ -105,11 +97,10 @@ class RuleSearchEngine:
             )
         return conditions
 
-    def _evaluate_formulas(
+    def _evaluate_training_formulas(
         self,
         formulas: Sequence[Tuple[str, str]],
         train: pd.DataFrame,
-        validation: pd.DataFrame,
     ) -> Tuple[List[FactorHypothesis], int]:
         candidates = []
         for formula, fields in formulas:
@@ -119,52 +110,61 @@ class RuleSearchEngine:
                 target_return=self._target_return,
                 dependence_lag_days=self._dependence_lag_days,
             )
-            validation_result = FactorBacktester.evaluate_rule(
-                validation,
-                formula,
-                target_return=self._target_return,
-                dependence_lag_days=self._dependence_lag_days,
-            )
-            if (
-                train_result.sample_count < self._min_sample_count
-                or validation_result.sample_count < self._min_sample_count
-            ):
+            if train_result.sample_count < self._min_sample_count:
                 continue
-            generalization_gap = abs(
-                train_result.win_rate - validation_result.win_rate
-            )
-            validation_score = (
-                validation_result.confidence_lower
-                + validation_result.win_rate_lift
-                - generalization_gap
-            )
-            p_value = self._clustered_lift_tail_probability(
-                validation_result.win_rate_lift,
-                validation_result.lift_standard_error,
-            )
             candidates.append(
                 FactorHypothesis(
                     formula=formula,
                     description=f"Quantile rule using {fields}",
                     reasoning=(
                         "The condition was generated from training-window quantiles "
-                        "and ranked only after independent validation."
+                        "and ranked before independent validation was evaluated."
                     ),
                     train_result=train_result,
-                    val_result=validation_result,
-                    validation_score=validation_score,
-                    generalization_gap=generalization_gap,
-                    p_value=p_value,
                 )
             )
-        candidates.sort(
-            key=lambda candidate: (
-                candidate.train_result.mean_return,
-                candidate.train_result.win_rate_lift,
-            ),
-            reverse=True,
-        )
+        candidates.sort(key=self._training_rank_key, reverse=True)
         return candidates, len(formulas)
+
+    def _validate_candidates(
+        self,
+        candidates: Sequence[FactorHypothesis],
+        validation: pd.DataFrame,
+    ) -> List[FactorHypothesis]:
+        """Attach validation evidence without using its outcomes for ranking."""
+        validated = []
+        for candidate in candidates:
+            validation_result = FactorBacktester.evaluate_rule(
+                validation,
+                candidate.formula,
+                target_return=self._target_return,
+                dependence_lag_days=self._dependence_lag_days,
+            )
+            if validation_result.sample_count < self._min_sample_count:
+                continue
+            train_result = candidate.train_result
+            generalization_gap = abs(
+                train_result.win_rate - validation_result.win_rate
+            )
+            candidate.val_result = validation_result
+            candidate.generalization_gap = generalization_gap
+            candidate.validation_score = (
+                validation_result.confidence_lower
+                + validation_result.win_rate_lift
+                - generalization_gap
+            )
+            candidate.p_value = self._clustered_lift_tail_probability(
+                validation_result.win_rate_lift,
+                validation_result.lift_standard_error,
+            )
+            validated.append(candidate)
+        return validated
+
+    @staticmethod
+    def _training_rank_key(candidate: FactorHypothesis) -> tuple[float, float]:
+        """Prefer robust training hit-rate evidence, then mean return."""
+        result = candidate.train_result
+        return result.confidence_lower + result.win_rate_lift, result.mean_return
 
     @staticmethod
     def _clustered_lift_tail_probability(
