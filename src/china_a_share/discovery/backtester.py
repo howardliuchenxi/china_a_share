@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import logging
 import math
+import re
 import time
 from typing import List
 
@@ -23,6 +24,10 @@ CALENDAR_EXTENSION_MULTIPLIER = 3
 # A full-month floor covers Spring Festival and exceptional exchange closures
 # when even a one-session forward label can be more than ten calendar days away.
 CALENDAR_EXTENSION_MINIMUM_DAYS = 31
+OUTCOME_RULE_FIELDS = frozenset(
+    {"forward_return", "future_adjusted_close", "future_trade_date"}
+)
+NON_FEATURE_RULE_FIELDS = frozenset({"trade_date", "ts_code"})
 logger = logging.getLogger(__name__)
 
 
@@ -145,10 +150,25 @@ class FactorBacktester:
         if "forward_return" not in dataset:
             raise ValueError("Research dataset is missing forward_return.")
         research_frame = dataset.reset_index(drop=True)
+        formula_tokens = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", formula))
+        leaked_fields = sorted(formula_tokens & OUTCOME_RULE_FIELDS)
+        if leaked_fields:
+            raise ValueError(
+                "Discovery rule cannot reference outcome fields: "
+                + ", ".join(leaked_fields)
+            )
         try:
             selected = research_frame.query(formula, engine="python")
         except Exception as exc:
             raise ValueError(f"Invalid discovery rule: {exc}") from exc
+        feature_fields = sorted(
+            formula_tokens
+            & (set(research_frame.columns) - NON_FEATURE_RULE_FIELDS)
+        )
+        baseline_frame = research_frame
+        for field in feature_fields:
+            numeric = pd.to_numeric(baseline_frame[field], errors="coerce")
+            baseline_frame = baseline_frame.loc[numeric.map(math.isfinite)]
         matched_sample_count = len(selected)
         evaluation_frame = selected.assign(
             forward_return=pd.to_numeric(
@@ -160,7 +180,7 @@ class FactorBacktester:
         ]
         returns = evaluation_frame["forward_return"]
         baseline = pd.to_numeric(
-            research_frame["forward_return"], errors="coerce"
+            baseline_frame["forward_return"], errors="coerce"
         ).dropna()
         baseline = baseline[baseline.map(math.isfinite)]
         missing_outcome_count = matched_sample_count - len(returns)
@@ -190,7 +210,7 @@ class FactorBacktester:
             float((baseline > target_return).mean()) if len(baseline) else 0.0
         )
         lift_standard_error = FactorBacktester._clustered_lift_standard_error(
-            research_frame,
+            baseline_frame,
             evaluation_frame.index,
             target_return,
             dependence_lag_days,

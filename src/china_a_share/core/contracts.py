@@ -1146,7 +1146,10 @@ class BacktestResult(BaseModel):
     baseline_sample_count: int = Field(
         default=0,
         ge=0,
-        description="Finite outcome observations used by the all-event baseline.",
+        description=(
+            "Finite outcome observations with all rule factors available, used by "
+            "the comparable-event baseline."
+        ),
     )
     win_rate_lift: float = 0.0
     confidence_lower: float = 0.0

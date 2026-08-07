@@ -695,6 +695,46 @@ def test_rule_evaluation_uses_the_configured_target_return_threshold():
     assert result.baseline_sample_count == 3
 
 
+def test_rule_evaluation_uses_a_factor_comparable_baseline():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260106", "20260107", "20260108"],
+            "factor": [1.0, 2.0, None, None],
+            "forward_return": [0.10, -0.10, 0.10, 0.10],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor >= 1")
+
+    assert result.win_rate == pytest.approx(0.50)
+    assert result.baseline_win_rate == pytest.approx(0.50)
+    assert result.baseline_sample_count == 2
+    assert result.win_rate_lift == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "forward_return > 0",
+        "future_adjusted_close > 10",
+        "future_trade_date >= '20260106'",
+    ],
+)
+def test_rule_evaluation_rejects_outcome_field_leakage(formula):
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105"],
+            "factor": [1.0],
+            "forward_return": [0.10],
+            "future_adjusted_close": [11.0],
+            "future_trade_date": ["20260106"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="cannot reference outcome fields"):
+        FactorBacktester.evaluate_rule(dataset, formula)
+
+
 def test_rule_evaluation_preserves_schema_for_an_empty_match():
     dataset = pd.DataFrame(
         {
