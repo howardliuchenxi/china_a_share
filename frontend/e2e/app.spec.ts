@@ -823,6 +823,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/按缺失结果全部失败或全部成功的边界扩展概率区间/)).toBeVisible();
   await expect(page.getByText(/交易日门槛同时约束原始不同日期数和按事件权重折算的有效日期数/)).toBeVisible();
   await expect(page.getByText(/最低标签覆盖门槛同时约束规则命中事件和完整的因子可比基准/)).toBeVisible();
+  await expect(page.getByText(/验证判定会优先显示标签覆盖失败这一根因/)).toBeVisible();
   await expect(page.getByText(/证券门槛同样同时约束原始不同证券数和有效证券数/)).toBeVisible();
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();

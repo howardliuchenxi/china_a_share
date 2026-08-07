@@ -2510,6 +2510,78 @@ def test_validation_reason_identifies_the_failed_evidence_threshold(
     assert search._validation_reason(candidate) == expected
 
 
+def test_validation_reason_prioritizes_label_attrition_over_its_sample_shortfall():
+    candidate = FactorHypothesis(
+        formula="value >= 1",
+        description="Test rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            win_rate_lift=0.10,
+            outcome_robust_lift_lower=0.10,
+        ),
+        val_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            sample_count=10,
+            matched_sample_count=100,
+            eligible_sample_count=100,
+            outcome_coverage_rate=0.10,
+            baseline_outcome_coverage_rate=1.0,
+            baseline_sample_count=100,
+            win_rate_lift=0.10,
+        ),
+    )
+    search = RuleSearchEngine(
+        min_sample_count=30,
+        min_outcome_coverage=0.90,
+    )
+
+    assert (
+        search._validation_reason(candidate)
+        == "insufficient_validation_coverage"
+    )
+
+
+def test_validation_reason_prioritizes_comparable_baseline_attrition():
+    candidate = FactorHypothesis(
+        formula="value >= 1",
+        description="Test rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            win_rate_lift=0.10,
+            outcome_robust_lift_lower=0.10,
+        ),
+        val_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            sample_count=30,
+            matched_sample_count=30,
+            eligible_sample_count=100,
+            outcome_coverage_rate=1.0,
+            baseline_outcome_coverage_rate=0.10,
+            baseline_sample_count=10,
+            win_rate_lift=0.10,
+        ),
+    )
+    search = RuleSearchEngine(
+        min_sample_count=30,
+        min_outcome_coverage=0.90,
+    )
+
+    assert (
+        search._validation_reason(candidate)
+        == "insufficient_validation_baseline_coverage"
+    )
+
+
 def test_validation_keeps_training_ranked_candidates_with_insufficient_evidence():
     validation = pd.DataFrame(
         {

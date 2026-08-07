@@ -137,6 +137,21 @@ class RuleSearchEngine:
             return "training_lift_not_positive"
         if candidate.train_result.outcome_robust_lift_lower <= 0.0:
             return "training_outcome_attrition_not_robust"
+        # When a rule matched events but missing labels caused the observed
+        # sample shortfall, report the root data-quality problem before its
+        # downstream sample, date, or security consequences.
+        if (
+            candidate.val_result.matched_sample_count > 0
+            and candidate.val_result.outcome_coverage_rate
+            < self._min_outcome_coverage
+        ):
+            return "insufficient_validation_coverage"
+        if (
+            candidate.val_result.eligible_sample_count > 0
+            and candidate.val_result.baseline_outcome_coverage_rate
+            < self._min_outcome_coverage
+        ):
+            return "insufficient_validation_baseline_coverage"
         if candidate.val_result.sample_count < self._min_sample_count:
             return "insufficient_validation_samples"
         if (
