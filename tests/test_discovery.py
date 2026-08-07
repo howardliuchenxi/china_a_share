@@ -185,6 +185,21 @@ def test_rule_evaluation_clusters_uncertainty_by_trading_day():
     assert result.confidence_upper == 1.0
 
 
+def test_rule_evaluation_accounts_for_overlap_when_estimating_lift_uncertainty():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105"] * 2 + ["20260106"] * 2,
+            "factor": [1.0, 0.0, 1.0, 0.0],
+            "forward_return": [0.10, -0.10, -0.10, -0.10],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.win_rate_lift == pytest.approx(0.25)
+    assert result.lift_standard_error == pytest.approx(0.25)
+
+
 def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     train = pd.DataFrame(
         {
@@ -238,8 +253,8 @@ def test_rule_search_corrects_validation_significance_for_multiple_candidates():
     assert candidates[0].q_value <= candidates[-1].q_value
 
 
-def test_clustered_significance_remains_finite_for_large_samples():
-    probability = RuleSearchEngine._clustered_tail_probability(0.56, 0.5, 0.01)
+def test_clustered_lift_significance_remains_finite_for_large_samples():
+    probability = RuleSearchEngine._clustered_lift_tail_probability(0.06, 0.01)
 
     assert 0.0 <= probability <= 1.0
     assert probability < 0.001

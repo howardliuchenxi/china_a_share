@@ -607,6 +607,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           target_return: 0,
           trading_day_count: 120,
           cluster_standard_error: 0.04,
+          lift_standard_error: 0.035,
         },
         val_result: {
           win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
@@ -616,6 +617,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           target_return: 0,
           trading_day_count: 55,
           cluster_standard_error: 0.06,
+          lift_standard_error: 0.05,
         },
       }],
     },

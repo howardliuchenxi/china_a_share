@@ -129,8 +129,9 @@ class FactorBacktester:
         """Evaluate one expression against pre-aligned event-study observations."""
         if "forward_return" not in dataset:
             raise ValueError("Research dataset is missing forward_return.")
+        research_frame = dataset.reset_index(drop=True)
         try:
-            selected = dataset.query(formula, engine="python")
+            selected = research_frame.query(formula, engine="python")
         except Exception as exc:
             raise ValueError(f"Invalid discovery rule: {exc}") from exc
         evaluation_frame = selected.assign(
@@ -139,7 +140,9 @@ class FactorBacktester:
             )
         ).dropna(subset=["forward_return"])
         returns = evaluation_frame["forward_return"]
-        baseline = pd.to_numeric(dataset["forward_return"], errors="coerce").dropna()
+        baseline = pd.to_numeric(
+            research_frame["forward_return"], errors="coerce"
+        ).dropna()
         if returns.empty:
             return BacktestResult(
                 win_rate=0.0,
@@ -156,6 +159,11 @@ class FactorBacktester:
         win_rate = positive_count / len(returns)
         baseline_win_rate = (
             float((baseline > target_return).mean()) if len(baseline) else 0.0
+        )
+        lift_standard_error = FactorBacktester._clustered_lift_standard_error(
+            research_frame,
+            evaluation_frame.index,
+            target_return,
         )
         (
             confidence_lower,
@@ -193,6 +201,7 @@ class FactorBacktester:
             target_return=target_return,
             trading_day_count=trading_day_count,
             cluster_standard_error=cluster_standard_error,
+            lift_standard_error=lift_standard_error,
         )
 
     def _load_trade_dates(
@@ -333,3 +342,46 @@ class FactorBacktester:
             standard_error,
             cluster_count,
         )
+
+    @staticmethod
+    def _clustered_lift_standard_error(
+        frame: pd.DataFrame,
+        selected_index: pd.Index,
+        target_return: float,
+    ) -> float:
+        """Estimate uncertainty of selected-versus-baseline lift by signal date."""
+        observations = frame[["trade_date", "forward_return"]].copy()
+        observations["forward_return"] = pd.to_numeric(
+            observations["forward_return"], errors="coerce"
+        )
+        observations = observations.dropna(subset=["forward_return"])
+        observations["selected"] = observations.index.isin(selected_index)
+        selected = observations[observations["selected"]]
+        cluster_count = observations["trade_date"].nunique()
+        if selected.empty or cluster_count <= 1:
+            return 0.0
+
+        observations["hit"] = (
+            observations["forward_return"] > target_return
+        ).astype(float)
+        selected_rate = float(selected["forward_return"].gt(target_return).mean())
+        baseline_rate = float(observations["hit"].mean())
+        selected_count = len(selected)
+        observation_count = len(observations)
+        # The influence function accounts for the selected observations also
+        # being part of the all-market baseline instead of treating it as fixed.
+        observations["lift_influence"] = (
+            observations["selected"].astype(float)
+            * (observations["hit"] - selected_rate)
+            / selected_count
+            - (observations["hit"] - baseline_rate) / observation_count
+        )
+        cluster_influence = observations.groupby("trade_date")[
+            "lift_influence"
+        ].sum()
+        variance = (
+            cluster_count
+            / (cluster_count - 1)
+            * float((cluster_influence**2).sum())
+        )
+        return math.sqrt(max(0.0, variance))

@@ -1093,6 +1093,7 @@ class BacktestResult(BaseModel):
     target_return: float = 0.0
     trading_day_count: int = Field(default=0, ge=0)
     cluster_standard_error: float = Field(default=0.0, ge=0.0)
+    lift_standard_error: float = Field(default=0.0, ge=0.0)
 
 
 class FactorHypothesis(BaseModel):
@@ -1118,7 +1119,7 @@ class FactorHypothesis(BaseModel):
         default=1.0,
         ge=0.0,
         le=1.0,
-        description="One-sided validation probability using clustered uncertainty.",
+        description="One-sided probability that validation lift exceeds zero using clustered uncertainty.",
     )
     q_value: float = Field(
         default=1.0,

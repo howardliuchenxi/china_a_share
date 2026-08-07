@@ -129,10 +129,9 @@ class RuleSearchEngine:
                 + validation_result.win_rate_lift
                 - generalization_gap
             )
-            p_value = self._clustered_tail_probability(
-                validation_result.win_rate,
-                validation_result.baseline_win_rate,
-                validation_result.cluster_standard_error,
+            p_value = self._clustered_lift_tail_probability(
+                validation_result.win_rate_lift,
+                validation_result.lift_standard_error,
             )
             candidates.append(
                 FactorHypothesis(
@@ -159,17 +158,16 @@ class RuleSearchEngine:
         return candidates, len(formulas)
 
     @staticmethod
-    def _clustered_tail_probability(
-        observed_probability: float,
-        baseline_probability: float,
+    def _clustered_lift_tail_probability(
+        lift: float,
         standard_error: float,
     ) -> float:
-        """Return a one-sided normal tail using date-clustered uncertainty."""
-        if observed_probability <= baseline_probability:
+        """Return a one-sided normal tail for date-clustered probability lift."""
+        if lift <= 0.0:
             return 1.0
         if standard_error <= 0.0:
             return 0.0
-        z_score = (observed_probability - baseline_probability) / standard_error
+        z_score = lift / standard_error
         probability = 0.5 * math.erfc(z_score / math.sqrt(2.0))
         return min(1.0, max(0.0, probability))
 
