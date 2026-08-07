@@ -120,7 +120,9 @@ Reported evidence includes:
   by a distinct-signal-date count;
 - Kish effective signal-date count based on daily event weights; this count is
   used by the boundary-safe score interval so a date-concentrated sample cannot
-  claim the same precision as an equally distributed set of signal dates;
+  claim the same precision as an equally distributed set of signal dates; both
+  raw and effective date counts must satisfy the configured date-breadth
+  threshold in training and validation;
 - rule support among factor-comparable events;
 - absolute train-to-validation support-rate drift for applicability diagnostics;
 - validation-to-training support retention, which exposes relative applicability
@@ -149,7 +151,7 @@ signal-date count minus one degree of freedom and requires at least twenty
 effective validation signal dates. Date-concentrated or shorter studies remain
 visible for exploration but receive `p = 1`, report
 `insufficient_significance_days`, and cannot pass FDR. The user-configured raw
-distinct-date threshold remains a separate coverage requirement.
+and effective distinct-date thresholds remain separate coverage requirements.
 
 The false-discovery family contains every frozen candidate sent to validation,
 including candidates retained with insufficient validation evidence. A rule

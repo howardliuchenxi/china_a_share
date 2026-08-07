@@ -1371,6 +1371,7 @@ class FactorHypothesis(BaseModel):
         "training_outcome_attrition_not_robust",
         "insufficient_validation_samples",
         "insufficient_validation_days",
+        "insufficient_validation_effective_days",
         "insufficient_validation_securities",
         "insufficient_validation_effective_securities",
         "insufficient_validation_coverage",

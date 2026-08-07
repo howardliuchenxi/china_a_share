@@ -772,8 +772,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();
   await expect(page.getByText(/按缺失结果全部失败或全部成功的边界扩展概率区间/)).toBeVisible();
-  await expect(page.getByText(/正式显著性要求至少 20 个日期集中度折算有效日/)).toBeVisible();
-  await expect(page.getByText(/证券门槛同时约束原始不同证券数和按事件权重折算的有效证券数/)).toBeVisible();
+  await expect(page.getByText(/交易日门槛同时约束原始不同日期数和按事件权重折算的有效日期数/)).toBeVisible();
+  await expect(page.getByText(/证券门槛同样同时约束原始不同证券数和有效证券数/)).toBeVisible();
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
