@@ -1283,6 +1283,11 @@ class FactorHypothesis(BaseModel):
         le=1.0,
         description="Absolute train-to-validation rule-support-rate difference.",
     )
+    support_retention_ratio: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Validation rule support divided by training rule support.",
+    )
     p_value: float = Field(
         default=1.0,
         ge=0.0,

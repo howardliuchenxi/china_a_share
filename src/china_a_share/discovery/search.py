@@ -377,6 +377,12 @@ class RuleSearchEngine:
                 train_result.rule_support_rate
                 - validation_result.rule_support_rate
             )
+            candidate.support_retention_ratio = (
+                validation_result.rule_support_rate
+                / train_result.rule_support_rate
+                if train_result.rule_support_rate > 0.0
+                else 0.0
+            )
             candidate.validation_score = self._conservative_validation_score(
                 validation_result,
                 generalization_gap,

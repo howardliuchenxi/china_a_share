@@ -372,13 +372,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
               <p className="confidence-note">验证集收益超过 {percent(hypothesis.val_result!.target_return)} 的概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
               <p className="confidence-note">验证集相对基准提升 95% 区间：{percent(hypothesis.val_result!.lift_confidence_lower)} – {percent(hypothesis.val_result!.lift_confidence_upper)}</p>
               <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
-              <p className="confidence-note">保守相对提升：{percent(hypothesis.validation_score)} · 训练—验证提升差距：{percent(hypothesis.generalization_gap)} · 规则覆盖差距：{percent(hypothesis.support_rate_gap)}</p>
+              <p className="confidence-note">保守相对提升：{percent(hypothesis.validation_score)} · 训练—验证提升差距：{percent(hypothesis.generalization_gap)} · 规则覆盖差距：{percent(hypothesis.support_rate_gap)} · 覆盖保留比例：{percent(hypothesis.support_retention_ratio)}</p>
               <p className="confidence-note">有限交易日 Student-t 提升检验 p-value：{hypothesis.p_value.toFixed(3)} · BY-FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}（{hypothesis.fdr_family_size} 个盲测候选）</p>
               <p className="confidence-note">验证判定：{validationReason(hypothesis)}</p>
             </div>
           </article>})}
         </div>
-        <p className="research-caveat">“带入分析页”仅对分析页能够保持同一计算口径的字段开放，并会生成今日筛选请求；含内部复权序列特征的规则在同口径执行器完成前不会被交给模型猜测。提交普通规则后仍需经过查询规划，请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
+        <p className="research-caveat">覆盖保留比例是验证覆盖率除以训练覆盖率，用于识别规则适用人群的扩张或收缩；它是适用性诊断而非显著性通过门槛。“带入分析页”仅对分析页能够保持同一计算口径的字段开放，并会生成今日筛选请求；含内部复权序列特征的规则在同口径执行器完成前不会被交给模型猜测。提交普通规则后仍需经过查询规划，请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
       </section>}
     </div>
   );

@@ -1155,6 +1155,14 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
         )
         for candidate in candidates
     )
+    assert all(
+        candidate.support_retention_ratio
+        == pytest.approx(
+            candidate.val_result.rule_support_rate
+            / candidate.train_result.rule_support_rate
+        )
+        for candidate in candidates
+    )
 
 
 def test_training_rank_penalizes_uncertain_lift():
@@ -1575,6 +1583,38 @@ def test_generalization_gap_tracks_relative_edge_across_market_regimes():
     )
 
     assert gap == pytest.approx(0.0)
+
+
+def test_support_retention_exposes_relative_applicability_collapse():
+    validation = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
+            "value": list(range(100)),
+            "forward_return": [0.10] * 100,
+        }
+    )
+    candidate = FactorHypothesis(
+        formula="value >= 99",
+        description="Rare validation rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.03,
+            eval_time_ms=1,
+            rule_support_rate=0.03,
+            win_rate_lift=0.10,
+        ),
+    )
+
+    validated = RuleSearchEngine(
+        min_sample_count=0,
+        min_trading_day_count=0,
+        min_security_count=0,
+        min_outcome_coverage=0.0,
+    )._validate_candidates([candidate], validation)
+
+    assert validated[0].support_rate_gap == pytest.approx(0.02)
+    assert validated[0].support_retention_ratio == pytest.approx(1.0 / 3.0)
 
 
 def test_validation_score_penalizes_uncertainty_and_lift_instability():

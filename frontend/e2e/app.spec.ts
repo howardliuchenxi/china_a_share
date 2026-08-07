@@ -616,6 +616,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         validation_score: 0.027,
         generalization_gap: 0.03,
         support_rate_gap: 0.029,
+        support_retention_ratio: 1.196,
         p_value: 0.001,
         q_value: 0.063,
         fdr_family_size: 18,
@@ -736,6 +737,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topWindowComparison).toContainText("15.3%");
   await expect(topWindowComparison).toContainText("180 / 120 / 86");
   await expect(page.locator(".rule-list")).toContainText("规则覆盖差距：2.9%");
+  await expect(page.locator(".rule-list")).toContainText("覆盖保留比例：119.6%");
   expect(statusPollCount).toBeGreaterThanOrEqual(2);
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
@@ -751,6 +753,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
+  await expect(page.getByText(/它是适用性诊断而非显著性通过门槛/)).toBeVisible();
   await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
   await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");

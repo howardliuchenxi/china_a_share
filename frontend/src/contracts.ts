@@ -337,6 +337,7 @@ export interface FactorHypothesis {
   validation_score: number;
   generalization_gap: number;
   support_rate_gap: number;
+  support_retention_ratio: number;
   p_value: number;
   q_value: number;
   fdr_family_size: number;
