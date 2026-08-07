@@ -180,6 +180,32 @@ def test_tushare_provider_paginates_capped_daily_results():
     assert calls[1]["offset"] == 6000
 
 
+def test_tushare_provider_rejects_a_repeated_full_page():
+    provider = TushareDataProvider("test-token", FakeCache())
+    repeated_page = pd.DataFrame(
+        [
+            {"ts_code": f"{index:06d}.SZ", "close": 10.0}
+            for index in range(6000)
+        ]
+    )
+
+    class RepeatingTransport:
+        def query(self, operation, params, fields):
+            return repeated_page.copy()
+
+    provider._transport = RepeatingTransport()
+
+    with pytest.raises(
+        ValueError,
+        match="daily pagination repeated a page at offset 6000",
+    ):
+        provider._fetch_complete(
+            "daily",
+            {"trade_date": "20260723"},
+            ["ts_code", "close"],
+        )
+
+
 def test_tushare_provider_uses_operation_specific_page_limit():
     provider = TushareDataProvider("test-token", FakeCache())
     calls = []
