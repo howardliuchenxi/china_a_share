@@ -248,7 +248,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </fieldset>
           {submitError && <p className="discovery-error" role="alert">{submitError}</p>}
           <div className="discovery-submit-row">
-            <p>搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；候选按“相对基准提升 − 单侧 95% 不确定性惩罚”排序，同分时依次比较 5% 下行收益和中位收益，避免平均值被单个异常上涨拉高。24 个配对席位会先覆盖所有存在有效候选的因子，再补充反方向条件，相同训练样本的规则只保留排名最高者。</p>
+            <p>连续因子搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；有限取值不超过 10 个的离散因子会枚举全部实际阈值，避免罕见序列状态被宽分位遗漏。候选按“相对基准提升 − 单侧 95% 不确定性惩罚”排序，同分时依次比较 5% 下行收益和中位收益，避免平均值被单个异常上涨拉高。24 个配对席位会先覆盖所有存在有效候选的因子，再补充反方向条件，相同训练样本的规则只保留排名最高者。</p>
             <button type="submit" disabled={isSubmitting || taskStatus?.status === "running"}>{isSubmitting ? "正在提交…" : taskStatus?.status === "running" ? "研究进行中" : "开始反向搜索"}</button>
           </div>
         </form>

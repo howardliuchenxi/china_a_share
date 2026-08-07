@@ -1155,6 +1155,22 @@ def test_rule_search_deduplicates_equivalent_discrete_thresholds():
     assert len(selected_sets) == len(set(selected_sets))
 
 
+def test_rule_search_enumerates_rare_discrete_sequence_states():
+    dataset = pd.DataFrame(
+        {
+            "positive_days_3": [0.0] * 99 + [3.0],
+        }
+    )
+
+    conditions = RuleSearchEngine(min_sample_count=1)._build_conditions(
+        dataset,
+        ["positive_days_3"],
+    )
+
+    assert "positive_days_3 >= 3" in [formula for formula, _ in conditions]
+    assert dataset.query("positive_days_3 >= 3").index.tolist() == [99]
+
+
 def test_rule_search_ignores_missing_and_constant_factors():
     dataset = pd.DataFrame({"constant": [1.0, 1.0]})
 

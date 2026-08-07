@@ -65,8 +65,10 @@ a one-session forward horizon.
 
 ## Deterministic rule search
 
-`RuleSearchEngine` creates lower- and upper-tail conditions at the training
-window's 10%, 25%, 50%, 75%, and 90% factor quantiles. Equivalent selections
+`RuleSearchEngine` creates lower- and upper-tail conditions at every observed
+value for factors with at most ten finite values, allowing rare discrete states
+such as a three-day streak to remain searchable. Continuous factors use the
+training window's 10%, 25%, 50%, 75%, and 90% quantiles. Equivalent selections
 are deduplicated. When two conditions are allowed, a 24-entry pairing pool first
 covers every factor with an eligible single-condition candidate and then adds
 alternate directions. This caps the pair search at 276 combinations.

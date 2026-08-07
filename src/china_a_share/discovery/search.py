@@ -11,6 +11,7 @@ from china_a_share.discovery.backtester import FactorBacktester
 
 
 SEARCH_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
+MAX_EXHAUSTIVE_DISCRETE_VALUES = 10
 # Twenty-four entries cover every supported factor once and still cap the
 # two-condition search at 276 combinations.
 PAIRING_CANDIDATE_LIMIT = 24
@@ -147,10 +148,20 @@ class RuleSearchEngine:
             numeric = numeric[numeric.map(math.isfinite)]
             if numeric.nunique() < 2:
                 continue
+            unique_values = sorted(float(value) for value in numeric.unique())
+            # Enumerate small discrete domains so rare states such as a
+            # three-day streak cannot disappear between broad quantiles.
+            thresholds = (
+                unique_values
+                if len(unique_values) <= MAX_EXHAUSTIVE_DISCRETE_VALUES
+                else [
+                    float(numeric.quantile(quantile))
+                    for quantile in SEARCH_QUANTILES
+                ]
+            )
             seen_selections = set()
             for operator in ("<=", ">="):
-                for quantile in SEARCH_QUANTILES:
-                    threshold = float(numeric.quantile(quantile))
+                for threshold in thresholds:
                     threshold_text = f"{threshold:.10g}"
                     executable_threshold = float(threshold_text)
                     selection = (
