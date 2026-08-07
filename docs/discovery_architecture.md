@@ -88,6 +88,9 @@ evidence misses a configured sample, date, security, or outcome-coverage
 threshold. Such candidates receive `p = 1` and an explicit machine-readable
 failure reason instead of disappearing and allowing a lower training rank to
 take their place. Validation evidence never reorders the leaderboard.
+Each hypothesis records whether its thresholds came from continuous quantiles,
+observed discrete values, or a mixture, so displayed provenance matches the
+actual training-only generation path.
 
 ## Statistical guardrails
 

@@ -612,6 +612,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         formula: "pe_ttm <= 12 and turnover_rate >= 8",
         description: "Low valuation with active turnover",
         reasoning: "Generated from training-window quantiles and independently validated.",
+        threshold_source: "quantile",
         validation_score: 0.027,
         generalization_gap: 0.03,
         support_rate_gap: 0.029,
@@ -728,6 +729,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".rule-card")).toContainText("75");
   await expect(page.locator(".rule-card h3")).toHaveText("市盈率TTM × 换手率分位规律");
   await expect(page.locator(".rule-card")).toContainText("验证结果未参与重新排序");
+  await expect(page.locator(".rule-card")).toContainText("阈值来源：训练窗口分位阈值");
   await expect(page.locator(".rule-card")).toContainText("97.4%");
   await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
   await expect(page.getByText(/估值接口成功但无记录时仍保留行情标签/)).toBeVisible();

@@ -318,6 +318,7 @@ export interface FactorHypothesis {
   formula: string;
   description: string;
   reasoning: string;
+  threshold_source: "unknown" | "quantile" | "observed_value" | "mixed";
   train_result: BacktestResult | null;
   val_result: BacktestResult | null;
   validation_score: number;

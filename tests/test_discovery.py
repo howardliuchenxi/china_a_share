@@ -1171,6 +1171,26 @@ def test_rule_search_enumerates_rare_discrete_sequence_states():
     assert dataset.query("positive_days_3 >= 3").index.tolist() == [99]
 
 
+@pytest.mark.parametrize(
+    ("formula", "expected"),
+    [
+        ("continuous >= 10", "quantile"),
+        ("discrete >= 3", "observed_value"),
+        ("(continuous >= 10) and (discrete >= 3)", "mixed"),
+        ("missing >= 1", "unknown"),
+    ],
+)
+def test_rule_search_records_the_actual_threshold_source(formula, expected):
+    train = pd.DataFrame(
+        {
+            "continuous": list(range(20)),
+            "discrete": [0.0] * 19 + [3.0],
+        }
+    )
+
+    assert RuleSearchEngine._threshold_source(formula, train) == expected
+
+
 def test_rule_search_ignores_missing_and_constant_factors():
     dataset = pd.DataFrame({"constant": [1.0, 1.0]})
 

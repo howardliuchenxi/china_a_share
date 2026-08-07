@@ -1226,6 +1226,15 @@ class FactorHypothesis(BaseModel):
     formula: str
     description: str
     reasoning: str
+    threshold_source: Literal[
+        "unknown",
+        "quantile",
+        "observed_value",
+        "mixed",
+    ] = Field(
+        default="unknown",
+        description="Training-only source used to generate the rule thresholds.",
+    )
     train_result: Optional[BacktestResult] = None
     val_result: Optional[BacktestResult] = None
     validation_score: float = Field(

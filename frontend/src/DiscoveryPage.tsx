@@ -44,6 +44,15 @@ function validationReason(hypothesis: FactorHypothesis) {
   }
 }
 
+function thresholdSource(source: FactorHypothesis["threshold_source"]) {
+  switch (source) {
+    case "quantile": return "训练窗口分位阈值";
+    case "observed_value": return "训练窗口离散实际值";
+    case "mixed": return "训练窗口分位阈值与离散实际值";
+    default: return "未记录的训练阈值来源";
+  }
+}
+
 function ruleTitle(formula: string) {
   const fields = [...new Set(
     (formula.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])
@@ -307,7 +316,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
               <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>带入分析页</button></div></div>
-              <p>该条件由训练窗口分位阈值生成，按扣除单侧 95% 不确定性惩罚后的相对提升完成排名锁定；同分时优先选择 5% 下行分位和中位收益更高的规则。随后进入独立验证，验证结果未参与重新排序。</p>
+              <p>阈值来源：{thresholdSource(hypothesis.threshold_source)}。规则按扣除单侧 95% 不确定性惩罚后的相对提升完成排名锁定；同分时优先选择 5% 下行分位和中位收益更高的规则。随后进入独立验证，验证结果未参与重新排序。</p>
               <div className="window-comparison">
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>

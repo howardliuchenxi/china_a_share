@@ -2,6 +2,7 @@
 
 from itertools import combinations
 import math
+import re
 from typing import List, Sequence, Tuple
 
 import pandas as pd
@@ -289,19 +290,44 @@ class RuleSearchEngine:
                 < self._min_outcome_coverage
             ):
                 continue
+            threshold_source = self._threshold_source(formula, train)
+            source_phrase = {
+                "quantile": "training-window quantiles",
+                "observed_value": "observed training-window discrete values",
+                "mixed": "training-window quantiles and observed discrete values",
+            }[threshold_source]
             candidates.append(
                 FactorHypothesis(
                     formula=formula,
-                    description=f"Quantile rule using {fields}",
+                    description=f"Training-derived threshold rule using {fields}",
                     reasoning=(
-                        "The condition was generated from training-window quantiles "
-                        "and ranked before independent validation was evaluated."
+                        f"The condition was generated from {source_phrase} and ranked "
+                        "before independent validation was evaluated."
                     ),
+                    threshold_source=threshold_source,
                     train_result=train_result,
                 )
             )
         candidates.sort(key=self._training_rank_key, reverse=True)
         return candidates, len(formulas)
+
+    @staticmethod
+    def _threshold_source(formula: str, train: pd.DataFrame) -> str:
+        """Return the training-only provenance of thresholds in one formula."""
+        formula_tokens = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", formula))
+        referenced_fields = formula_tokens & set(train.columns)
+        sources = set()
+        for field in referenced_fields:
+            numeric = pd.to_numeric(train[field], errors="coerce")
+            finite = numeric[numeric.map(math.isfinite)]
+            sources.add(
+                "observed_value"
+                if finite.nunique() <= MAX_EXHAUSTIVE_DISCRETE_VALUES
+                else "quantile"
+            )
+        if not sources:
+            return "unknown"
+        return next(iter(sources)) if len(sources) == 1 else "mixed"
 
     def _validate_candidates(
         self,
