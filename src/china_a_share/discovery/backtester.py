@@ -430,11 +430,38 @@ class FactorBacktester:
             dependence_lag_days,
         )
         margin = 1.959963984540054 * standard_error
+        hac_lower = max(0.0, probability - margin)
+        hac_upper = min(1.0, probability + margin)
+        score_lower, score_upper = FactorBacktester._wilson_interval(
+            probability * selected_day_count,
+            selected_day_count,
+        )
         return (
-            max(0.0, probability - margin),
-            min(1.0, probability + margin),
+            min(hac_lower, score_lower),
+            max(hac_upper, score_upper),
             standard_error,
             selected_day_count,
+        )
+
+    @staticmethod
+    def _wilson_interval(
+        successes: float,
+        observations: int,
+    ) -> tuple[float, float]:
+        """Return a 95% score interval for an effective Bernoulli sample."""
+        if observations <= 0:
+            return 0.0, 1.0
+        z = 1.959963984540054
+        probability = successes / observations
+        denominator = 1.0 + z * z / observations
+        centre = probability + z * z / (2.0 * observations)
+        margin = z * math.sqrt(
+            probability * (1.0 - probability) / observations
+            + z * z / (4.0 * observations * observations)
+        )
+        return (
+            max(0.0, (centre - margin) / denominator),
+            min(1.0, (centre + margin) / denominator),
         )
 
     @staticmethod

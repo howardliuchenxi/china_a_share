@@ -375,6 +375,32 @@ def test_rule_evaluation_does_not_claim_precision_from_one_trading_day():
     assert result.confidence_upper == 1.0
 
 
+@pytest.mark.parametrize(
+    ("forward_return", "bound"),
+    [(0.10, "lower"), (-0.10, "upper")],
+)
+def test_rule_evaluation_keeps_boundary_probabilities_uncertain(
+    forward_return,
+    bound,
+):
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 21)],
+            "factor": [1.0] * 20,
+            "forward_return": [forward_return] * 20,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    if bound == "lower":
+        assert 0.80 < result.confidence_lower < 1.0
+        assert result.confidence_upper == 1.0
+    else:
+        assert result.confidence_lower == 0.0
+        assert 0.0 < result.confidence_upper < 0.20
+
+
 def test_rule_evaluation_accounts_for_overlap_when_estimating_lift_uncertainty():
     dataset = pd.DataFrame(
         {

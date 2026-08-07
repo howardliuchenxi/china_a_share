@@ -228,13 +228,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         <div className="section-heading"><span>03</span><h2>验证集摘要</h2></div>
         <div className="headline-metrics">
           <div><small>独立验证结论</small><strong className={bestRule.validation_passed ? "metric-positive" : "metric-negative"}>{bestRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>训练排名已锁定</em></div>
-          <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>按 {bestRule.val_result!.trading_day_count} 个交易日聚类：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
+          <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>HAC + {bestRule.val_result!.trading_day_count} 日 score 下限：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
           <div><small>5% 分位收益</small><strong className={bestRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(bestRule.val_result!.return_p05, 2)}</strong><em>{bestRule.val_result!.sample_count} / {bestRule.val_result!.matched_sample_count} 个结果可观测</em></div>
           <div><small>提升检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>HAC 滞后 {bestRule.val_result!.dependence_lag_days} 日 · {bestRule.q_value <= 0.1 ? "通过 10% FDR" : "未通过 10% FDR"}</em></div>
         </div>
-        <p className="research-caveat">排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。每条规则在训练和验证窗口都必须同时满足事件数、独立交易日和未来标签覆盖率门槛；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情、估值或复权因子整批缺失时，研究会直接失败而非使用残缺样本。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间与 q-value 按信号日聚类，并使用持有期感知的 HAC 误差处理相邻信号共享未来收益的问题；提升检验也计入规则与全样本基准的重叠。统计关联仍不代表因果关系。</p>
+        <p className="research-caveat">排行榜名次在训练窗口内锁定，以下验证结果未参与重新排序。每条规则在训练和验证窗口都必须同时满足事件数、独立交易日和未来标签覆盖率门槛；停牌等原因造成的未来价格缺失会保留在分母中，不会被静默当作不存在。未来收益采用前后时点一致的复权收盘价计算；任一必需交易日的行情、估值或复权因子整批缺失时，研究会直接失败而非使用残缺样本。这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间取日期聚类 HAC 与独立交易日 score 区间的保守包络，既处理相邻信号共享收益，也防止全胜或全败样本显示虚假确定性；提升检验还计入规则与全样本基准的重叠。统计关联仍不代表因果关系。</p>
       </section>}
 
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">
