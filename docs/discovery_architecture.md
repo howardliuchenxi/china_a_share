@@ -122,13 +122,15 @@ Reported evidence includes:
   a factor is unavailable for an entire date;
 - a conservative probability interval combining HAC and a signal-date score
   interval;
-- one-sided validation p-values and Benjamini-Yekutieli q-values, whose
+- finite-date, one-sided Student-t validation p-values and Benjamini-Yekutieli
+  q-values, whose
   harmonic penalty controls false discoveries under arbitrary dependence among
   overlapping and nested rules.
 
-The normal-tail significance calculation requires at least twenty independent
-validation signal dates. Shorter studies remain visible for exploration but
-receive `p = 1`, report `insufficient_significance_days`, and cannot pass FDR.
+The Student-t significance calculation uses `trading_day_count - 1` degrees of
+freedom and requires at least twenty independent validation signal dates.
+Shorter studies remain visible for exploration but receive `p = 1`, report
+`insufficient_significance_days`, and cannot pass FDR.
 
 The false-discovery family contains every frozen candidate sent to validation,
 including candidates retained with insufficient validation evidence. A rule

@@ -433,15 +433,51 @@ class RuleSearchEngine:
         standard_error: float,
         trading_day_count: int,
     ) -> float:
-        """Return a one-sided normal tail for date-clustered probability lift."""
+        """Return a one-sided Student-t tail for date-clustered probability lift."""
         if trading_day_count < MINIMUM_SIGNIFICANCE_TRADING_DAYS:
             return 1.0
         if lift <= 0.0:
             return 1.0
         if standard_error <= 0.0:
             return 1.0
-        z_score = lift / standard_error
-        probability = 0.5 * math.erfc(z_score / math.sqrt(2.0))
+        t_score = lift / standard_error
+        return RuleSearchEngine._student_t_survival(
+            t_score,
+            trading_day_count - 1,
+        )
+
+    @staticmethod
+    def _student_t_survival(t_score: float, degrees_freedom: int) -> float:
+        """Return the positive-tail probability for integer Student-t degrees."""
+        if t_score <= 0.0 or degrees_freedom < 1:
+            return 0.5
+        theta = math.atan(t_score / math.sqrt(degrees_freedom))
+        sin_theta = math.sin(theta)
+        cos_theta = math.cos(theta)
+        power = degrees_freedom - 1
+        # With x=sqrt(df)*tan(theta), the t tail becomes a normalized
+        # integral of cos(theta) ** (df - 1). The recurrence is stable for the
+        # bounded integer degrees supplied by distinct trading-day counts.
+        if power % 2 == 0:
+            integral = math.pi / 2.0 - theta
+            current_power = 2
+        else:
+            integral = 1.0 - sin_theta
+            current_power = 3
+        while current_power <= power:
+            integral = (
+                (current_power - 1.0) / current_power * integral
+                - sin_theta
+                * cos_theta ** (current_power - 1)
+                / current_power
+            )
+            current_power += 2
+        log_normalizer = (
+            math.lgamma((degrees_freedom + 1.0) / 2.0)
+            - math.lgamma(degrees_freedom / 2.0)
+            - 0.5 * math.log(math.pi)
+        )
+        probability = math.exp(log_normalizer) * integral
         return min(1.0, max(0.0, probability))
 
     @staticmethod

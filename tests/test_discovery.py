@@ -1931,6 +1931,35 @@ def test_clustered_lift_significance_remains_finite_for_large_samples():
     assert probability < 0.001
 
 
+def test_clustered_lift_significance_uses_finite_date_degrees_of_freedom():
+    probability = RuleSearchEngine._clustered_lift_tail_probability(
+        1.7291328115,
+        1.0,
+        20,
+    )
+
+    assert probability == pytest.approx(0.05, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("t_score", "degrees_freedom", "expected"),
+    [
+        (0.0, 5, 0.5),
+        (1.0, 1, 0.25),
+        (1.0, 2, 0.5 * (1.0 - 1.0 / 3.0**0.5)),
+    ],
+)
+def test_student_t_survival_matches_closed_form_cases(
+    t_score,
+    degrees_freedom,
+    expected,
+):
+    assert RuleSearchEngine._student_t_survival(
+        t_score,
+        degrees_freedom,
+    ) == pytest.approx(expected)
+
+
 def test_clustered_lift_significance_is_conservative_without_variation():
     probability = RuleSearchEngine._clustered_lift_tail_probability(
         0.10,

@@ -1287,7 +1287,10 @@ class FactorHypothesis(BaseModel):
         default=1.0,
         ge=0.0,
         le=1.0,
-        description="One-sided probability that validation lift exceeds zero using clustered uncertainty.",
+        description=(
+            "One-sided Student-t probability for positive validation lift using "
+            "date-clustered uncertainty."
+        ),
     )
     q_value: float = Field(
         default=1.0,
