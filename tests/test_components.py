@@ -30,6 +30,8 @@ from china_a_share.core.errors import PlannerError
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 from china_a_share.planners.vertex_claude import VertexClaudeQueryPlanner
 from china_a_share.registry import TushareOperationCatalog
+from china_a_share.capabilities import build_capability_manifest
+from china_a_share.registry import STOCK_API_NAMES
 
 
 class FakeResponse:
@@ -145,6 +147,61 @@ def test_catalog_and_validator_accept_stock_operation_plan():
         ASharePlanValidator(provider).validate(make_daily_plan()).queries[0].operation
         == "daily"
     )
+
+
+def test_runtime_manifest_covers_every_connected_tushare_operation():
+    class FullyConnectedProvider:
+        name = "tushare"
+        operation_names = STOCK_API_NAMES
+
+        @staticmethod
+        def supports(operation):
+            return operation in STOCK_API_NAMES
+
+    manifest = build_capability_manifest(
+        FullyConnectedProvider(),
+        {"limit_up_streak": lambda: None},
+    )
+
+    assert manifest["provider_operation_count"] == len(STOCK_API_NAMES)
+    assert manifest["tushare_catalog_fully_connected"] is True
+    assert manifest["fingerprint"].startswith("sha256:")
+    assert manifest["capabilities"][0]["id"] == "limit_up_streak"
+    assert (
+        manifest["capabilities"][0]["parameters"]["streak_length"]["minimum"]
+        == 1
+    )
+
+
+def test_registered_limit_up_capability_recovers_variable_streak_plan():
+    plan = QueryPlan(
+        interpretation="The provider has no consecutive-limit-up field.",
+        feasibility="unsupported",
+        requirements=[
+            {
+                "requirement": "Find four-session limit-up streaks.",
+                "status": "unsupported",
+                "implementation": "No direct field was found.",
+                "evidence": "The provider exposes daily limit-up rows.",
+            }
+        ],
+        limitations=["No direct consecutive-limit-up field exists."],
+    )
+
+    AnalysisService._compile_limit_up_streak_pipeline(
+        plan,
+        "20250101至20251231连续涨停四个交易日",
+        4,
+    )
+
+    assert plan.feasibility == "supported"
+    assert [query.operation for query in plan.queries] == ["daily", "limit_list_d"]
+    rolling_step = next(
+        step for step in plan.result_pipeline.steps if step.operation == "rolling_sum"
+    )
+    assert rolling_step.window == 4
+    assert rolling_step.min_periods == 4
+    assert rolling_step.require_consecutive is True
 
 
 def test_validator_rejects_operation_outside_provider_catalog():

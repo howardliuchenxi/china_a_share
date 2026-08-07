@@ -1,5 +1,6 @@
 """Provider-neutral validation, execution, and analysis orchestration."""
 
+import copy
 from datetime import date, datetime, timedelta
 import logging
 import re
@@ -35,6 +36,7 @@ from china_a_share.time_range import (
     resolve_future_horizon,
     resolve_relative_time_range,
 )
+from china_a_share.capabilities import build_capability_manifest
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,8 @@ logger = logging.getLogger(__name__)
 MAX_QUERIES_PER_ANALYSIS = 8
 MAX_DYNAMIC_HOLDER_QUERIES = 6_000
 MAX_BOUNDARY_DATE_PROBES = 10
+TRADING_SESSION_HORIZON_MULTIPLIER = 2
+TRADING_SESSION_HORIZON_BUFFER_DAYS = 7
 HOLDER_FANOUT_LOG_INTERVAL = 50
 HOLDER_PROGRESS_UPDATE_INTERVAL = 25
 VALID_SECURITY_SUFFIXES = (".SH", ".SZ", ".BJ")
@@ -931,6 +935,10 @@ class AnalysisService:
         self._result_pipeline_executor = (
             result_pipeline_executor or ResultPipelineExecutor()
         )
+        self._capability_manifest = build_capability_manifest(
+            provider,
+            {"limit_up_streak": self._compile_limit_up_streak_pipeline},
+        )
 
     @property
     def planner(self) -> QueryPlanner:
@@ -941,6 +949,11 @@ class AnalysisService:
     def data_provider_name(self) -> str:
         """Return the stable provider identity used in public analysis responses."""
         return self._provider.name
+
+    @property
+    def capability_manifest(self) -> Dict[str, Any]:
+        """Return an isolated runtime manifest for the active provider and code."""
+        return copy.deepcopy(self._capability_manifest)
 
     @staticmethod
     def _log_termination(
@@ -983,10 +996,12 @@ class AnalysisService:
             )
         ]
         logger.info(
-            "analysis_started request_id=%s planner=%s provider=%s",
+            "analysis_started request_id=%s planner=%s provider=%s "
+            "capability_fingerprint=%s",
             request_id,
             self._planner.name,
             self._provider.name,
+            self._capability_manifest["fingerprint"],
         )
         try:
             planning_request = self._prepare_planning_request(request_id, request)
@@ -1014,17 +1029,17 @@ class AnalysisService:
                             self._compile_intent(
                                 self._normalize_plan_for_request(
                                     candidate,
-                                    request.prompt,
+                                    planning_request.prompt,
                                 )
                             )
                         ),
-                        request.prompt,
+                        planning_request.prompt,
                     ),
                 )
             else:
                 plan = self._planner.plan(planning_request, operations)
             plan = self._compile_intent(
-                self._normalize_plan_for_request(plan, request.prompt)
+                self._normalize_plan_for_request(plan, planning_request.prompt)
             )
             self._normalize_latest_plan_dates(
                 plan,
@@ -1078,7 +1093,7 @@ class AnalysisService:
             )
             validated_plan = self._validate_planned_time_semantics(
                 self._validator.validate(plan),
-                request.prompt,
+                planning_request.prompt,
             )
             decision_trace.append(
                 DecisionTraceStep(
@@ -1802,7 +1817,6 @@ class AnalysisService:
         AnalysisService._compile_composite_valuation(plan, prompt)
         AnalysisService._normalize_secondary_disclosures(plan, prompt)
         AnalysisService._normalize_suspension_request(plan, prompt)
-        AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         AnalysisService._compile_margin_balance_ranking(plan, prompt)
         AnalysisService._compile_security_moneyflow_comparison(plan, prompt)
 
@@ -1831,6 +1845,9 @@ class AnalysisService:
                 prompt,
                 streak_length,
             )
+        # Hard data boundaries run last so a deterministic capability cannot
+        # accidentally revive a request for unavailable private or order-level data.
+        AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         return plan
 
     @staticmethod
@@ -2557,8 +2574,66 @@ class AnalysisService:
         streak_length: int,
     ) -> None:
         """Compile one validated native limit-up streak analysis deterministically."""
+        horizon = resolve_future_horizon(prompt)
+        event_range = resolve_explicit_time_range(prompt)
         if plan.feasibility != "supported":
-            return
+            if event_range is None:
+                return
+            event_start, event_end = event_range
+            plan.feasibility = "supported"
+            plan.limitations = []
+            plan.intent = None
+            plan.queries = []
+            plan.result_pipeline = None
+            for requirement in plan.requirements:
+                requirement.status = "covered"
+                requirement.implementation = (
+                    "Use the registered limit_up_streak capability with a variable "
+                    "consecutive-session window."
+                )
+                requirement.evidence = (
+                    "Native limit_list_d events are matched to the daily trading "
+                    "sequence before the consecutive-session calculation."
+                )
+            price_end = event_end
+            if horizon is not None:
+                if horizon[1] == "trading_session":
+                    # Calendar headroom keeps later market rows available across
+                    # weekends and ordinary exchange holidays.
+                    price_end = event_end + timedelta(
+                        days=(
+                            horizon[0] * TRADING_SESSION_HORIZON_MULTIPLIER
+                            + TRADING_SESSION_HORIZON_BUFFER_DAYS
+                        )
+                    )
+                else:
+                    price_end = add_calendar_offset(
+                        event_end,
+                        horizon[0],
+                        horizon[1],
+                    )
+            price_query = DataQuery(
+                query_id="limit_up_prices",
+                operation="daily",
+                params={
+                    "start_date": event_start.strftime("%Y%m%d"),
+                    "end_date": price_end.strftime("%Y%m%d"),
+                },
+                fields=["ts_code", "trade_date", "close"],
+                purpose="Retrieve the market sequence for limit-up streak analysis.",
+            )
+            event_query = DataQuery(
+                query_id="limit_up_events",
+                operation="limit_list_d",
+                params={
+                    "start_date": event_start.strftime("%Y%m%d"),
+                    "end_date": event_end.strftime("%Y%m%d"),
+                    "limit_type": "U",
+                },
+                fields=["ts_code", "trade_date"],
+                purpose="Retrieve native limit-up membership for the event window.",
+            )
+            plan.queries.extend((price_query, event_query))
         price_query = next(
             (query for query in plan.queries if query.operation == "daily"),
             None,
@@ -2625,7 +2700,6 @@ class AnalysisService:
             plan.queries.append(event_query)
         if price_query is None or event_query is None:
             return
-        horizon = resolve_future_horizon(prompt)
         if horizon is None:
             if any(token in prompt for token in ("\u4e0b\u4e00\u5929", "\u6b21\u65e5")):
                 horizon = (1, "trading_session")
@@ -2647,6 +2721,36 @@ class AnalysisService:
                             "trading_session",
                         )
         if horizon is None:
+            plan.result_pipeline = ResultPipeline.model_validate(
+                {
+                    "source_query_id": price_query.query_id,
+                    "output_query_id": "limit_up_streaks",
+                    "steps": [
+                        {
+                            "operation": "match_source",
+                            "right_source_query_id": event_query.query_id,
+                            "join_on": ["ts_code", "trade_date"],
+                            "output_field": "is_limit_up",
+                        },
+                        {
+                            "operation": "rolling_sum",
+                            "field": "is_limit_up",
+                            "output_field": "streak_count",
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "window": streak_length,
+                            "min_periods": streak_length,
+                            "require_consecutive": True,
+                        },
+                        {
+                            "operation": "filter",
+                            "field": "streak_count",
+                            "comparison": "eq",
+                            "value": streak_length,
+                        },
+                    ],
+                }
+            )
             return
 
         for field in ("ts_code", "trade_date", "close"):

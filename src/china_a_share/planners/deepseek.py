@@ -20,6 +20,7 @@ from china_a_share.core.contracts import (
     ResultPipelineStep,
 )
 from china_a_share.core.errors import PlannerError
+from china_a_share.capabilities import build_capability_guidance
 
 
 DEEPSEEK_PLANNER_NAME = "deepseek"
@@ -116,6 +117,11 @@ def build_query_plan_system_prompt(
         "user explicitly requested that metric. Never infer unavailable values or "
         "invent data. "
         "If the request asks for ranking, listing, or finding stocks by their return, gains, losses, performance, or price change over a specified month, quarter, year, or explicit date range (e.g. 'A股4月跌幅最大的公司是top10', 'A股4月跌得最多的前十只股票', '4月涨幅最大的前10只股票', '2026-04整月回报最低的十家公司'), you MUST output a high-level intent block matching the AnalysisIntent schema. In this case, do NOT generate detailed queries or a result pipeline yourself; simply document the requirements in requirement_coverage and populate the high-level intent block. The local engine will automatically compile it into deterministic, safe queries and pipeline steps. Ensure start and end inside metric.window are YYYYMMDD format. The ranking direction must be 'asc' for drops, losses, lowest returns, and 'desc' for gains, increases, highest returns.\n\n"
+        "Registered analysis capabilities are executable local code, not raw "
+        "provider fields. When a request matches one, treat its variable parameters "
+        "as inputs and do not reject it merely because the derived result is absent "
+        "from the provider schema.\n"
+        f"{build_capability_guidance()}\n\n"
         f"Operation catalog:\n{guidance}\n\n"
         f"Allowed operation names:\n{allowed_operations}\n\n"
         f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}"

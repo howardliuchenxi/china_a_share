@@ -203,6 +203,11 @@ class TushareDataProvider:
         """Return the stable provider identifier used in results and cache keys."""
         return TUSHARE_PROVIDER_NAME
 
+    @property
+    def operation_names(self) -> Sequence[str]:
+        """Return every Tushare operation connected through the generic transport."""
+        return STOCK_API_NAMES
+
     def search_operations(self, prompt: str) -> Sequence[DataOperation]:
         """Return Tushare stock operations relevant to the user prompt."""
         return self._catalog.search(prompt)

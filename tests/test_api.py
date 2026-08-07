@@ -137,6 +137,21 @@ def test_health_endpoint_reports_backend_availability(caplog):
     assert event["request_id"]
 
 
+def test_capabilities_endpoint_exposes_the_runtime_manifest():
+    service = FakeAnalysisService()
+    service.capability_manifest = {
+        "schema_version": 1,
+        "fingerprint": "sha256:abc",
+        "capabilities": [{"id": "limit_up_streak", "version": 1}],
+    }
+    client = TestClient(create_app(service))
+
+    response = client.get("/api/capabilities")
+
+    assert response.status_code == 200
+    assert response.json() == service.capability_manifest
+
+
 def test_ui_feedback_config_exposes_only_public_values():
     client = TestClient(
         create_app(

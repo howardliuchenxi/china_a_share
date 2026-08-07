@@ -28,6 +28,9 @@ EXPLICIT_RANGE_PATTERN = re.compile(
     r"\s*[～~—–至到]\s*"
     r"(?P<end>\d{8}|\d{4}(?:-\d{1,2}-\d{1,2}|年\d{1,2}月\d{1,2}日?))"
 )
+TRUSTED_RANGE_PATTERN = re.compile(
+    r"event_start_date=(?P<start>\d{8})\s+event_end_date=(?P<end>\d{8})"
+)
 FUTURE_HORIZON_PATTERN = re.compile(
     r"(?:接下来|未来|之后|此后)(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
     r"(?P<unit>个?交易日|天|周|个?月|季度|年)"
@@ -82,7 +85,7 @@ def resolve_relative_time_range(
 
 def resolve_explicit_time_range(prompt: str) -> Optional[Tuple[date, date]]:
     """Resolve an explicit compact date range from a natural-language request."""
-    match = EXPLICIT_RANGE_PATTERN.search(prompt)
+    match = EXPLICIT_RANGE_PATTERN.search(prompt) or TRUSTED_RANGE_PATTERN.search(prompt)
     if match is None:
         return None
     start = _parse_date_token(match.group("start"))
