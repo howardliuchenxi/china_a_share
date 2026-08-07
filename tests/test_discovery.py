@@ -696,6 +696,27 @@ def test_rule_search_deduplicates_equivalent_discrete_thresholds():
     assert len(selected_sets) == len(set(selected_sets))
 
 
+def test_rule_search_deduplicates_thresholds_after_formula_rounding():
+    dataset = pd.DataFrame(
+        {
+            "value": [1.0 + index * 1e-11 for index in range(100)],
+        }
+    )
+
+    conditions = RuleSearchEngine(min_sample_count=2)._build_conditions(
+        dataset,
+        ["value"],
+    )
+
+    formulas = [formula for formula, _ in conditions]
+    selected_sets = [
+        tuple(dataset.query(formula).index)
+        for formula in formulas
+    ]
+    assert len(formulas) == len(set(formulas))
+    assert len(selected_sets) == len(set(selected_sets))
+
+
 def test_rule_search_discovers_a_same_factor_middle_interval():
     dataset = pd.DataFrame(
         {

@@ -116,17 +116,19 @@ class RuleSearchEngine:
             for operator in ("<=", ">="):
                 for quantile in SEARCH_QUANTILES:
                     threshold = float(numeric.quantile(quantile))
+                    threshold_text = f"{threshold:.10g}"
+                    executable_threshold = float(threshold_text)
                     selection = (
-                        train[factor] <= threshold
+                        train[factor] <= executable_threshold
                         if operator == "<="
-                        else train[factor] >= threshold
+                        else train[factor] >= executable_threshold
                     )
                     signature = selection.to_numpy(dtype=bool).tobytes()
                     if signature in seen_selections:
                         continue
                     seen_selections.add(signature)
                     conditions.append(
-                        (f"{factor} {operator} {threshold:.10g}", factor)
+                        (f"{factor} {operator} {threshold_text}", factor)
                     )
         return conditions
 
