@@ -80,6 +80,8 @@ export interface QueryPlan {
   requirements: RequirementCoverage[];
   /** Missing capabilities that prevent faithful execution. */
   limitations: string[];
+  /** Complete alternative prompts that resolve material ambiguity. */
+  clarification_options: string[];
   /** Optional deterministic operations applied to one or more query results. */
   result_pipeline?: {
     /** Query result consumed as the pipeline input. */

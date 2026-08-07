@@ -665,6 +665,14 @@ class QueryPlan(BaseModel):
         default_factory=list,
         description="Concrete missing capabilities that prevent faithful execution.",
     )
+    clarification_options: List[str] = Field(
+        default_factory=list,
+        max_length=3,
+        description=(
+            "Alternative complete prompts that resolve material ambiguity in the "
+            "original request and can be submitted without further editing."
+        ),
+    )
     result_pipeline: Optional[ResultPipeline] = Field(
         default=None,
         description="Optional deterministic relational pipeline over one query result.",

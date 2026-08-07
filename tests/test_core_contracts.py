@@ -97,6 +97,28 @@ def test_supported_query_plan_requires_an_executable_query():
         QueryPlan(interpretation="An empty plan must not claim support.")
 
 
+def test_query_plan_accepts_three_clarification_options():
+    query = DataQuery(
+        query_id="cashflow",
+        operation="cashflow",
+        params={"ts_code": "000001.SZ"},
+        fields=["ts_code", "end_date", "n_cashflow_act"],
+        purpose="Retrieve operating cash flow.",
+    )
+
+    plan = QueryPlan(
+        interpretation="Rank operating cash flow with an ambiguous universe.",
+        queries=[query],
+        clarification_options=[
+            "Rank the top 3 A-shares by latest operating cash flow.",
+            "Rank the top 3 auto stocks by operating cash flow per share.",
+            "Rank the top 3 auto stocks by operating cash flow to market value.",
+        ],
+    )
+
+    assert len(plan.clarification_options) == 3
+
+
 def test_analysis_response_records_planner_and_data_provider():
     result = QueryResult(
         query_id="q1",

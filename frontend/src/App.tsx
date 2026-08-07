@@ -454,21 +454,49 @@ function formatPlanDisclosure(disclosure: string): string {
   return disclosure;
 }
 
-function PlanDisclosure({ response }: { response: AnalysisResponse }) {
+function PlanDisclosure({
+  response,
+  onSelectOption,
+  disabled,
+}: {
+  response: AnalysisResponse;
+  onSelectOption: (prompt: string) => void;
+  disabled: boolean;
+}) {
   if (
     response.plan?.feasibility !== "supported"
-    || response.plan.limitations.length === 0
+    || (
+      response.plan.limitations.length === 0
+      && response.plan.clarification_options.length === 0
+    )
   ) {
     return null;
   }
   return (
     <aside className="disclosure-card" role="note">
       <strong>{"\u53e3\u5f84\u8bf4\u660e"}</strong>
-      <ul>
-        {response.plan.limitations.map((item) => (
-          <li key={item}>{formatPlanDisclosure(item)}</li>
-        ))}
-      </ul>
+      {response.plan.limitations.length > 0 && (
+        <ul>
+          {response.plan.limitations.map((item) => (
+            <li key={item}>{formatPlanDisclosure(item)}</li>
+          ))}
+        </ul>
+      )}
+      {response.plan.clarification_options.length > 0 && (
+        <div className="clarification-options">
+          <p>请选择一个明确口径重新分析：</p>
+          {response.plan.clarification_options.map((option) => (
+            <button
+              type="button"
+              key={option}
+              disabled={disabled}
+              onClick={() => onSelectOption(option)}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
     </aside>
   );
 }
@@ -1253,9 +1281,8 @@ export default function App() {
     setAnalysisImageName("");
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const submittedPrompt = prompt.trim();
+  async function runAnalysis(rawPrompt: string) {
+    const submittedPrompt = rawPrompt.trim();
     if (!submittedPrompt || isLoading || isImageReading) return;
     const nextPromptHistory = [
       submittedPrompt,
@@ -1289,6 +1316,16 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void runAnalysis(prompt);
+  }
+
+  function handleClarificationOption(option: string) {
+    setPrompt(option);
+    void runAnalysis(option);
   }
 
   return (
@@ -1488,7 +1525,13 @@ export default function App() {
               )}
             </div>
           )}
-        {response && <PlanDisclosure response={response} />}
+        {response && (
+          <PlanDisclosure
+            response={response}
+            disabled={isLoading || isImageReading}
+            onSelectOption={handleClarificationOption}
+          />
+        )}
         {(() => {
           if (!response?.results) return null;
           const grouped = groupResults(response.results, response.plan?.queries || []);

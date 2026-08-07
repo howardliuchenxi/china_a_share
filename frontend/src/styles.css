@@ -467,6 +467,22 @@ button:disabled {
   margin-top: 6px;
 }
 
+.clarification-options {
+  margin-top: 14px;
+}
+
+.clarification-options p {
+  margin: 0 0 8px;
+  color: #526059;
+}
+
+.clarification-options button {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  text-align: left;
+}
+
 .empty-output {
   margin: 0;
   color: #657169;
