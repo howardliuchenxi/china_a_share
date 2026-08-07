@@ -200,6 +200,41 @@ export interface QueryResult {
     function: "count" | "sum" | "mean" | "min" | "max";
     /** Formatting and scaling semantics for the numeric value. */
     value_format: "number" | "percentage_points" | "ratio";
+    /** Deterministic expression evaluated to produce the metric. */
+    formula: string;
+    /** Provider or source-result fields used by the expression. */
+    source_fields: string[];
+    /** Ordered operations executed before the final aggregation. */
+    calculation_steps: Array<{
+      /** Allowlisted operation that was actually executed. */
+      operation: string;
+      /** Existing fields read by this operation. */
+      input_fields: string[];
+      /** New fields produced by this operation. */
+      output_fields: string[];
+      /** Validated non-field parameters that control the operation. */
+      parameters: Record<string, unknown>;
+    }>;
+    /** Rows available before the calculation pipeline started. */
+    initial_sample_count: number | null;
+    /** Non-null observations consumed by the final aggregation. */
+    valid_sample_count: number | null;
+  }>;
+  /** Calculation semantics keyed by generated result column. */
+  column_metadata?: Record<string, {
+    /** Deterministic expression evaluated to produce the column. */
+    formula: string;
+    /** Provider or source-result fields used by the expression. */
+    source_fields: string[];
+    /** Ordered operations executed to produce the column. */
+    calculation_steps: Array<{
+      operation: string;
+      input_fields: string[];
+      output_fields: string[];
+      parameters: Record<string, unknown>;
+    }>;
+    /** Formatting and scaling semantics for the column values. */
+    value_format: "number" | "percentage_points" | "ratio";
   }>;
   /** Upstream error details when this query failed. */
   error: ServiceError | null;

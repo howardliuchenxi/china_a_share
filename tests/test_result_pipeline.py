@@ -515,18 +515,32 @@ def test_pipeline_matches_another_source_and_summarizes_a_parameterized_streak()
         "Event count": 1,
         "Probability (%)": 100.0,
     }
-    assert result.summary_metadata["Event count"].model_dump() == {
-        "output_field": "event_count",
-        "source_field": "next_up",
-        "function": "count",
-        "value_format": "number",
-    }
-    assert result.summary_metadata["Probability (%)"].model_dump() == {
-        "output_field": "probability_pct",
-        "source_field": "next_up_pct",
-        "function": "mean",
-        "value_format": "percentage_points",
-    }
+    event_metadata = result.summary_metadata["Event count"]
+    assert event_metadata.output_field == "event_count"
+    assert event_metadata.function == "count"
+    assert event_metadata.formula == "count((shift(pct_chg, -1) > 0))"
+    assert event_metadata.source_fields == ["pct_chg"]
+    assert event_metadata.initial_sample_count == 4
+    assert event_metadata.valid_sample_count == 1
+    assert [step.operation for step in event_metadata.calculation_steps] == [
+        step.operation for step in pipeline.steps[:-1]
+    ]
+
+    probability_metadata = result.summary_metadata["Probability (%)"]
+    assert probability_metadata.output_field == "probability_pct"
+    assert probability_metadata.function == "mean"
+    assert probability_metadata.value_format == "percentage_points"
+    assert probability_metadata.formula == (
+        "mean(((shift(pct_chg, -1) > 0) * 100))"
+    )
+    assert probability_metadata.source_fields == ["pct_chg"]
+    assert probability_metadata.valid_sample_count == 1
+    assert result.column_metadata["probability_pct"].formula == (
+        "mean(((shift(pct_chg, -1) > 0) * 100))"
+    )
+    assert result.column_metadata["probability_pct"].source_fields == [
+        "pct_chg"
+    ]
 
 
 @pytest.mark.parametrize("streak_length", [3, 4, 5])

@@ -700,6 +700,24 @@ button:disabled {
 .summary-grid dt { color: #526059; font-size: 0.76rem; }
 .summary-grid dd { margin: 6px 0 0; font-family: Georgia, serif; font-size: 1.8rem; }
 
+.summary-explanation {
+  margin-top: 10px;
+  color: #46534c;
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.summary-explanation summary {
+  cursor: pointer;
+  color: #2f6b50;
+  font-weight: 700;
+}
+
+.summary-explanation p { margin: 8px 0; }
+.summary-explanation code { overflow-wrap: anywhere; white-space: normal; }
+.summary-explanation ol { margin: 8px 0 0; padding-left: 18px; }
+.summary-explanation li + li { margin-top: 4px; }
+
 .record-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));

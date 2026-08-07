@@ -127,6 +127,45 @@ const SUMMARY_FUNCTION_LABELS = {
   max: "\u6700\u5927\u503c",
 } as const;
 
+const CALCULATION_OPERATION_LABELS: Record<string, string> = {
+  latest_by_group: "\u6309\u5206\u7ec4\u53d6\u6700\u65b0\u8bb0\u5f55",
+  derive: "\u8ba1\u7b97\u6d3e\u751f\u5b57\u6bb5",
+  drop_missing: "\u6392\u9664\u7f3a\u5931\u6837\u672c",
+  filter: "\u6309\u6761\u4ef6\u7b5b\u9009",
+  sort: "\u6392\u5e8f",
+  limit: "\u9650\u5236\u7ed3\u679c\u6570\u91cf",
+  quantile_filter: "\u6309\u5206\u4f4d\u6570\u7b5b\u9009",
+  aggregate: "\u5206\u7ec4\u6c47\u603b",
+  rolling_mean: "\u8ba1\u7b97\u6eda\u52a8\u5e73\u5747",
+  rolling_sum: "\u8ba1\u7b97\u6eda\u52a8\u6c42\u548c",
+  shift: "\u6309\u987a\u5e8f\u504f\u79fb\u53d6\u503c",
+  match_at_offset: "\u5339\u914d\u76ee\u6807\u89c2\u5bdf\u65f6\u70b9",
+  match_source: "\u5339\u914d\u5916\u90e8\u4e8b\u4ef6\u6570\u636e",
+  exists_in_source: "\u68c0\u67e5\u5916\u90e8\u6570\u636e\u662f\u5426\u5b58\u5728",
+  join_fields: "\u5173\u8054\u5916\u90e8\u5b57\u6bb5",
+  compare_fields: "\u6bd4\u8f83\u4e24\u4e2a\u5b57\u6bb5",
+  compare_scalar: "\u4e0e\u56fa\u5b9a\u503c\u6bd4\u8f83",
+  conditional_count: "\u7edf\u8ba1\u6ee1\u8db3\u6761\u4ef6\u7684\u8bb0\u5f55",
+};
+
+function calculationStepDescription(
+  step: NonNullable<QueryResult["summary_metadata"]>[string]["calculation_steps"][number],
+): string {
+  const operation = CALCULATION_OPERATION_LABELS[step.operation] ?? step.operation;
+  const inputs = (step.input_fields ?? []).map(
+    (field) => resultColumnMetadata[field]?.label ?? field,
+  );
+  const outputs = step.output_fields ?? [];
+  const fieldDescription = [
+    inputs.length > 0 ? `\u8f93\u5165\uff1a${inputs.join("\u3001")}` : "",
+    outputs.length > 0 ? `\u8f93\u51fa\uff1a${outputs.join("\u3001")}` : "",
+  ].filter(Boolean).join("\uff1b");
+  const parameters = Object.keys(step.parameters ?? {}).length > 0
+    ? `\uff1b\u53c2\u6570\uff1a${JSON.stringify(step.parameters)}`
+    : "";
+  return `${operation}${fieldDescription ? `\uff08${fieldDescription}\uff09` : ""}${parameters}`;
+}
+
 function summaryDescription(
   label: string,
   metadata: NonNullable<QueryResult["summary_metadata"]>[string] | undefined,
@@ -219,11 +258,29 @@ function TermHelp({ label, description }: { label: string; description: string }
   );
 }
 
-function ColumnHelp({ column }: { column: string }) {
+function ColumnHelp({
+  column,
+  calculation,
+}: {
+  column: string;
+  calculation?: NonNullable<QueryResult["column_metadata"]>[string];
+}) {
   const metadata = resultColumnMetadata[column];
-  let description = metadata?.description
-    ?? `数据源返回的 ${column} 字段，具体统计口径遵循当前接口定义。`;
-  if (metadata?.formula && metadata.formula !== "-") {
+  let description = calculation
+    ? `\u8be5\u5b57\u6bb5\u7531\u7cfb\u7edf\u786e\u5b9a\u6027\u8ba1\u7b97\u751f\u6210\u3002\u8ba1\u7b97\u516c\u5f0f\uff1a${calculation.formula}\u3002`
+    : metadata?.description
+      ?? `数据源返回的 ${column} 字段，具体统计口径遵循当前接口定义。`;
+  if (calculation) {
+    const sources = calculation.source_fields.map(
+      (field) => resultColumnMetadata[field]?.label ?? field,
+    );
+    description += ` \u539f\u59cb\u5b57\u6bb5\uff1a${sources.join("\u3001") || "\u65e0"}\u3002`;
+    if (calculation.calculation_steps.length > 0) {
+      description += ` \u8ba1\u7b97\u6b65\u9aa4\uff1a${calculation.calculation_steps.map(
+        calculationStepDescription,
+      ).join("\uff1b")}\u3002`;
+    }
+  } else if (metadata?.formula && metadata.formula !== "-") {
     description += ` 计算公式：${metadata.formula}`;
   }
   return <TermHelp label={metadata?.label ?? column} description={description} />;
@@ -541,6 +598,37 @@ function ResultTable({
                 )}
               </dt>
               <dd>{formatSummaryValue(label, value, result.summary_metadata?.[label])}</dd>
+              {result.summary_metadata?.[label]?.formula && (
+                <details className="summary-explanation">
+                  <summary>{"\u67e5\u770b\u5b8c\u6574\u53e3\u5f84"}</summary>
+                  <p>
+                    <strong>{"\u8ba1\u7b97\u516c\u5f0f\uff1a"}</strong>
+                    <code>{result.summary_metadata[label].formula}</code>
+                  </p>
+                  <p>
+                    <strong>{"\u539f\u59cb\u5b57\u6bb5\uff1a"}</strong>
+                    {result.summary_metadata[label].source_fields.map(
+                      (field) => resultColumnMetadata[field]?.label ?? field,
+                    ).join("\u3001") || "\u65e0"}
+                  </p>
+                  <p>
+                    <strong>{"\u6837\u672c\u53e3\u5f84\uff1a"}</strong>
+                    {result.summary_metadata[label].initial_sample_count ?? "\u672a\u77e5"}
+                    {" \u6761\u539f\u59cb\u8bb0\u5f55\uff0c"}
+                    {result.summary_metadata[label].valid_sample_count ?? "\u672a\u77e5"}
+                    {" \u6761\u6709\u6548\u6837\u672c"}
+                  </p>
+                  {result.summary_metadata[label].calculation_steps.length > 0 && (
+                    <ol>
+                      {result.summary_metadata[label].calculation_steps.map((step, index) => (
+                        <li key={`${step.operation}-${index}`}>
+                          {calculationStepDescription(step)}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </details>
+              )}
             </div>
           ))}
         </dl>
@@ -565,7 +653,7 @@ function ResultTable({
             <div key={column}>
               <dt>
                 <span>{resultColumnMetadata[column]?.label ?? column}</span>
-                <ColumnHelp column={column} />
+                <ColumnHelp column={column} calculation={result.column_metadata?.[column]} />
               </dt>
               <dd>{formatResultValue(result.operation, column, result.rows[0][column], result.rows[0])}</dd>
               {resultColumnMetadata[column] && <small>{column}</small>}
@@ -594,7 +682,7 @@ function ResultTable({
                         {resultColumnMetadata[column] && <small>{column}</small>}
                         <i aria-hidden="true">{isActive ? sortDirection === "ascending" ? "↑" : "↓" : "↕"}</i>
                       </button>
-                      <ColumnHelp column={column} />
+                      <ColumnHelp column={column} calculation={result.column_metadata?.[column]} />
                     </div>
                   </th>
                 );
@@ -1380,6 +1468,7 @@ export default function App() {
               const combinedRowCount = group.results!.reduce((sum, r) => sum + r.row_count, 0);
               const combinedSummary: Record<string, number | null> = {};
               const combinedSummaryMetadata: NonNullable<QueryResult["summary_metadata"]> = {};
+              const combinedColumnMetadata: NonNullable<QueryResult["column_metadata"]> = {};
               for (const r of group.results!) {
                 for (const [key, val] of Object.entries(r.summary)) {
                   if (val === null) {
@@ -1391,6 +1480,7 @@ export default function App() {
                   }
                 }
                 Object.assign(combinedSummaryMetadata, r.summary_metadata);
+                Object.assign(combinedColumnMetadata, r.column_metadata);
               }
               const virtualResult: QueryResult = {
                 query_id: group.key,
@@ -1402,6 +1492,7 @@ export default function App() {
                 row_count: combinedRowCount,
                 summary: combinedSummary,
                 summary_metadata: combinedSummaryMetadata,
+                column_metadata: combinedColumnMetadata,
                 error: null,
               };
               return (

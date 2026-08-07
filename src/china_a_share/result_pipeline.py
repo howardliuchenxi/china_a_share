@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Mapping, Optional
+from typing import Callable, Dict, Mapping, Optional, Set, Tuple
 
 import pandas as pd
 
 from china_a_share.core.contracts import (
+    CalculationTraceStep,
+    ColumnCalculationMetadata,
     QueryResult,
     QueryStatus,
     ResultPipeline,
@@ -38,7 +40,10 @@ class ResultPipelineExecutor:
         source_row_count = len(frame)
         source_results = dict(sources or {})
         source_results.setdefault(source.query_id, source)
+        summary_input_frame: Optional[pd.DataFrame] = None
         for step in pipeline.steps:
+            if step.operation == "summarize":
+                summary_input_frame = frame.copy()
             frame = self._execute_step(frame, step, source_results)
         self._validate_result_invariants(pipeline, frame)
         rows = (
@@ -68,6 +73,12 @@ class ResultPipelineExecutor:
                 for aggregation in summarize_step.aggregations
             }
         summary_metadata = {}
+        formulas, dependencies = self._build_field_lineage(pipeline)
+        trace = [
+            self._build_trace_step(step)
+            for step in pipeline.steps
+            if step.operation != "summarize"
+        ]
         if summarize_step is not None:
             summary_metadata = {
                 aggregation.label or aggregation.output_field: SummaryMetricMetadata(
@@ -75,9 +86,34 @@ class ResultPipelineExecutor:
                     source_field=aggregation.field,
                     function=aggregation.function,
                     value_format=self._summary_value_format(aggregation.output_field),
+                    formula=(
+                        f"{aggregation.function}("
+                        f"{formulas.get(aggregation.field, aggregation.field)})"
+                    ),
+                    source_fields=sorted(
+                        dependencies.get(aggregation.field, {aggregation.field})
+                    ),
+                    calculation_steps=trace,
+                    initial_sample_count=source_row_count,
+                    valid_sample_count=(
+                        int(summary_input_frame[aggregation.field].notna().sum())
+                        if summary_input_frame is not None
+                        and aggregation.field in summary_input_frame.columns
+                        else None
+                    ),
                 )
                 for aggregation in summarize_step.aggregations
             }
+        column_metadata = {
+            column: ColumnCalculationMetadata(
+                formula=formulas[column],
+                source_fields=sorted(dependencies.get(column, {column})),
+                calculation_steps=self._steps_through_output(trace, column),
+                value_format=self._summary_value_format(column),
+            )
+            for column in frame.columns
+            if column in formulas
+        }
         return QueryResult(
             query_id=pipeline.output_query_id,
             provider=source.provider,
@@ -88,7 +124,158 @@ class ResultPipelineExecutor:
             row_count=len(rows),
             summary=summary,
             summary_metadata=summary_metadata,
+            column_metadata=column_metadata,
         )
+
+    @staticmethod
+    def _steps_through_output(
+        trace: list[CalculationTraceStep],
+        output_field: str,
+    ) -> list[CalculationTraceStep]:
+        """Return the executed trace through the step that produced one field."""
+        producing_index = next(
+            (
+                index
+                for index, step in enumerate(trace)
+                if output_field in step.output_fields
+            ),
+            len(trace) - 1,
+        )
+        return trace[: producing_index + 1]
+
+    @staticmethod
+    def _build_trace_step(step: ResultPipelineStep) -> CalculationTraceStep:
+        """Expose only validated parameters from one executed pipeline step."""
+        input_fields = [
+            field
+            for field in [step.field, step.right_field, step.order_by]
+            if field
+        ]
+        input_fields.extend(step.group_by)
+        input_fields.extend(step.join_on)
+        if isinstance(step.fields, list):
+            input_fields.extend(step.fields)
+        elif isinstance(step.fields, dict):
+            input_fields.extend(step.fields.keys())
+        output_fields = [
+            field
+            for field in [step.output_field, step.matched_date_output_field]
+            if field
+        ]
+        if isinstance(step.fields, dict):
+            output_fields.extend(step.fields.values())
+        excluded = {
+            "operation",
+            "field",
+            "right_field",
+            "order_by",
+            "group_by",
+            "join_on",
+            "fields",
+            "output_field",
+            "matched_date_output_field",
+            "aggregations",
+        }
+        parameters = {
+            key: value
+            for key, value in step.model_dump(exclude_none=True).items()
+            if key not in excluded and value not in ([], {}, False)
+        }
+        return CalculationTraceStep(
+            operation=step.operation,
+            input_fields=list(dict.fromkeys(input_fields)),
+            output_fields=list(dict.fromkeys(output_fields)),
+            parameters=parameters,
+        )
+
+    @staticmethod
+    def _build_field_lineage(
+        pipeline: ResultPipeline,
+    ) -> Tuple[Dict[str, str], Dict[str, Set[str]]]:
+        """Build formulas and leaf dependencies from validated pipeline operations."""
+        formulas: Dict[str, str] = {}
+        dependencies: Dict[str, Set[str]] = {}
+
+        def expression(field: str) -> str:
+            return formulas.get(field, field)
+
+        def sources(field: str) -> Set[str]:
+            return dependencies.get(field, {field})
+
+        binary_symbols = {
+            "add": "+",
+            "subtract": "-",
+            "multiply": "*",
+            "divide": "/",
+        }
+        comparison_symbols = {
+            "gt": ">",
+            "ge": ">=",
+            "eq": "=",
+            "le": "<=",
+            "lt": "<",
+        }
+        for step in pipeline.steps:
+            if step.operation == "derive" and step.output_field and step.field:
+                right = expression(step.right_field) if step.right_field else str(step.value)
+                left = expression(step.field)
+                if step.arithmetic_operator == "constant_minus":
+                    formulas[step.output_field] = f"({step.value} - {left})"
+                else:
+                    formulas[step.output_field] = (
+                        f"({left} {binary_symbols[step.arithmetic_operator]} {right})"
+                    )
+                dependencies[step.output_field] = sources(step.field) | (
+                    sources(step.right_field) if step.right_field else set()
+                )
+            elif step.operation in {"compare_scalar", "compare_fields"} and step.output_field and step.field:
+                right = expression(step.right_field) if step.right_field else str(step.value)
+                formulas[step.output_field] = (
+                    f"({expression(step.field)} {comparison_symbols[step.comparison]} {right})"
+                )
+                dependencies[step.output_field] = sources(step.field) | (
+                    sources(step.right_field) if step.right_field else set()
+                )
+            elif step.operation in {"rolling_mean", "rolling_sum"} and step.output_field and step.field:
+                function = "rolling_mean" if step.operation == "rolling_mean" else "rolling_sum"
+                formulas[step.output_field] = f"{function}({expression(step.field)}, {step.window})"
+                dependencies[step.output_field] = sources(step.field)
+            elif step.operation == "shift" and step.output_field and step.field:
+                formulas[step.output_field] = f"shift({expression(step.field)}, {step.periods})"
+                dependencies[step.output_field] = sources(step.field)
+            elif step.operation == "match_at_offset" and step.output_field and step.field:
+                formulas[step.output_field] = (
+                    f"match_at_offset({expression(step.field)}, "
+                    f"{step.offset_value} {step.offset_unit})"
+                )
+                dependencies[step.output_field] = sources(step.field)
+                if step.matched_date_output_field:
+                    formulas[step.matched_date_output_field] = (
+                        f"matched_date({step.offset_value} {step.offset_unit})"
+                    )
+                    dependencies[step.matched_date_output_field] = {
+                        step.order_by
+                    }
+            elif step.operation in {"match_source", "exists_in_source"} and step.output_field:
+                formulas[step.output_field] = (
+                    f"{step.operation}({step.right_source_query_id}, "
+                    f"{', '.join(step.join_on)})"
+                )
+                dependencies[step.output_field] = set(step.join_on)
+            elif step.operation == "join_fields" and isinstance(step.fields, dict):
+                for source_field, output_field in step.fields.items():
+                    formulas[output_field] = f"{step.right_source_query_id}.{source_field}"
+                    dependencies[output_field] = {source_field}
+            elif step.operation in {"aggregate", "summarize"}:
+                for aggregation in step.aggregations:
+                    formulas[aggregation.output_field] = (
+                        f"{aggregation.function}("
+                        f"{expression(aggregation.field)})"
+                    )
+                    dependencies[aggregation.output_field] = sources(
+                        aggregation.field
+                    )
+        return formulas, dependencies
 
     @staticmethod
     def _summary_value_format(output_field: str) -> str:

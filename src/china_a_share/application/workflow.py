@@ -11,6 +11,7 @@ import pandas as pd
 
 from china_a_share.cache import request_cache_metrics, request_cache_metrics_lock
 from china_a_share.core.contracts import (
+    CalculationTraceStep,
     AnalysisRequest,
     AnalysisResponse,
     DataQuery,
@@ -516,6 +517,25 @@ class DataQueryExecutor:
                         source_field=aggregation.field,
                         function="count",
                         value_format="number",
+                        formula=(
+                            f"count_if({aggregation.field} "
+                            f"{aggregation.operator} {aggregation.value})"
+                        ),
+                        source_fields=[aggregation.field],
+                        calculation_steps=[
+                            CalculationTraceStep(
+                                operation="conditional_count",
+                                input_fields=[aggregation.field],
+                                parameters={
+                                    "operator": aggregation.operator,
+                                    "value": aggregation.value,
+                                },
+                            )
+                        ],
+                        initial_sample_count=len(frame),
+                        valid_sample_count=int(
+                            frame[aggregation.field].notna().sum()
+                        ),
                     )
                     for aggregation in query.aggregations
                 },

@@ -748,6 +748,30 @@ class ServiceError(BaseModel):
     )
 
 
+class CalculationTraceStep(BaseModel):
+    """One deterministic operation that contributes to a displayed result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Allowlisted operation that was actually executed.",
+    )
+    input_fields: List[str] = Field(
+        default_factory=list,
+        description="Existing fields read by this operation.",
+    )
+    output_fields: List[str] = Field(
+        default_factory=list,
+        description="New fields produced by this operation.",
+    )
+    parameters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Validated non-field parameters that control the operation.",
+    )
+
+
 class SummaryMetricMetadata(BaseModel):
     """Calculation and display semantics for one summary metric."""
 
@@ -768,6 +792,50 @@ class SummaryMetricMetadata(BaseModel):
     )
     value_format: Literal["number", "percentage_points", "ratio"] = Field(
         description="Formatting and scaling semantics for the numeric value.",
+    )
+    formula: str = Field(
+        default="",
+        description="Deterministic expression evaluated to produce the metric.",
+    )
+    source_fields: List[str] = Field(
+        default_factory=list,
+        description="Provider or source-result fields used by the expression.",
+    )
+    calculation_steps: List[CalculationTraceStep] = Field(
+        default_factory=list,
+        description="Ordered operations executed before the final aggregation.",
+    )
+    initial_sample_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Rows available before the result pipeline was executed.",
+    )
+    valid_sample_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Non-null observations consumed by the final aggregation.",
+    )
+
+
+class ColumnCalculationMetadata(BaseModel):
+    """Deterministic calculation semantics for one generated result column."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    formula: str = Field(
+        min_length=1,
+        description="Deterministic expression evaluated to produce the column.",
+    )
+    source_fields: List[str] = Field(
+        default_factory=list,
+        description="Provider or source-result fields used by the expression.",
+    )
+    calculation_steps: List[CalculationTraceStep] = Field(
+        default_factory=list,
+        description="Ordered operations executed to produce the column.",
+    )
+    value_format: Literal["number", "percentage_points", "ratio"] = Field(
+        description="Formatting and scaling semantics for the column values.",
     )
 
 
@@ -816,6 +884,10 @@ class QueryResult(BaseModel):
     summary_metadata: Dict[str, SummaryMetricMetadata] = Field(
         default_factory=dict,
         description="Display and calculation metadata for each summary entry.",
+    )
+    column_metadata: Dict[str, ColumnCalculationMetadata] = Field(
+        default_factory=dict,
+        description="Calculation metadata keyed by generated result column.",
     )
     error: Optional[ServiceError] = Field(
         default=None,
