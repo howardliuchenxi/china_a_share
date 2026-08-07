@@ -127,8 +127,32 @@ def test_research_dataset_derives_point_in_time_sequence_features():
     assert dataset["volatility_5d_pct"].tolist() == pytest.approx(
         [expected_volatility]
     )
+    assert dataset["max_drawdown_5d_pct"].tolist() == [0.0]
     assert dataset["positive_days_3"].tolist() == [3.0]
     assert dataset["forward_return"].tolist() == pytest.approx([1.0 / 15.0 - 1.0])
+
+
+def test_research_dataset_derives_point_in_time_max_drawdown():
+    trade_dates = [f"202601{index:02d}" for index in range(5, 12)]
+    closes = [10.0, 12.0, 9.0, 11.0, 8.0, 10.0, 1000.0]
+    executor = FakeQueryExecutor(
+        trade_dates,
+        {date: [{"ts_code": "000001.SZ"}] for date in trade_dates},
+        {
+            date: [{"ts_code": "000001.SZ", "close": closes[index]}]
+            for index, date in enumerate(trade_dates)
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260110",
+        "20260110",
+        forward_days=1,
+    )
+
+    assert dataset["max_drawdown_5d_pct"].tolist() == pytest.approx(
+        [(8.0 / 12.0 - 1.0) * 100.0]
+    )
 
 
 def test_sequence_features_reject_non_consecutive_security_history():
@@ -165,9 +189,11 @@ def test_sequence_features_reject_non_consecutive_security_history():
 
     assert pd.isna(dataset.loc["000001.SZ", "return_5d_pct"])
     assert pd.isna(dataset.loc["000001.SZ", "volatility_5d_pct"])
+    assert pd.isna(dataset.loc["000001.SZ", "max_drawdown_5d_pct"])
     assert pd.isna(dataset.loc["000001.SZ", "positive_days_3"])
     assert dataset.loc["000002.SZ", "positive_days_3"] == 3.0
     assert pd.notna(dataset.loc["000002.SZ", "volatility_5d_pct"])
+    assert dataset.loc["000002.SZ", "max_drawdown_5d_pct"] == 0.0
 
 
 def test_research_dataset_resolves_forward_returns_across_a_long_market_closure():
@@ -1946,10 +1972,16 @@ def test_discovery_request_accepts_point_in_time_sequence_factors():
         train_end="20251231",
         val_start="20260101",
         val_end="20260630",
-        factors=["positive_days_3", "return_5d_pct", "volatility_5d_pct"],
+        factors=[
+            "max_drawdown_5d_pct",
+            "positive_days_3",
+            "return_5d_pct",
+            "volatility_5d_pct",
+        ],
     )
 
     assert request.factors == [
+        "max_drawdown_5d_pct",
         "positive_days_3",
         "return_5d_pct",
         "volatility_5d_pct",

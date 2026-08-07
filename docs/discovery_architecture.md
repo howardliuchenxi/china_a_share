@@ -51,8 +51,9 @@ prices.
 
 The dataset also derives point-in-time historical features without an extra
 provider source: split-and-dividend-adjusted five-session return, population
-standard deviation of the five adjusted daily returns, and the number of
-positive adjusted-close returns across the latest three consecutive market sessions.
+standard deviation of the five adjusted daily returns, maximum peak-to-trough
+drawdown across that five-return path, and the number of positive adjusted-close
+returns across the latest three consecutive market sessions.
 It loads five pre-window sessions solely for feature history. A security missing
 any required market session receives a missing feature instead of having rows
 across a suspension joined into a false consecutive sequence.

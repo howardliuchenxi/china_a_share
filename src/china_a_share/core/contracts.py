@@ -30,6 +30,7 @@ DISCOVERY_FACTOR_FIELDS = {
     "dv_ttm",
     "float_share",
     "free_share",
+    "max_drawdown_5d_pct",
     "open",
     "pb",
     "pct_chg",

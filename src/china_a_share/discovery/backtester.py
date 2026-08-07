@@ -167,6 +167,21 @@ class FactorBacktester:
         enriched["volatility_5d_pct"] = (
             daily_returns.std(axis=1, ddof=0) * 100.0
         ).where(has_five_consecutive_sessions)
+        historical_prices = pd.concat(
+            [
+                prior_close_5,
+                prior_close_4,
+                prior_close_3,
+                prior_close_2,
+                prior_close_1,
+                enriched["adjusted_close"],
+            ],
+            axis=1,
+        )
+        historical_peaks = historical_prices.cummax(axis=1)
+        enriched["max_drawdown_5d_pct"] = (
+            (historical_prices / historical_peaks - 1.0).min(axis=1) * 100.0
+        ).where(has_five_consecutive_sessions)
 
         prior_rank_1 = grouped_rank.shift(1)
         prior_rank_2 = grouped_rank.shift(2)
