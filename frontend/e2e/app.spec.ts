@@ -672,3 +672,10 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText("18 个盲测候选 · 通过 10% FDR", { exact: true })).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
 });
+
+test("discovery page deduplicates factors restored from the URL", async ({ page }) => {
+  await page.goto("/analysis?page=discovery&dp_factors=pe_ttm,pe_ttm,pb");
+
+  await expect(page.getByRole("group", { name: /候选因子/ })).toContainText("2");
+  await expect(page).toHaveURL(/dp_factors=pe_ttm%2Cpb/);
+});

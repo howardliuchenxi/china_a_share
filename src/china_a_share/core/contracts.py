@@ -1085,6 +1085,8 @@ class DiscoveryTaskRequest(BaseModel):
             raise ValueError("Validation window must start after the training window.")
         if not self.factors:
             raise ValueError("At least one discovery factor is required.")
+        if len(self.factors) != len(set(self.factors)):
+            raise ValueError("Discovery factors must be unique.")
         unsupported_factors = sorted(set(self.factors) - DISCOVERY_FACTOR_FIELDS)
         if unsupported_factors:
             raise ValueError(

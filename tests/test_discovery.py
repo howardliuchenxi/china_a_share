@@ -962,6 +962,18 @@ def test_discovery_request_rejects_factors_outside_the_research_dataset():
         )
 
 
+def test_discovery_request_rejects_duplicate_factors():
+    with pytest.raises(ValueError, match="Discovery factors must be unique"):
+        DiscoveryTaskRequest(
+            target_pool="A_SHARE",
+            train_start="20250101",
+            train_end="20251231",
+            val_start="20260101",
+            val_end="20260630",
+            factors=["pe_ttm", "pe_ttm"],
+        )
+
+
 def test_discovery_request_accepts_a_percentage_point_return_target():
     request = DiscoveryTaskRequest(
         target_pool="A_SHARE",
