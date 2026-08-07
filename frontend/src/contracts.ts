@@ -296,6 +296,7 @@ export interface BacktestResult {
   return_p05: number;
   return_std: number;
   baseline_win_rate: number;
+  baseline_sample_count: number;
   win_rate_lift: number;
   confidence_lower: number;
   confidence_upper: number;

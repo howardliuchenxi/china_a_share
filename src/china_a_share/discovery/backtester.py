@@ -176,6 +176,7 @@ class FactorBacktester:
                 baseline_win_rate=(
                     float((baseline > target_return).mean()) if len(baseline) else 0.0
                 ),
+                baseline_sample_count=len(baseline),
                 target_return=target_return,
                 dependence_lag_days=dependence_lag_days,
             )
@@ -227,6 +228,7 @@ class FactorBacktester:
             outcome_coverage_rate=outcome_coverage_rate,
             positive_count=positive_count,
             baseline_win_rate=baseline_win_rate,
+            baseline_sample_count=len(baseline),
             win_rate_lift=float(win_rate - baseline_win_rate),
             confidence_lower=confidence_lower,
             confidence_upper=confidence_upper,

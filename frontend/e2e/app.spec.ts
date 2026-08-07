@@ -607,6 +607,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           max_drawdown: -0.12, eval_time_ms: 10, sample_count: 180,
           matched_sample_count: 184, missing_outcome_count: 4, outcome_coverage_rate: 0.978,
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
+          baseline_sample_count: 1200,
           win_rate_lift: 0.11, confidence_lower: 0.56, confidence_upper: 0.70,
           target_return: 0,
           trading_day_count: 120,
@@ -621,6 +622,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           max_drawdown: -0.15, eval_time_ms: 8, sample_count: 75,
           matched_sample_count: 77, missing_outcome_count: 2, outcome_coverage_rate: 0.974,
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
+          baseline_sample_count: 420,
           win_rate_lift: 0.09, confidence_lower: 0.49, confidence_upper: 0.70,
           target_return: 0,
           trading_day_count: 55,
@@ -663,6 +665,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
+  await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.locator(".headline-metrics")).toContainText("5% 分位收益");
   await expect(page.locator(".rule-card")).toContainText("75");
   await expect(page.locator(".rule-card")).toContainText("97.4%");

@@ -468,6 +468,7 @@ def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
     assert result.return_p05 == pytest.approx(-0.17)
     assert result.max_drawdown == pytest.approx(-0.20)
     assert result.baseline_win_rate == pytest.approx(0.75)
+    assert result.baseline_sample_count == 4
 
 
 def test_rule_evaluation_uses_the_configured_target_return_threshold():
@@ -489,6 +490,7 @@ def test_rule_evaluation_uses_the_configured_target_return_threshold():
     assert result.positive_count == 2
     assert result.win_rate == pytest.approx(2 / 3)
     assert result.baseline_win_rate == pytest.approx(2 / 3)
+    assert result.baseline_sample_count == 3
 
 
 def test_rule_evaluation_preserves_schema_for_an_empty_match():

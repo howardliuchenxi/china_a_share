@@ -1116,6 +1116,11 @@ class BacktestResult(BaseModel):
     )
     return_std: float = 0.0
     baseline_win_rate: float = 0.0
+    baseline_sample_count: int = Field(
+        default=0,
+        ge=0,
+        description="Finite outcome observations used by the all-event baseline.",
+    )
     win_rate_lift: float = 0.0
     confidence_lower: float = 0.0
     confidence_upper: float = 0.0

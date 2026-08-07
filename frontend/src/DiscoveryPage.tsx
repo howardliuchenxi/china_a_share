@@ -26,7 +26,7 @@ function MetricSet({ result }: { result: BacktestResult }) {
   return (
     <div className="rule-metrics">
       <span><small>上涨概率</small><strong>{percent(result.win_rate)}</strong></span>
-      <span><small>相对基准</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
+      <span><small>相对基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
       <span><small>样本 / 交易日</small><strong>{result.sample_count} / {result.trading_day_count}</strong></span>
       <span><small>标签覆盖</small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
@@ -229,7 +229,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         <div className="headline-metrics">
           <div><small>独立验证结论</small><strong className={bestRule.validation_passed ? "metric-positive" : "metric-negative"}>{bestRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>训练排名已锁定</em></div>
           <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>HAC + {bestRule.val_result!.trading_day_count} 日 score 下限：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
-          <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)}</em></div>
+          <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)} · N={bestRule.val_result!.baseline_sample_count}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
           <div><small>5% 分位收益</small><strong className={bestRule.val_result!.return_p05 >= 0 ? "metric-positive" : "metric-negative"}>{percent(bestRule.val_result!.return_p05, 2)}</strong><em>{bestRule.val_result!.sample_count} / {bestRule.val_result!.matched_sample_count} 个结果可观测</em></div>
           <div><small>提升检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>{bestRule.fdr_family_size} 个盲测候选 · {bestRule.q_value <= 0.1 ? "通过 10% FDR" : "未通过 10% FDR"}</em></div>
