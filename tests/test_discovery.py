@@ -117,6 +117,39 @@ def test_research_dataset_uses_adjusted_closes_for_corporate_actions():
     assert dataset["adjusted_close"].tolist() == pytest.approx([10.0])
 
 
+def test_research_dataset_retains_signals_with_missing_future_prices():
+    securities = ["000001.SZ", "000002.SZ"]
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            "20260105": [
+                {"ts_code": code, "pe_ttm": 10.0}
+                for code in securities
+            ],
+            "20260106": [{"ts_code": "000001.SZ", "pe_ttm": 10.0}],
+        },
+        {
+            "20260105": [
+                {"ts_code": code, "close": 10.0}
+                for code in securities
+            ],
+            "20260106": [{"ts_code": "000001.SZ", "close": 11.0}],
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+    )
+
+    assert len(dataset) == 2
+    assert dataset["forward_return"].notna().sum() == 1
+    assert pd.isna(
+        dataset.loc[dataset["ts_code"] == "000002.SZ", "forward_return"].iloc[0]
+    )
+
+
 def test_research_dataset_preserves_missing_factor_values():
     executor = FakeQueryExecutor(
         ["20260105", "20260106"],
@@ -287,6 +320,23 @@ def test_rule_evaluation_preserves_schema_for_an_empty_match():
 
     assert result.sample_count == 0
     assert result.win_rate == 0.0
+
+
+def test_rule_evaluation_reports_missing_outcome_coverage():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260106", "20260107"],
+            "factor": [1.0, 1.0, 1.0],
+            "forward_return": [0.10, None, -0.10],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.matched_sample_count == 3
+    assert result.sample_count == 2
+    assert result.missing_outcome_count == 1
+    assert result.outcome_coverage_rate == pytest.approx(2 / 3)
 
 
 def test_rule_evaluation_clusters_uncertainty_by_trading_day():
@@ -563,6 +613,29 @@ def test_rule_search_rejects_many_events_concentrated_on_one_day():
     assert candidates == []
 
 
+def test_rule_search_rejects_low_outcome_coverage():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 11)],
+            "value": list(range(10)),
+            "forward_return": [0.10, None] * 5,
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(
+        min_sample_count=2,
+        min_outcome_coverage=0.90,
+    ).search(
+        dataset,
+        dataset.copy(),
+        ["value"],
+        max_conditions=1,
+        top_n=10,
+    )
+
+    assert candidates == []
+
+
 def test_rule_search_corrects_validation_significance_for_multiple_candidates():
     train = pd.DataFrame(
         {
@@ -666,6 +739,7 @@ def test_memory_store_preserves_extended_discovery_request():
             forward_days=20,
             minimum_samples=50,
             minimum_trading_days=25,
+            minimum_outcome_coverage_pct=98,
             max_conditions=2,
         ),
         created_at=now,
@@ -678,6 +752,7 @@ def test_memory_store_preserves_extended_discovery_request():
     assert loaded.request.forward_days == 20
     assert loaded.request.minimum_samples == 50
     assert loaded.request.minimum_trading_days == 25
+    assert loaded.request.minimum_outcome_coverage_pct == 98
     assert loaded.request.max_conditions == 2
 
 

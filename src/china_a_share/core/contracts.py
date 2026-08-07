@@ -1046,6 +1046,12 @@ class DiscoveryTaskRequest(BaseModel):
         le=1000,
         description="Minimum distinct signal dates required for each rule and window.",
     )
+    minimum_outcome_coverage_pct: float = Field(
+        default=95.0,
+        ge=50.0,
+        le=100.0,
+        description="Minimum percentage of matched signals with observable outcomes.",
+    )
     max_conditions: int = Field(
         default=2,
         ge=1,
@@ -1089,6 +1095,9 @@ class BacktestResult(BaseModel):
     max_drawdown: float
     eval_time_ms: int
     sample_count: int = Field(default=0, ge=0)
+    matched_sample_count: int = Field(default=0, ge=0)
+    missing_outcome_count: int = Field(default=0, ge=0)
+    outcome_coverage_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     positive_count: int = Field(default=0, ge=0)
     median_return: float = 0.0
     return_p05: float = Field(

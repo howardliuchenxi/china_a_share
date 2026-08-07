@@ -95,11 +95,9 @@ class FactorBacktester:
         panel["forward_return"] = (
             panel["future_adjusted_close"] / panel["adjusted_close"] - 1.0
         )
-        dataset = panel[
-            panel["trade_date"].between(start_date, end_date)
-        ].dropna(
-            subset=["adjusted_close", "future_adjusted_close", "forward_return"]
-        )
+        # Keep signals without a future price so every rule can disclose and
+        # constrain outcome attrition instead of silently studying survivors.
+        dataset = panel[panel["trade_date"].between(start_date, end_date)]
         return dataset.reset_index(drop=True)
 
     def run_backtest(
@@ -147,6 +145,7 @@ class FactorBacktester:
             selected = research_frame.query(formula, engine="python")
         except Exception as exc:
             raise ValueError(f"Invalid discovery rule: {exc}") from exc
+        matched_sample_count = len(selected)
         evaluation_frame = selected.assign(
             forward_return=pd.to_numeric(
                 selected["forward_return"], errors="coerce"
@@ -160,12 +159,19 @@ class FactorBacktester:
             research_frame["forward_return"], errors="coerce"
         ).dropna()
         baseline = baseline[baseline.map(math.isfinite)]
+        missing_outcome_count = matched_sample_count - len(returns)
+        outcome_coverage_rate = (
+            len(returns) / matched_sample_count if matched_sample_count else 0.0
+        )
         if returns.empty:
             return BacktestResult(
                 win_rate=0.0,
                 mean_return=0.0,
                 max_drawdown=0.0,
                 eval_time_ms=0,
+                matched_sample_count=matched_sample_count,
+                missing_outcome_count=missing_outcome_count,
+                outcome_coverage_rate=outcome_coverage_rate,
                 baseline_win_rate=(
                     float((baseline > target_return).mean()) if len(baseline) else 0.0
                 ),
@@ -215,6 +221,9 @@ class FactorBacktester:
             max_drawdown=float(drawdown.min()) if len(drawdown) else 0.0,
             eval_time_ms=0,
             sample_count=len(returns),
+            matched_sample_count=matched_sample_count,
+            missing_outcome_count=missing_outcome_count,
+            outcome_coverage_rate=outcome_coverage_rate,
             positive_count=positive_count,
             baseline_win_rate=baseline_win_rate,
             win_rate_lift=float(win_rate - baseline_win_rate),

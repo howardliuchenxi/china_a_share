@@ -69,8 +69,10 @@ class EvolutionLoop:
         task.progress.training_samples_purged = (
             original_training_sample_count - len(train)
         )
-        task.progress.training_sample_count = len(train)
-        task.progress.validation_sample_count = len(validation)
+        task.progress.training_sample_count = int(train["forward_return"].notna().sum())
+        task.progress.validation_sample_count = int(
+            validation["forward_return"].notna().sum()
+        )
         task.progress.current_generation = 1
         task.progress.total_generations = 1
         self._update_progress(
@@ -81,6 +83,7 @@ class EvolutionLoop:
         search = RuleSearchEngine(
             min_sample_count=request.minimum_samples,
             min_trading_day_count=request.minimum_trading_days,
+            min_outcome_coverage=request.minimum_outcome_coverage_pct / 100.0,
             target_return=request.target_return_pct / 100.0,
             dependence_lag_days=request.forward_days - 1,
         )
@@ -96,7 +99,7 @@ class EvolutionLoop:
         task.progress.leaderboard = leaderboard
         if not leaderboard:
             raise ValueError(
-                "No rule met the minimum event and trading-day requirements in both windows."
+                "No rule met the event, trading-day, and outcome-coverage requirements in both windows."
             )
 
     def _update_progress(

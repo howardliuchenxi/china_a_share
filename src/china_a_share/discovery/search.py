@@ -24,11 +24,13 @@ class RuleSearchEngine:
         *,
         min_sample_count: int,
         min_trading_day_count: int = 2,
+        min_outcome_coverage: float = 0.95,
         target_return: float = 0.0,
         dependence_lag_days: int = 0,
     ):
         self._min_sample_count = min_sample_count
         self._min_trading_day_count = min_trading_day_count
+        self._min_outcome_coverage = min_outcome_coverage
         self._target_return = target_return
         self._dependence_lag_days = dependence_lag_days
 
@@ -219,6 +221,8 @@ class RuleSearchEngine:
             if (
                 train_result.sample_count < self._min_sample_count
                 or train_result.trading_day_count < self._min_trading_day_count
+                or train_result.outcome_coverage_rate
+                < self._min_outcome_coverage
             ):
                 continue
             candidates.append(
@@ -253,6 +257,8 @@ class RuleSearchEngine:
                 validation_result.sample_count < self._min_sample_count
                 or validation_result.trading_day_count
                 < self._min_trading_day_count
+                or validation_result.outcome_coverage_rate
+                < self._min_outcome_coverage
             ):
                 continue
             train_result = candidate.train_result

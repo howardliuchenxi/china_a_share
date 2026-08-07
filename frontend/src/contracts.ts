@@ -278,6 +278,7 @@ export interface DiscoveryTaskRequest {
   target_return_pct: number;
   minimum_samples: number;
   minimum_trading_days: number;
+  minimum_outcome_coverage_pct: number;
   max_conditions: number;
 }
 
@@ -287,6 +288,9 @@ export interface BacktestResult {
   max_drawdown: number;
   eval_time_ms: number;
   sample_count: number;
+  matched_sample_count: number;
+  missing_outcome_count: number;
+  outcome_coverage_rate: number;
   positive_count: number;
   median_return: number;
   return_p05: number;

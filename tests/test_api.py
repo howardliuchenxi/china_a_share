@@ -202,6 +202,7 @@ def test_discovery_endpoints_validate_submit_and_return_progress():
             "forward_days": 20,
             "minimum_samples": 30,
             "minimum_trading_days": 20,
+            "minimum_outcome_coverage_pct": 95,
             "max_conditions": 2,
         },
     )
@@ -210,6 +211,7 @@ def test_discovery_endpoints_validate_submit_and_return_progress():
     assert submission.json()["task_id"] == "discovery-api-task"
     assert coordinator.requests[0].forward_days == 20
     assert coordinator.requests[0].minimum_trading_days == 20
+    assert coordinator.requests[0].minimum_outcome_coverage_pct == 95
 
     status_response = client.get("/api/discovery/tasks/discovery-api-task")
     assert status_response.status_code == 200
