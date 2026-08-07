@@ -52,10 +52,7 @@ class RuleSearchEngine:
         candidates = list(single_candidates)
         evaluated_count = single_evaluated
         if max_conditions >= 2:
-            strongest = [
-                (candidate.formula, self._field_for_formula(candidate.formula))
-                for candidate in single_candidates[:PAIRING_CANDIDATE_LIMIT]
-            ]
+            strongest = self._select_pairing_conditions(single_candidates)
             pairs = [
                 (
                     f"({left}) and ({right})",
@@ -132,6 +129,25 @@ class RuleSearchEngine:
                         (f"{factor} {operator} {threshold:.10g}", factor)
                     )
         return conditions
+
+    @staticmethod
+    def _select_pairing_conditions(
+        candidates: Sequence[FactorHypothesis],
+    ) -> List[Tuple[str, str]]:
+        """Keep the strongest threshold per factor and inequality direction."""
+        selected = []
+        seen_buckets = set()
+        for candidate in candidates:
+            field = RuleSearchEngine._field_for_formula(candidate.formula)
+            operator = candidate.formula.split()[1]
+            bucket = (field, operator)
+            if bucket in seen_buckets:
+                continue
+            seen_buckets.add(bucket)
+            selected.append((candidate.formula, field))
+            if len(selected) == PAIRING_CANDIDATE_LIMIT:
+                break
+        return selected
 
     @staticmethod
     def _finite_factor_frame(

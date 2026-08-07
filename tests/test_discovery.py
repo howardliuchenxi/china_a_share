@@ -465,6 +465,29 @@ def test_rule_search_discovers_a_same_factor_middle_interval():
     assert interval_rules[0].train_result.win_rate > 0.70
 
 
+def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{i:04d}" for i in range(1, 101)],
+            "first": list(range(100)),
+            "second": list(range(100)),
+            "forward_return": [-0.10] * 50 + [0.10] * 50,
+        }
+    )
+    search = RuleSearchEngine(min_sample_count=10)
+    conditions = search._build_conditions(dataset, ["first", "second"])
+    candidates, _ = search._evaluate_training_formulas(conditions, dataset)
+
+    pairing_pool = search._select_pairing_conditions(candidates)
+    buckets = [
+        (field, formula.split()[1])
+        for formula, field in pairing_pool
+    ]
+
+    assert set(field for _, field in pairing_pool) == {"first", "second"}
+    assert len(buckets) == len(set(buckets)) == 4
+
+
 def test_rule_search_does_not_use_validation_outcomes_to_choose_the_winner():
     train = pd.DataFrame(
         {
