@@ -1097,6 +1097,8 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
     assert completed.progress.candidates_evaluated >= completed.progress.formulas_tested
     assert completed.progress.training_sample_count == 25
     assert completed.progress.training_samples_purged == 5
+    assert completed.progress.training_factor_coverage == {"pe_ttm": 1.0}
+    assert completed.progress.validation_factor_coverage == {"pe_ttm": 1.0}
     assert completed.progress.leaderboard
     assert all(
         candidate.val_result.dependence_lag_days == 4
@@ -1106,3 +1108,23 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
         ("20250101", "20251231", 5),
         ("20260101", "20260630", 5),
     ]
+
+
+def test_evolution_loop_reports_finite_factor_coverage():
+    frame = pd.DataFrame(
+        {
+            "available": [1.0, None, float("inf"), "2.0"],
+            "invalid": [None, "not-a-number", float("-inf"), None],
+        }
+    )
+
+    coverage = EvolutionLoop._factor_coverage(
+        frame,
+        ["available", "invalid", "absent"],
+    )
+
+    assert coverage == {
+        "available": 0.5,
+        "invalid": 0.0,
+        "absent": 0.0,
+    }

@@ -2,6 +2,9 @@
 
 from datetime import datetime, timezone
 import logging
+import math
+
+import pandas as pd
 
 from china_a_share.core.contracts import (
     AnalysisTaskStatus,
@@ -73,6 +76,14 @@ class EvolutionLoop:
         task.progress.validation_sample_count = int(
             validation["forward_return"].notna().sum()
         )
+        task.progress.training_factor_coverage = self._factor_coverage(
+            train,
+            request.factors,
+        )
+        task.progress.validation_factor_coverage = self._factor_coverage(
+            validation,
+            request.factors,
+        )
         task.progress.current_generation = 1
         task.progress.total_generations = 1
         self._update_progress(
@@ -101,6 +112,20 @@ class EvolutionLoop:
             raise ValueError(
                 "No rule met the event, trading-day, and outcome-coverage requirements in both windows."
             )
+
+    @staticmethod
+    def _factor_coverage(frame: pd.DataFrame, factors: list[str]) -> dict[str, float]:
+        """Return finite numeric coverage for each requested research factor."""
+        observation_count = len(frame)
+        coverage = {}
+        for factor in factors:
+            if observation_count == 0 or factor not in frame:
+                coverage[factor] = 0.0
+                continue
+            numeric = pd.to_numeric(frame[factor], errors="coerce")
+            finite_count = int(numeric.map(math.isfinite).sum())
+            coverage[factor] = finite_count / observation_count
+        return coverage
 
     def _update_progress(
         self,

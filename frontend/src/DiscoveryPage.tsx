@@ -62,6 +62,10 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     discoveryFactorFields.has(entry.field),
   );
   const bestRule = taskStatus?.progress.leaderboard[0] ?? null;
+  const coverageFactors = factors.filter(factor =>
+    factor in (taskStatus?.progress.training_factor_coverage ?? {})
+    || factor in (taskStatus?.progress.validation_factor_coverage ?? {}),
+  );
 
   useEffect(() => {
     const next = new URLSearchParams(window.location.search);
@@ -219,6 +223,15 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>已评估候选</small><strong>{taskStatus.progress.candidates_evaluated}</strong></div>
           <div><small>入榜规则</small><strong>{taskStatus.progress.formulas_tested}</strong></div>
         </div>
+        {coverageFactors.length > 0 && <>
+          <p className="coverage-heading">因子可用率（训练 / 验证）</p>
+          <div className="research-progress-grid factor-coverage-grid">
+            {coverageFactors.map(factor => <div key={factor}>
+              <small>{availableFactors.find(entry => entry.field === factor)?.label ?? factor}</small>
+              <strong>{percent(taskStatus.progress.training_factor_coverage[factor] ?? 0)} / {percent(taskStatus.progress.validation_factor_coverage[factor] ?? 0)}</strong>
+            </div>)}
+          </div>
+        </>}
         <p className="live-log">{taskStatus.progress.current_log || "等待任务开始…"}</p>
         {taskStatus.progress.training_samples_purged > 0 && <p className="research-caveat">已清除 {taskStatus.progress.training_samples_purged.toLocaleString()} 条未来结算日进入验证窗口的训练样本，防止标签泄漏。</p>}
         {taskStatus.error && <p className="discovery-error">{taskStatus.error.message}</p>}

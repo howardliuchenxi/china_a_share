@@ -332,6 +332,8 @@ export interface DiscoveryTaskProgress {
   training_sample_count: number;
   training_samples_purged: number;
   validation_sample_count: number;
+  training_factor_coverage: Record<string, number>;
+  validation_factor_coverage: Record<string, number>;
   leaderboard: FactorHypothesis[];
 }
 

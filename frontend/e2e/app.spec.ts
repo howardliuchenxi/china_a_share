@@ -591,6 +591,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
       training_sample_count: 1200,
       training_samples_purged: 80,
       validation_sample_count: 420,
+      training_factor_coverage: { pe_ttm: 0.98, turnover_rate: 0.96, circ_mv: 1 },
+      validation_factor_coverage: { pe_ttm: 0.97, turnover_rate: 0.95, circ_mv: 1 },
       leaderboard: [{
         formula: "pe_ttm <= 12 and turnover_rate >= 8",
         description: "Low valuation with active turnover",
@@ -666,6 +668,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
+  await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
+  await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");
   await expect(page.locator(".headline-metrics")).toContainText("5% 分位收益");
   await expect(page.locator(".rule-card")).toContainText("75");
   await expect(page.locator(".rule-card")).toContainText("97.4%");

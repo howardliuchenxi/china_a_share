@@ -1399,6 +1399,15 @@ table tbody tr:hover { background-color: #f1f3ee; }
 .headline-metrics strong {
   font-size: 1.35rem;
 }
+.coverage-heading {
+  margin: 1rem 0 0.5rem;
+  color: #526159;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.factor-coverage-grid strong {
+  font-size: 1rem;
+}
 .headline-metrics em {
   color: #718078;
   font-size: 0.72rem;

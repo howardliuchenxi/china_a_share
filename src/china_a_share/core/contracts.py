@@ -1198,6 +1198,14 @@ class DiscoveryTaskProgress(BaseModel):
         description="Training observations removed because labels overlap validation.",
     )
     validation_sample_count: int = Field(default=0, ge=0)
+    training_factor_coverage: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Finite-value coverage by requested factor in training data.",
+    )
+    validation_factor_coverage: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Finite-value coverage by requested factor in validation data.",
+    )
     leaderboard: List[FactorHypothesis] = Field(default_factory=list)
 
 
