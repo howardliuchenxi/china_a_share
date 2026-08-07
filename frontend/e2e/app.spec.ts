@@ -766,7 +766,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("可比基准命中率 51.0%");
   await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
-  await expect(page.locator(".headline-metrics")).toContainText("训练榜首验证结论");
+  await expect(page.locator(".headline-metrics")).toContainText("训练榜首预留验证结论");
   await expect(page.locator(".headline-metrics")).toContainText("1 / 2 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
@@ -802,6 +802,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topRuleCard.locator(".rule-expression")).toHaveText("市盈率TTM ≤ 12 且 换手率 ≥ 8");
   await expect(page.getByText(/候选按相对可比基准提升的保守 95% 下界排序/)).toBeVisible();
   await expect(topRuleCard).toContainText("验证结果未参与重新排序");
+  await expect(topWindowComparison).toContainText("预留验证");
   await expect(topRuleCard).toContainText("阈值来源：训练窗口分位阈值");
   await expect(topRuleCard).toContainText("97.4%");
   await expect(page.getByText("已清除 80 条未来结算日进入验证窗口的训练样本，防止标签泄漏。", { exact: true })).toBeVisible();
@@ -813,6 +814,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
+  await expect(page.getByText(/预留验证.*只表示本次任务的搜索和排名没有读取该窗口结果/)).toBeVisible();
+  await expect(page.getByText(/同一验证窗口调整因子、日期、门槛或目标收益/)).toBeVisible();
+  await expect(page.getByText(/应改用更晚且从未查看的数据再次确认/)).toBeVisible();
   await expect(page.getByText(/这些指标是适用性诊断而非显著性通过门槛/)).toBeVisible();
   await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
   await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true }).first()).toBeVisible();
