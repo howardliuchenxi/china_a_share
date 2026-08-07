@@ -541,7 +541,8 @@ def test_research_dataset_rejects_duplicate_trading_calendar_dates():
         )
 
 
-def test_research_dataset_rejects_invalid_trading_calendar_dates():
+@pytest.mark.parametrize("invalid_date", ["20260199", "2026010"])
+def test_research_dataset_rejects_invalid_trading_calendar_dates(invalid_date):
     class InvalidCalendarExecutor(FakeQueryExecutor):
         def execute(self, query, *, api_route, request_id):
             if query.operation == "trade_cal":
@@ -551,7 +552,7 @@ def test_research_dataset_rejects_invalid_trading_calendar_dates():
                     operation=query.operation,
                     status=QueryStatus.SUCCESS,
                     columns=["cal_date", "is_open"],
-                    rows=[{"cal_date": "20260199", "is_open": "1"}],
+                    rows=[{"cal_date": invalid_date, "is_open": "1"}],
                     row_count=1,
                 )
             return super().execute(
@@ -947,6 +948,36 @@ def test_rule_evaluation_keeps_all_missing_outcomes_fully_uncertain():
     assert result.confidence_upper == 1.0
     assert result.lift_confidence_lower == -1.0
     assert result.lift_confidence_upper == 1.0
+
+
+def test_empty_statistical_helpers_preserve_full_uncertainty():
+    assert FactorBacktester._event_examples(pd.DataFrame(), []) == []
+    assert FactorBacktester._outcome_bounds(0, 0, 0) == (0.0, 1.0)
+    assert FactorBacktester._outcome_robust_lift_bounds(
+        selected_positive_count=0,
+        selected_matched_count=0,
+        selected_observed_count=0,
+        baseline_positive_count=0,
+        baseline_matched_count=0,
+        baseline_observed_count=0,
+    ) == (-1.0, 1.0)
+    assert FactorBacktester._wilson_interval(0.0, 0.0) == (0.0, 1.0)
+    assert FactorBacktester._effective_cluster_count(pd.Series(dtype=str)) == 0.0
+
+
+def test_outcome_robust_lift_rejects_impossible_overlap_counts():
+    with pytest.raises(
+        ValueError,
+        match="Outcome counts violate selected/baseline containment",
+    ):
+        FactorBacktester._outcome_robust_lift_bounds(
+            selected_positive_count=1,
+            selected_matched_count=2,
+            selected_observed_count=1,
+            baseline_positive_count=1,
+            baseline_matched_count=3,
+            baseline_observed_count=3,
+        )
 
 
 def test_rule_evaluation_retains_bounded_recent_event_examples():
