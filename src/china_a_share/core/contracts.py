@@ -529,6 +529,13 @@ class ResultPipelineStep(BaseModel):
                 "match_at_offset value field must differ from order_by"
             )
         if (
+            self.operation == "match_at_offset"
+            and self.output_field == self.matched_date_output_field
+        ):
+            raise ValueError(
+                "match_at_offset value and matched-date output fields must differ"
+            )
+        if (
             self.operation in {"rolling_mean", "rolling_sum"}
             and self.min_periods is not None
             and self.min_periods > self.window

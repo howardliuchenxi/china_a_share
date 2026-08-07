@@ -23,6 +23,7 @@ from china_a_share.core.contracts import (
     QueryResult,
     RequirementCoverage,
     ResultPipeline,
+    ResultPipelineStep,
 )
 from china_a_share.core.errors import PlannerError
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
@@ -1080,6 +1081,90 @@ def test_validator_rejects_result_pipeline_field_before_provider_execution():
         match="sort references unavailable fields: missing",
     ):
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_validator_accepts_join_fields_mapping_lineage():
+    plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="ending-prices",
+            operation="daily",
+            params={"trade_date": "20260718"},
+            fields=["ts_code", "close"],
+            purpose="Fetch ending prices.",
+        )
+    )
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "market_direction",
+            "output_query_id": "joined-prices",
+            "steps": [
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": "ending-prices",
+                    "join_on": ["ts_code"],
+                    "fields": {"close": "ending_close"},
+                    "cardinality": "one_to_one",
+                }
+            ],
+        }
+    )
+
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    assert validated.result_pipeline.steps[0].fields == {"close": "ending_close"}
+
+
+def test_validator_rejects_existing_membership_output_field():
+    plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="matching-prices",
+            operation="daily",
+            params={"trade_date": "20260718"},
+            fields=["ts_code"],
+            purpose="Identify matching securities.",
+        )
+    )
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "market_direction",
+            "output_query_id": "matched-prices",
+            "steps": [
+                {
+                    "operation": "match_source",
+                    "right_source_query_id": "matching-prices",
+                    "join_on": ["ts_code"],
+                    "output_field": "change",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="match_source output field already exists: change",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_contract_rejects_duplicate_match_at_offset_output_fields():
+    with pytest.raises(
+        ValueError,
+        match="value and matched-date output fields must differ",
+    ):
+        ResultPipelineStep.model_validate(
+            {
+                "operation": "match_at_offset",
+                "field": "close",
+                "output_field": "future_value",
+                "matched_date_output_field": "future_value",
+                "group_by": ["ts_code"],
+                "order_by": "trade_date",
+                "offset_value": 1,
+                "offset_unit": "month",
+            }
+        )
 
 
 def test_validator_uses_transformed_result_fields_for_pipeline_lineage():

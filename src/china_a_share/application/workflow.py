@@ -216,7 +216,12 @@ class ASharePlanValidator:
             )
         )
         for step in pipeline.steps:
-            required_fields = set(step.fields + step.group_by + step.join_on)
+            input_fields = (
+                []
+                if step.operation == "join_fields"
+                else list(step.fields)
+            )
+            required_fields = set(input_fields + step.group_by + step.join_on)
             required_fields.update(
                 field
                 for field in (step.field, step.right_field, step.order_by)
@@ -232,6 +237,11 @@ class ASharePlanValidator:
                     + ", ".join(sorted(missing_fields))
                 )
             if step.operation in {"match_source", "exists_in_source"}:
+                if step.output_field in available_fields:
+                    raise PlanValidationError(
+                        f"{step.operation} output field already exists: "
+                        f"{step.output_field}"
+                    )
                 right_query = next(
                     (
                         query
