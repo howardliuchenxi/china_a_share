@@ -1040,6 +1040,12 @@ class DiscoveryTaskRequest(BaseModel):
         le=10000,
         description="Minimum observations required in each evaluation window.",
     )
+    minimum_trading_days: int = Field(
+        default=20,
+        ge=2,
+        le=1000,
+        description="Minimum distinct signal dates required for each rule and window.",
+    )
     max_conditions: int = Field(
         default=2,
         ge=1,

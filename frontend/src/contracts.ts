@@ -277,6 +277,7 @@ export interface DiscoveryTaskRequest {
   forward_days: number;
   target_return_pct: number;
   minimum_samples: number;
+  minimum_trading_days: number;
   max_conditions: number;
 }
 

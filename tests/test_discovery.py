@@ -221,6 +221,23 @@ def test_rule_evaluation_clusters_uncertainty_by_trading_day():
     assert result.confidence_upper == 1.0
 
 
+def test_rule_evaluation_does_not_claim_precision_from_one_trading_day():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105"] * 100,
+            "factor": list(range(100)),
+            "forward_return": [0.10] * 80 + [-0.10] * 20,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor >= 0")
+
+    assert result.sample_count == 100
+    assert result.trading_day_count == 1
+    assert result.confidence_lower == 0.0
+    assert result.confidence_upper == 1.0
+
+
 def test_rule_evaluation_accounts_for_overlap_when_estimating_lift_uncertainty():
     dataset = pd.DataFrame(
         {
@@ -315,6 +332,29 @@ def test_rule_search_does_not_use_validation_outcomes_to_choose_the_winner():
     )
 
 
+def test_rule_search_rejects_many_events_concentrated_on_one_day():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105"] * 100,
+            "value": list(range(100)),
+            "forward_return": [-0.10] * 50 + [0.10] * 50,
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(
+        min_sample_count=10,
+        min_trading_day_count=2,
+    ).search(
+        dataset,
+        dataset.copy(),
+        ["value"],
+        max_conditions=1,
+        top_n=10,
+    )
+
+    assert candidates == []
+
+
 def test_rule_search_corrects_validation_significance_for_multiple_candidates():
     train = pd.DataFrame(
         {
@@ -348,6 +388,12 @@ def test_clustered_lift_significance_remains_finite_for_large_samples():
 
     assert 0.0 <= probability <= 1.0
     assert probability < 0.001
+
+
+def test_clustered_lift_significance_is_conservative_without_variation():
+    probability = RuleSearchEngine._clustered_lift_tail_probability(0.10, 0.0)
+
+    assert probability == 1.0
 
 
 def test_discovery_request_rejects_overlapping_training_and_validation_windows():
@@ -403,6 +449,7 @@ def test_memory_store_preserves_extended_discovery_request():
             factors=["pe_ttm"],
             forward_days=20,
             minimum_samples=50,
+            minimum_trading_days=25,
             max_conditions=2,
         ),
         created_at=now,
@@ -414,6 +461,7 @@ def test_memory_store_preserves_extended_discovery_request():
     loaded = store.get(task.task_id)
     assert loaded.request.forward_days == 20
     assert loaded.request.minimum_samples == 50
+    assert loaded.request.minimum_trading_days == 25
     assert loaded.request.max_conditions == 2
 
 
@@ -454,6 +502,7 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
             factors=["pe_ttm"],
             forward_days=5,
             minimum_samples=5,
+            minimum_trading_days=5,
         ),
         created_at=now,
         updated_at=now,

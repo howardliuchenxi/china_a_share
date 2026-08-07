@@ -321,24 +321,6 @@ class FactorBacktester:
             raise
 
     @staticmethod
-    def _wilson_interval(successes: int, observations: int) -> tuple[float, float]:
-        """Return a 95% Wilson score interval for an observed probability."""
-        if observations == 0:
-            return 0.0, 0.0
-        z = 1.959963984540054
-        probability = successes / observations
-        denominator = 1.0 + z * z / observations
-        centre = probability + z * z / (2.0 * observations)
-        margin = z * math.sqrt(
-            probability * (1.0 - probability) / observations
-            + z * z / (4.0 * observations * observations)
-        )
-        return (
-            max(0.0, (centre - margin) / denominator),
-            min(1.0, (centre + margin) / denominator),
-        )
-
-    @staticmethod
     def _clustered_confidence_interval(
         frame: pd.DataFrame,
         target_return: float,
@@ -355,11 +337,9 @@ class FactorBacktester:
         successes = int(clusters["sum"].sum())
         observations = int(clusters["count"].sum())
         if selected_day_count <= 1:
-            lower, upper = FactorBacktester._wilson_interval(
-                successes,
-                observations,
-            )
-            return lower, upper, 0.0, selected_day_count
+            # One date cannot identify time-series uncertainty, regardless of
+            # how many cross-sectional events happened on that date.
+            return 0.0, 1.0, 0.0, selected_day_count
         probability = successes / observations
         ordered_dates = pd.Index(sorted(signal_dates.astype(str).unique()))
         influence = (

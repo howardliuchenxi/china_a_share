@@ -628,6 +628,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
     error: null,
   };
   await page.route("**/api/discovery/tasks", route => {
+    const request = route.request().postDataJSON() as { minimum_trading_days: number };
+    expect(request.minimum_trading_days).toBe(20);
     void route.fulfill({
       status: 202,
       contentType: "application/json",

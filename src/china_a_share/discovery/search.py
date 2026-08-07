@@ -22,10 +22,12 @@ class RuleSearchEngine:
         self,
         *,
         min_sample_count: int,
+        min_trading_day_count: int = 2,
         target_return: float = 0.0,
         dependence_lag_days: int = 0,
     ):
         self._min_sample_count = min_sample_count
+        self._min_trading_day_count = min_trading_day_count
         self._target_return = target_return
         self._dependence_lag_days = dependence_lag_days
 
@@ -110,7 +112,10 @@ class RuleSearchEngine:
                 target_return=self._target_return,
                 dependence_lag_days=self._dependence_lag_days,
             )
-            if train_result.sample_count < self._min_sample_count:
+            if (
+                train_result.sample_count < self._min_sample_count
+                or train_result.trading_day_count < self._min_trading_day_count
+            ):
                 continue
             candidates.append(
                 FactorHypothesis(
@@ -140,7 +145,11 @@ class RuleSearchEngine:
                 target_return=self._target_return,
                 dependence_lag_days=self._dependence_lag_days,
             )
-            if validation_result.sample_count < self._min_sample_count:
+            if (
+                validation_result.sample_count < self._min_sample_count
+                or validation_result.trading_day_count
+                < self._min_trading_day_count
+            ):
                 continue
             train_result = candidate.train_result
             generalization_gap = abs(
@@ -175,7 +184,7 @@ class RuleSearchEngine:
         if lift <= 0.0:
             return 1.0
         if standard_error <= 0.0:
-            return 0.0
+            return 1.0
         z_score = lift / standard_error
         probability = 0.5 * math.erfc(z_score / math.sqrt(2.0))
         return min(1.0, max(0.0, probability))

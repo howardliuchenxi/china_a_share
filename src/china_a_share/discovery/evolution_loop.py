@@ -80,6 +80,7 @@ class EvolutionLoop:
         )
         search = RuleSearchEngine(
             min_sample_count=request.minimum_samples,
+            min_trading_day_count=request.minimum_trading_days,
             target_return=request.target_return_pct / 100.0,
             dependence_lag_days=request.forward_days - 1,
         )
@@ -95,7 +96,7 @@ class EvolutionLoop:
         task.progress.leaderboard = leaderboard
         if not leaderboard:
             raise ValueError(
-                "No rule met the minimum sample requirement in both windows."
+                "No rule met the minimum event and trading-day requirements in both windows."
             )
 
     def _update_progress(
