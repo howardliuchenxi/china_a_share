@@ -1388,7 +1388,7 @@ table tbody tr:hover { background-color: #f1f3ee; }
   background: #fbfcfb;
 }
 .headline-metrics {
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
 }
 .research-progress-grid small,
 .headline-metrics small,

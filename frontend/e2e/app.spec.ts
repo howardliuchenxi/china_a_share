@@ -585,6 +585,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
       current_generation: 1,
       total_generations: 1,
       formulas_tested: 1,
+      candidates_evaluated: 18,
       current_log: "规律搜索与独立验证已完成。",
       current_stage: "completed",
       training_sample_count: 1200,
@@ -595,6 +596,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
         reasoning: "Generated from training-window quantiles and independently validated.",
         validation_score: 0.54,
         generalization_gap: 0.03,
+        p_value: 0.012,
+        q_value: 0.048,
         train_result: {
           win_rate: 0.63, mean_return: 0.071, median_return: 0.052,
           max_drawdown: -0.12, eval_time_ms: 10, sample_count: 180,

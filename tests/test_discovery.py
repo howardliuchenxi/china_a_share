@@ -177,7 +177,7 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     )
     validation = train.copy()
 
-    candidates = RuleSearchEngine(min_sample_count=4).search(
+    candidates, evaluated_count = RuleSearchEngine(min_sample_count=4).search(
         train,
         validation,
         ["value", "quality"],
@@ -186,11 +186,44 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     )
 
     assert candidates
+    assert evaluated_count >= len(candidates)
     assert any("value" in candidate.formula for candidate in candidates)
     assert all(candidate.train_result.sample_count >= 4 for candidate in candidates)
     assert all(candidate.val_result is not None for candidate in candidates)
     assert candidates[0].validation_score >= candidates[-1].validation_score
     assert all(candidate.generalization_gap >= 0 for candidate in candidates)
+
+
+def test_rule_search_corrects_validation_significance_for_multiple_candidates():
+    train = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 41)],
+            "strong": list(range(40)),
+            "noise": [index % 5 for index in range(40)],
+            "forward_return": [-0.05] * 32 + [0.20] * 8,
+        }
+    )
+
+    candidates, evaluated_count = RuleSearchEngine(min_sample_count=5).search(
+        train,
+        train.copy(),
+        ["strong", "noise"],
+        max_conditions=2,
+        top_n=10,
+    )
+
+    assert evaluated_count > 1
+    assert candidates
+    assert all(0.0 <= candidate.p_value <= 1.0 for candidate in candidates)
+    assert all(candidate.p_value <= candidate.q_value <= 1.0 for candidate in candidates)
+    assert candidates[0].q_value <= candidates[-1].q_value
+
+
+def test_binomial_significance_remains_finite_for_large_samples():
+    probability = RuleSearchEngine._binomial_tail_probability(5600, 10000, 0.5)
+
+    assert 0.0 <= probability <= 1.0
+    assert probability < 0.001
 
 
 def test_discovery_request_rejects_overlapping_training_and_validation_windows():
@@ -302,6 +335,7 @@ def test_evolution_loop_builds_each_window_once_and_persists_ranked_rules():
     assert completed.status == AnalysisTaskStatus.SUCCEEDED
     assert completed.progress.current_stage == "completed"
     assert completed.progress.formulas_tested > 0
+    assert completed.progress.candidates_evaluated >= completed.progress.formulas_tested
     assert completed.progress.leaderboard
     assert backtester.calls == [
         ("20250101", "20251231", 5),

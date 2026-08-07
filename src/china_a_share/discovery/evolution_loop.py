@@ -73,7 +73,7 @@ class EvolutionLoop:
             min_sample_count=request.minimum_samples,
             target_return=request.target_return_pct / 100.0,
         )
-        leaderboard = search.search(
+        leaderboard, evaluated_count = search.search(
             train,
             validation,
             request.factors,
@@ -81,6 +81,7 @@ class EvolutionLoop:
             top_n=LEADERBOARD_SIZE,
         )
         task.progress.formulas_tested = len(leaderboard)
+        task.progress.candidates_evaluated = evaluated_count
         task.progress.leaderboard = leaderboard
         if not leaderboard:
             raise ValueError(

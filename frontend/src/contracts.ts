@@ -304,12 +304,15 @@ export interface FactorHypothesis {
   val_result: BacktestResult | null;
   validation_score: number;
   generalization_gap: number;
+  p_value: number;
+  q_value: number;
 }
 
 export interface DiscoveryTaskProgress {
   current_generation: number;
   total_generations: number;
   formulas_tested: number;
+  candidates_evaluated: number;
   current_log: string;
   current_stage: string;
   training_sample_count: number;

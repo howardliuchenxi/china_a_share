@@ -206,6 +206,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>当前阶段</small><strong>{taskStatus.progress.current_stage}</strong></div>
           <div><small>训练样本</small><strong>{taskStatus.progress.training_sample_count.toLocaleString()}</strong></div>
           <div><small>验证样本</small><strong>{taskStatus.progress.validation_sample_count.toLocaleString()}</strong></div>
+          <div><small>已评估候选</small><strong>{taskStatus.progress.candidates_evaluated}</strong></div>
           <div><small>入榜规则</small><strong>{taskStatus.progress.formulas_tested}</strong></div>
         </div>
         <p className="live-log">{taskStatus.progress.current_log || "等待任务开始…"}</p>
@@ -219,8 +220,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
           <div><small>事件曲线最大回撤</small><strong>{percent(bestRule.val_result!.max_drawdown, 2)}</strong><em>{bestRule.val_result!.sample_count} 个验证样本</em></div>
+          <div><small>多重检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>{bestRule.q_value <= 0.1 ? "通过 10% FDR 阈值" : "未通过 10% FDR 阈值"}</em></div>
         </div>
-        <p className="research-caveat">这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。</p>
+        <p className="research-caveat">这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。q-value 使用事件独立的二项近似，只用于抑制批量搜索中的偶然发现，不代表因果关系。</p>
       </section>}
 
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">
@@ -237,6 +239,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
               </div>
               <p className="confidence-note">验证集上涨概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
               <p className="confidence-note">保守可信分：{hypothesis.validation_score.toFixed(3)} · 训练—验证差距：{percent(hypothesis.generalization_gap)}</p>
+              <p className="confidence-note">单项 p-value：{hypothesis.p_value.toFixed(3)} · FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}</p>
             </div>
           </article>)}
         </div>

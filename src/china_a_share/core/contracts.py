@@ -1112,6 +1112,18 @@ class FactorHypothesis(BaseModel):
         ge=0.0,
         description="Absolute train-to-validation win-rate difference.",
     )
+    p_value: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="One-sided validation probability under the baseline hit rate.",
+    )
+    q_value: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Benjamini-Hochberg adjusted validation significance.",
+    )
 
 
 class DiscoveryTaskProgress(BaseModel):
@@ -1122,6 +1134,7 @@ class DiscoveryTaskProgress(BaseModel):
     current_generation: int = 0
     total_generations: int = 0
     formulas_tested: int = 0
+    candidates_evaluated: int = Field(default=0, ge=0)
     current_log: str = ""
     current_stage: str = Field(
         default="queued",
