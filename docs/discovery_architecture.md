@@ -115,6 +115,9 @@ Reported evidence includes:
   distinct-security count;
 - maximum single-date event share, which reveals temporal concentration hidden
   by a distinct-signal-date count;
+- Kish effective signal-date count based on daily event weights; this count is
+  used by the boundary-safe score interval so a date-concentrated sample cannot
+  claim the same precision as an equally distributed set of signal dates;
 - rule support among factor-comparable events;
 - absolute train-to-validation support-rate drift for applicability diagnostics;
 - validation-to-training support retention, which exposes relative applicability
@@ -123,7 +126,8 @@ Reported evidence includes:
 - hit rate, mean and median forward return, and fifth-percentile return;
 - hit-rate lift over the factor-comparable baseline;
 - a conservative lift interval enveloping the date-clustered HAC interval and
-  the difference between selected and baseline probability intervals;
+  the difference between selected and baseline concentration-adjusted
+  probability intervals;
 - date-clustered HAC uncertainty that accounts for overlapping horizons;
 - zero-influence calendar gaps that preserve true trading-session HAC lags when
   a factor is unavailable for an entire date, while the finite-sample variance

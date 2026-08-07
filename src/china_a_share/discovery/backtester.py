@@ -306,6 +306,13 @@ class FactorBacktester:
             if len(returns)
             else 0.0
         )
+        effective_trading_day_count = (
+            FactorBacktester._effective_cluster_count(
+                evaluation_frame["trade_date"]
+            )
+            if len(returns)
+            else 0.0
+        )
         baseline_evaluation_frame = baseline_frame.assign(
             forward_return=pd.to_numeric(
                 baseline_frame["forward_return"], errors="coerce"
@@ -337,6 +344,7 @@ class FactorBacktester:
                 security_count=security_count,
                 max_security_event_share=max_security_event_share,
                 max_signal_date_event_share=max_signal_date_event_share,
+                effective_trading_day_count=effective_trading_day_count,
                 dependence_lag_days=dependence_lag_days,
             )
 
@@ -408,6 +416,7 @@ class FactorBacktester:
             confidence_upper=confidence_upper,
             target_return=target_return,
             trading_day_count=trading_day_count,
+            effective_trading_day_count=effective_trading_day_count,
             security_count=security_count,
             max_security_event_share=max_security_event_share,
             max_signal_date_event_share=max_signal_date_event_share,
@@ -767,9 +776,15 @@ class FactorBacktester:
         margin = 1.959963984540054 * standard_error
         hac_lower = max(0.0, probability - margin)
         hac_upper = min(1.0, probability + margin)
+        # A raw distinct-date count overstates precision when most events occur
+        # on only a few dates. Kish weighting preserves the date-cluster unit
+        # while widening the boundary-safe score interval for concentration.
+        effective_day_count = FactorBacktester._effective_cluster_count(
+            frame["trade_date"]
+        )
         score_lower, score_upper = FactorBacktester._wilson_interval(
-            probability * selected_day_count,
-            selected_day_count,
+            probability * effective_day_count,
+            effective_day_count,
         )
         return (
             min(hac_lower, score_lower),
@@ -781,7 +796,7 @@ class FactorBacktester:
     @staticmethod
     def _wilson_interval(
         successes: float,
-        observations: int,
+        observations: float,
     ) -> tuple[float, float]:
         """Return a 95% score interval for an effective Bernoulli sample."""
         if observations <= 0:
@@ -798,6 +813,15 @@ class FactorBacktester:
             max(0.0, (centre - margin) / denominator),
             min(1.0, (centre + margin) / denominator),
         )
+
+    @staticmethod
+    def _effective_cluster_count(cluster_labels: pd.Series) -> float:
+        """Return the Kish count implied by unequal event weights per cluster."""
+        counts = cluster_labels.astype(str).value_counts().astype(float)
+        if counts.empty:
+            return 0.0
+        total = float(counts.sum())
+        return total * total / float((counts**2).sum())
 
     @staticmethod
     def _clustered_lift_standard_error(

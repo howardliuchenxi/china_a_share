@@ -307,6 +307,8 @@ export interface BacktestResult {
   confidence_upper: number;
   target_return: number;
   trading_day_count: number;
+  /** Kish effective signal-date count after event concentration weighting. */
+  effective_trading_day_count: number;
   security_count: number;
   max_security_event_share: number;
   max_signal_date_event_share: number;

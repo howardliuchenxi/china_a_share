@@ -634,6 +634,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           lift_confidence_upper: 0.18, confidence_lower: 0.56, confidence_upper: 0.70,
           target_return: 0.05,
           trading_day_count: 120,
+          effective_trading_day_count: 96.4,
           security_count: 86,
           max_security_event_share: 0.08,
           max_signal_date_event_share: 0.06,
@@ -655,6 +656,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           lift_confidence_upper: 0.16, confidence_lower: 0.49, confidence_upper: 0.70,
           target_return: 0.05,
           trading_day_count: 55,
+          effective_trading_day_count: 42.7,
           security_count: 48,
           max_security_event_share: 0.12,
           max_signal_date_event_share: 0.15,
@@ -741,6 +743,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
   await expect(topWindowComparison).toContainText("15.3%");
   await expect(topWindowComparison).toContainText("180 / 120 / 86");
+  await expect(topWindowComparison).toContainText("日期集中度折算后有效交易日");
+  await expect(topWindowComparison).toContainText("96.4");
+  await expect(topWindowComparison).toContainText("42.7");
   await expect(topWindowComparison).toContainText("最大单股事件占比");
   await expect(topWindowComparison).toContainText("最大单日事件占比");
   await expect(topWindowComparison).toContainText("12.0%");

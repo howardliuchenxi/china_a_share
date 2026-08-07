@@ -1232,6 +1232,14 @@ class BacktestResult(BaseModel):
     confidence_upper: float = 0.0
     target_return: float = 0.0
     trading_day_count: int = Field(default=0, ge=0)
+    effective_trading_day_count: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Kish effective count of signal dates after accounting for unequal "
+            "event concentration across dates."
+        ),
+    )
     security_count: int = Field(
         default=0,
         ge=0,

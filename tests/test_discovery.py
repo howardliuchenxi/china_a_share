@@ -974,6 +974,42 @@ def test_rule_evaluation_reports_single_date_event_concentration():
 
     assert result.trading_day_count == 20
     assert result.max_signal_date_event_share == pytest.approx(0.81)
+    assert result.effective_trading_day_count == pytest.approx(
+        10000 / (81**2 + 19)
+    )
+
+
+def test_date_concentration_widens_the_boundary_safe_probability_interval():
+    concentrated = pd.DataFrame(
+        {
+            "trade_date": ["20260101"] * 81
+            + [f"202601{index:02d}" for index in range(2, 21)],
+            "factor": [1.0] * 100,
+            "forward_return": [0.10] * 100,
+        }
+    )
+    balanced = pd.DataFrame(
+        {
+            "trade_date": [f"202601{index:02d}" for index in range(1, 21)],
+            "factor": [1.0] * 20,
+            "forward_return": [0.10] * 20,
+        }
+    )
+
+    concentrated_result = FactorBacktester.evaluate_rule(
+        concentrated,
+        "factor == 1",
+    )
+    balanced_result = FactorBacktester.evaluate_rule(balanced, "factor == 1")
+
+    assert concentrated_result.trading_day_count == 20
+    assert balanced_result.trading_day_count == 20
+    assert concentrated_result.effective_trading_day_count < 2.0
+    assert balanced_result.effective_trading_day_count == pytest.approx(20.0)
+    assert (
+        concentrated_result.confidence_lower
+        < balanced_result.confidence_lower
+    )
 
 
 def test_rule_evaluation_clusters_uncertainty_by_trading_day():
