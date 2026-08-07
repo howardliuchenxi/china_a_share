@@ -227,6 +227,7 @@ class FactorBacktester:
             evaluation_frame.index,
             target_return,
             dependence_lag_days,
+            research_frame["trade_date"],
         )
         (
             confidence_lower,
@@ -579,6 +580,7 @@ class FactorBacktester:
         selected_index: pd.Index,
         target_return: float,
         dependence_lag_days: int,
+        signal_dates: pd.Series,
     ) -> float:
         """Estimate uncertainty of selected-versus-baseline lift by signal date."""
         observations = frame[["trade_date", "forward_return"]].copy()
@@ -611,6 +613,13 @@ class FactorBacktester:
             observations.groupby("trade_date")["lift_influence"]
             .sum()
             .sort_index()
+        )
+        # Retain zero-influence dates so HAC lags continue to represent actual
+        # trading-session distance when a factor is unavailable for a full day.
+        ordered_dates = pd.Index(sorted(signal_dates.astype(str).unique()))
+        cluster_influence = cluster_influence.reindex(
+            ordered_dates,
+            fill_value=0.0,
         )
         return FactorBacktester._hac_standard_error(
             cluster_influence,

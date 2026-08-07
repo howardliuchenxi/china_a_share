@@ -91,6 +91,8 @@ Reported evidence includes:
 - hit rate, mean and median forward return, and fifth-percentile return;
 - hit-rate lift over the factor-comparable baseline;
 - date-clustered HAC uncertainty that accounts for overlapping horizons;
+- zero-influence calendar gaps that preserve true trading-session HAC lags when
+  a factor is unavailable for an entire date;
 - a conservative probability interval combining HAC and a signal-date score
   interval;
 - one-sided validation p-values and Benjamini-Hochberg q-values.

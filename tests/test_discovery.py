@@ -854,6 +854,31 @@ def test_rule_evaluation_accounts_for_overlap_when_estimating_lift_uncertainty()
     assert result.lift_standard_error == pytest.approx(0.25)
 
 
+def test_lift_uncertainty_preserves_dates_without_comparable_factor_events():
+    comparable = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260105", "20260107", "20260107"],
+            "forward_return": [0.10, -0.10, -0.10, -0.10],
+        }
+    )
+    signal_dates = pd.Series(
+        ["20260105", "20260106", "20260107"],
+    )
+
+    standard_error = FactorBacktester._clustered_lift_standard_error(
+        comparable,
+        pd.Index([0, 2]),
+        target_return=0.0,
+        dependence_lag_days=1,
+        signal_dates=signal_dates,
+    )
+
+    expected_influence = pd.Series([0.125, 0.0, -0.125])
+    assert standard_error == pytest.approx(
+        FactorBacktester._hac_standard_error(expected_influence, 1)
+    )
+
+
 def test_rule_evaluation_uses_hac_error_for_overlapping_forward_windows():
     dataset = pd.DataFrame(
         {
