@@ -77,13 +77,7 @@ class RuleSearchEngine:
             candidates.extend(pair_candidates)
             evaluated_count += pair_evaluated
         candidates.sort(key=self._training_rank_key, reverse=True)
-        unique = []
-        seen = set()
-        for candidate in candidates:
-            if candidate.formula in seen:
-                continue
-            seen.add(candidate.formula)
-            unique.append(candidate)
+        unique = self._deduplicate_by_training_selection(candidates, train)
         # Freeze a bounded training-ranked shortlist before touching validation.
         validation_limit = max(top_n, VALIDATION_CANDIDATE_LIMIT)
         validated = self._validate_candidates(
@@ -150,12 +144,32 @@ class RuleSearchEngine:
         return selected
 
     @staticmethod
+    def _deduplicate_by_training_selection(
+        candidates: Sequence[FactorHypothesis],
+        train: pd.DataFrame,
+    ) -> List[FactorHypothesis]:
+        """Keep the highest-ranked formula for each distinct training cohort."""
+        unique = []
+        seen_selections = set()
+        for candidate in candidates:
+            selected_index = train.query(
+                candidate.formula,
+                engine="python",
+            ).index
+            signature = selected_index.to_numpy(dtype="int64").tobytes()
+            if signature in seen_selections:
+                continue
+            seen_selections.add(signature)
+            unique.append(candidate)
+        return unique
+
+    @staticmethod
     def _finite_factor_frame(
         frame: pd.DataFrame,
         factors: Sequence[str],
     ) -> pd.DataFrame:
         """Coerce requested factors and hide non-finite values from every rule."""
-        cleaned = frame.copy()
+        cleaned = frame.reset_index(drop=True).copy()
         for factor in factors:
             if factor not in cleaned:
                 continue

@@ -488,6 +488,32 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
     assert len(buckets) == len(set(buckets)) == 4
 
 
+def test_rule_search_deduplicates_formulas_selecting_the_same_training_cohort():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{i:02d}" for i in range(1, 41)],
+            "first": list(range(40)),
+            "duplicate": list(range(40)),
+            "forward_return": [-0.10] * 20 + [0.10] * 20,
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(min_sample_count=5).search(
+        dataset,
+        dataset.copy(),
+        ["first", "duplicate"],
+        max_conditions=2,
+        top_n=50,
+    )
+
+    selected_sets = [
+        tuple(dataset.query(candidate.formula).index)
+        for candidate in candidates
+    ]
+    assert candidates
+    assert len(selected_sets) == len(set(selected_sets))
+
+
 def test_rule_search_does_not_use_validation_outcomes_to_choose_the_winner():
     train = pd.DataFrame(
         {
