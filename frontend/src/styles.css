@@ -1408,6 +1408,12 @@ table tbody tr:hover { background-color: #f1f3ee; }
 .factor-coverage-grid strong {
   font-size: 1rem;
 }
+.research-config-grid {
+  margin-bottom: 1rem;
+}
+.research-config-grid strong {
+  font-size: 0.9rem;
+}
 .headline-metrics em {
   color: #718078;
   font-size: 0.72rem;

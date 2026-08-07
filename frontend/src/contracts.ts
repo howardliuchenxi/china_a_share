@@ -341,6 +341,20 @@ export interface DiscoveryTaskProgress {
 export interface DiscoveryTaskStatusResponse {
   task_id: string;
   status: AnalysisTaskStatus;
+  research_config: {
+    target_pool: "A_SHARE";
+    train_start: string;
+    train_end: string;
+    val_start: string;
+    val_end: string;
+    factors: string[];
+    forward_days: number;
+    target_return_pct: number;
+    minimum_samples: number;
+    minimum_trading_days: number;
+    minimum_outcome_coverage_pct: number;
+    max_conditions: number;
+  };
   progress: DiscoveryTaskProgress;
   error: ServiceError | null;
 }

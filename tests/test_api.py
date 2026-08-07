@@ -215,7 +215,23 @@ def test_discovery_endpoints_validate_submit_and_return_progress():
 
     status_response = client.get("/api/discovery/tasks/discovery-api-task")
     assert status_response.status_code == 200
-    assert status_response.json()["progress"]["current_stage"] == "queued"
+    status_payload = status_response.json()
+    assert status_payload["progress"]["current_stage"] == "queued"
+    assert status_payload["research_config"] == {
+        "target_pool": "A_SHARE",
+        "train_start": "20240101",
+        "train_end": "20251231",
+        "val_start": "20260101",
+        "val_end": "20260630",
+        "factors": ["pe_ttm", "turnover_rate"],
+        "forward_days": 20,
+        "target_return_pct": 0.0,
+        "minimum_samples": 30,
+        "minimum_trading_days": 20,
+        "minimum_outcome_coverage_pct": 95.0,
+        "max_conditions": 2,
+    }
+    assert "prompt" not in status_payload["research_config"]
 
 
 def test_discovery_endpoint_rejects_overlapping_windows():

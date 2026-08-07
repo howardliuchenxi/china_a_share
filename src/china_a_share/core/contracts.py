@@ -1095,6 +1095,33 @@ class DiscoveryTaskRequest(BaseModel):
         return self
 
 
+class DiscoveryResearchConfig(BaseModel):
+    """Public immutable configuration used to reproduce a discovery task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_pool: Literal["A_SHARE"] = Field(
+        description="Validated research universe."
+    )
+    train_start: str = Field(description="Training-window start date (YYYYMMDD).")
+    train_end: str = Field(description="Training-window end date (YYYYMMDD).")
+    val_start: str = Field(description="Validation-window start date (YYYYMMDD).")
+    val_end: str = Field(description="Validation-window end date (YYYYMMDD).")
+    factors: List[str] = Field(description="Requested factor fields in search order.")
+    forward_days: int = Field(description="Trading-session forward-return horizon.")
+    target_return_pct: float = Field(
+        description="Return threshold in percentage points."
+    )
+    minimum_samples: int = Field(description="Minimum event observations per window.")
+    minimum_trading_days: int = Field(
+        description="Minimum distinct signal dates per window."
+    )
+    minimum_outcome_coverage_pct: float = Field(
+        description="Minimum observable outcome percentage."
+    )
+    max_conditions: int = Field(description="Maximum conditions in one rule.")
+
+
 class BacktestResult(BaseModel):
     """Performance evaluation of a single factor formula."""
     
@@ -1235,12 +1262,15 @@ class DiscoveryTask(BaseModel):
 
 
 class DiscoveryTaskStatusResponse(BaseModel):
-    """Public task state that excludes the persisted input and screenshot."""
+    """Public task state with a non-sensitive reproducibility snapshot."""
 
     model_config = ConfigDict(extra="forbid")
 
     task_id: str = Field(description="Stable task identifier.")
     status: AnalysisTaskStatus = Field(description="Current task lifecycle state.")
+    research_config: DiscoveryResearchConfig = Field(
+        description="Immutable non-sensitive configuration used by the task."
+    )
     progress: DiscoveryTaskProgress
     error: Optional[ServiceError] = None
 

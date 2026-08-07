@@ -263,6 +263,14 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
 
       {bestRule && <section className="results-panel discovery-summary-panel">
         <div className="section-heading"><span>03</span><h2>验证集摘要</h2></div>
+        <p className="coverage-heading">本次研究配置（任务快照）</p>
+        <div className="research-progress-grid research-config-grid">
+          <div><small>训练窗口</small><strong>{taskStatus!.research_config.train_start} – {taskStatus!.research_config.train_end}</strong></div>
+          <div><small>验证窗口</small><strong>{taskStatus!.research_config.val_start} – {taskStatus!.research_config.val_end}</strong></div>
+          <div><small>未来收益周期</small><strong>{taskStatus!.research_config.forward_days} 个交易日</strong></div>
+          <div><small>样本 / 交易日门槛</small><strong>{taskStatus!.research_config.minimum_samples} / {taskStatus!.research_config.minimum_trading_days}</strong></div>
+          <div><small>标签覆盖 / 条件数</small><strong>{taskStatus!.research_config.minimum_outcome_coverage_pct}% / {taskStatus!.research_config.max_conditions}</strong></div>
+        </div>
         <div className="headline-metrics">
           <div><small>独立验证结论</small><strong className={bestRule.validation_passed ? "metric-positive" : "metric-negative"}>{bestRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>{validationReason(bestRule)}</em></div>
           <div><small>超过 {percent(bestRule.val_result!.target_return)} 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>HAC + {bestRule.val_result!.trading_day_count} 日 score 下限：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>

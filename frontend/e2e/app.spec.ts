@@ -581,6 +581,20 @@ test("discovery page submits a bounded study and renders validation evidence", a
   const discoveryStatus = {
     task_id: "discovery-e2e",
     status: "succeeded",
+    research_config: {
+      target_pool: "A_SHARE",
+      train_start: "20240101",
+      train_end: "20251231",
+      val_start: "20260101",
+      val_end: "20260630",
+      factors: ["pe_ttm", "turnover_rate", "circ_mv"],
+      forward_days: 20,
+      target_return_pct: 5,
+      minimum_samples: 30,
+      minimum_trading_days: 20,
+      minimum_outcome_coverage_pct: 95,
+      max_conditions: 2,
+    },
     progress: {
       current_generation: 1,
       total_generations: 1,
@@ -667,6 +681,10 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await page.getByRole("button", { name: "开始反向搜索" }).click();
 
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
+  await expect(page.getByText("本次研究配置（任务快照）", { exact: true })).toBeVisible();
+  await expect(page.locator(".research-config-grid")).toContainText("20240101 – 20251231");
+  await expect(page.locator(".research-config-grid")).toContainText("20260101 – 20260630");
+  await expect(page.locator(".research-config-grid")).toContainText("20 个交易日");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% FDR");

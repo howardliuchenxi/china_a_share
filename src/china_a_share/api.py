@@ -23,6 +23,7 @@ from .core.contracts import (
     AnalysisResponse,
     AnalysisTaskStatusResponse,
     AnalysisTaskSubmission,
+    DiscoveryResearchConfig,
     DiscoveryTaskRequest,
     DiscoveryTaskStatusResponse,
     ServiceError,
@@ -307,6 +308,22 @@ def create_app(
         return DiscoveryTaskStatusResponse(
             task_id=task.task_id,
             status=task.status,
+            research_config=DiscoveryResearchConfig(
+                target_pool=task.request.target_pool,
+                train_start=task.request.train_start,
+                train_end=task.request.train_end,
+                val_start=task.request.val_start,
+                val_end=task.request.val_end,
+                factors=task.request.factors,
+                forward_days=task.request.forward_days,
+                target_return_pct=task.request.target_return_pct,
+                minimum_samples=task.request.minimum_samples,
+                minimum_trading_days=task.request.minimum_trading_days,
+                minimum_outcome_coverage_pct=(
+                    task.request.minimum_outcome_coverage_pct
+                ),
+                max_conditions=task.request.max_conditions,
+            ),
             progress=task.progress,
             error=task.error,
         )
