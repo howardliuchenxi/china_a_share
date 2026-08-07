@@ -153,6 +153,21 @@ class FactorBacktester:
         prior_close_1 = grouped_close.shift(1)
         prior_close_2 = grouped_close.shift(2)
         prior_close_3 = grouped_close.shift(3)
+        prior_close_4 = grouped_close.shift(4)
+        daily_returns = pd.concat(
+            [
+                enriched["adjusted_close"] / prior_close_1 - 1.0,
+                prior_close_1 / prior_close_2 - 1.0,
+                prior_close_2 / prior_close_3 - 1.0,
+                prior_close_3 / prior_close_4 - 1.0,
+                prior_close_4 / prior_close_5 - 1.0,
+            ],
+            axis=1,
+        )
+        enriched["volatility_5d_pct"] = (
+            daily_returns.std(axis=1, ddof=0) * 100.0
+        ).where(has_five_consecutive_sessions)
+
         prior_rank_1 = grouped_rank.shift(1)
         prior_rank_2 = grouped_rank.shift(2)
         prior_rank_3 = grouped_rank.shift(3)

@@ -44,6 +44,7 @@ DISCOVERY_FACTOR_FIELDS = {
     "turnover_rate",
     "turnover_rate_f",
     "vol",
+    "volatility_5d_pct",
     "volume_ratio",
 }
 

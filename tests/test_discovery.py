@@ -115,6 +115,18 @@ def test_research_dataset_derives_point_in_time_sequence_features():
     )
 
     assert dataset["return_5d_pct"].tolist() == pytest.approx([50.0])
+    expected_volatility = pd.Series(
+        [
+            15.0 / 14.0 - 1.0,
+            14.0 / 13.0 - 1.0,
+            13.0 / 12.0 - 1.0,
+            12.0 / 11.0 - 1.0,
+            11.0 / 10.0 - 1.0,
+        ]
+    ).std(ddof=0) * 100.0
+    assert dataset["volatility_5d_pct"].tolist() == pytest.approx(
+        [expected_volatility]
+    )
     assert dataset["positive_days_3"].tolist() == [3.0]
     assert dataset["forward_return"].tolist() == pytest.approx([1.0 / 15.0 - 1.0])
 
@@ -152,8 +164,10 @@ def test_sequence_features_reject_non_consecutive_security_history():
     ).set_index("ts_code")
 
     assert pd.isna(dataset.loc["000001.SZ", "return_5d_pct"])
+    assert pd.isna(dataset.loc["000001.SZ", "volatility_5d_pct"])
     assert pd.isna(dataset.loc["000001.SZ", "positive_days_3"])
     assert dataset.loc["000002.SZ", "positive_days_3"] == 3.0
+    assert pd.notna(dataset.loc["000002.SZ", "volatility_5d_pct"])
 
 
 def test_research_dataset_resolves_forward_returns_across_a_long_market_closure():
@@ -1860,10 +1874,14 @@ def test_discovery_request_accepts_point_in_time_sequence_factors():
         train_end="20251231",
         val_start="20260101",
         val_end="20260630",
-        factors=["positive_days_3", "return_5d_pct"],
+        factors=["positive_days_3", "return_5d_pct", "volatility_5d_pct"],
     )
 
-    assert request.factors == ["positive_days_3", "return_5d_pct"]
+    assert request.factors == [
+        "positive_days_3",
+        "return_5d_pct",
+        "volatility_5d_pct",
+    ]
 
 
 @pytest.mark.parametrize(
