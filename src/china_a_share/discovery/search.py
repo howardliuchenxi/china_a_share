@@ -7,15 +7,20 @@ from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from china_a_share.core.contracts import BacktestResult, FactorHypothesis
+from china_a_share.core.contracts import (
+    DISCOVERY_FACTOR_FIELDS,
+    BacktestResult,
+    FactorHypothesis,
+)
 from china_a_share.discovery.backtester import FactorBacktester
 
 
 SEARCH_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 MAX_EXHAUSTIVE_DISCRETE_VALUES = 10
-# Twenty-four entries cover every supported factor once and still cap the
-# two-condition search at 276 combinations.
-PAIRING_CANDIDATE_LIMIT = 24
+# Reserve one first-pass slot for every factor admitted by the public request
+# contract. The schema therefore remains the single source of truth when the
+# factor catalog grows.
+PAIRING_CANDIDATE_LIMIT = len(DISCOVERY_FACTOR_FIELDS)
 VALIDATION_CANDIDATE_LIMIT = 50
 VALIDATION_FDR_THRESHOLD = 0.10
 MINIMUM_SIGNIFICANCE_TRADING_DAYS = 20

@@ -74,10 +74,10 @@ such as a three-day streak to remain searchable. Continuous factors use the
 training window's 10%, 25%, 50%, 75%, and 90% quantiles. Equivalent selections
 are deduplicated. Factors are processed in canonical field-name order, so
 request ordering cannot change threshold generation, bounded pairing, or
-equivalent-cohort selection. When two conditions are allowed, a 24-entry
-pairing pool first covers every factor with an eligible single-condition
-candidate and then adds alternate directions. This caps the pair search at 276
-combinations.
+equivalent-cohort selection. When two conditions are allowed, the pairing pool
+reserves one slot for every factor admitted by the public discovery contract
+before adding alternate directions. The current 25-factor catalog therefore
+caps the pair search at 300 combinations without silently excluding a factor.
 
 Candidates are ranked only on training data by the conservative lower 95%
 lift bound. This bound is the lower edge of the envelope combining the

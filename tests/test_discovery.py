@@ -6,6 +6,7 @@ import pytest
 from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     BacktestResult,
+    DISCOVERY_FACTOR_FIELDS,
     DiscoveryTask,
     DiscoveryTaskRequest,
     FactorHypothesis,
@@ -1571,7 +1572,10 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
 
 
 def test_rule_search_prioritizes_factor_breadth_in_the_pairing_pool():
-    factor_names = [f"factor_{index}" for index in range(20)]
+    factor_names = [
+        f"factor_{index}"
+        for index in range(len(DISCOVERY_FACTOR_FIELDS))
+    ]
     dataset = pd.DataFrame(
         {
             "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
@@ -1586,6 +1590,7 @@ def test_rule_search_prioritizes_factor_breadth_in_the_pairing_pool():
     pairing_pool = search._select_pairing_conditions(candidates)
 
     assert len(pairing_pool) == PAIRING_CANDIDATE_LIMIT
+    assert PAIRING_CANDIDATE_LIMIT == len(DISCOVERY_FACTOR_FIELDS)
     assert {field for _, field in pairing_pool} == set(factor_names)
 
 
