@@ -303,6 +303,10 @@ class RuleSearchEngine:
             )
             candidate.val_result = validation_result
             candidate.generalization_gap = generalization_gap
+            candidate.support_rate_gap = abs(
+                train_result.rule_support_rate
+                - validation_result.rule_support_rate
+            )
             candidate.validation_score = self._conservative_validation_score(
                 validation_result,
                 generalization_gap,

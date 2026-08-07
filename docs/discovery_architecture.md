@@ -87,6 +87,7 @@ Reported evidence includes:
 
 - event count, distinct signal dates, and distinct securities;
 - rule support among factor-comparable events;
+- absolute train-to-validation support-rate drift for applicability diagnostics;
 - observable-outcome coverage;
 - hit rate, mean and median forward return, and fifth-percentile return;
 - hit-rate lift over the factor-comparable baseline;

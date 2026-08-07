@@ -931,6 +931,16 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     ]
     assert training_scores == sorted(training_scores, reverse=True)
     assert all(candidate.generalization_gap >= 0 for candidate in candidates)
+    assert all(
+        candidate.support_rate_gap
+        == pytest.approx(
+            abs(
+                candidate.train_result.rule_support_rate
+                - candidate.val_result.rule_support_rate
+            )
+        )
+        for candidate in candidates
+    )
 
 
 def test_training_rank_penalizes_uncertain_lift():

@@ -614,6 +614,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         reasoning: "Generated from training-window quantiles and independently validated.",
         validation_score: 0.027,
         generalization_gap: 0.03,
+        support_rate_gap: 0.029,
         p_value: 0.012,
         q_value: 0.048,
         fdr_family_size: 18,
@@ -702,6 +703,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".window-comparison")).toContainText("规则覆盖（可比事件 1200）");
   await expect(page.locator(".window-comparison")).toContainText("15.3%");
   await expect(page.locator(".window-comparison")).toContainText("180 / 120 / 86");
+  await expect(page.locator(".rule-list")).toContainText("规则覆盖差距：2.9%");
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");

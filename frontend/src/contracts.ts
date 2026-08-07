@@ -320,6 +320,7 @@ export interface FactorHypothesis {
   val_result: BacktestResult | null;
   validation_score: number;
   generalization_gap: number;
+  support_rate_gap: number;
   p_value: number;
   q_value: number;
   fdr_family_size: number;

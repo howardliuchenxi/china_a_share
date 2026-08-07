@@ -1223,6 +1223,12 @@ class FactorHypothesis(BaseModel):
         ge=0.0,
         description="Absolute train-to-validation win-rate-lift difference.",
     )
+    support_rate_gap: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Absolute train-to-validation rule-support-rate difference.",
+    )
     p_value: float = Field(
         default=1.0,
         ge=0.0,
