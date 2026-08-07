@@ -398,20 +398,28 @@ class RuleSearchEngine:
         *,
         family_size: int,
     ) -> None:
-        """Assign q-values using every frozen candidate sent to validation."""
+        """Assign dependency-robust q-values to the frozen validation family."""
         if not candidates:
             return
         if family_size < len(candidates):
             raise ValueError("FDR family cannot be smaller than validated candidates.")
         for candidate in candidates:
             candidate.fdr_family_size = family_size
+        # Nested quantile rules share many observations, so their test
+        # statistics need not satisfy the dependence assumptions of standard
+        # Benjamini-Hochberg correction. The Benjamini-Yekutieli harmonic
+        # penalty controls FDR under arbitrary dependence.
+        dependence_penalty = sum(1.0 / rank for rank in range(1, family_size + 1))
         ordered = sorted(enumerate(candidates), key=lambda item: item[1].p_value)
         adjusted = [1.0] * len(ordered)
         running_minimum = 1.0
         for reverse_index in range(len(ordered) - 1, -1, -1):
             rank = reverse_index + 1
             raw_adjusted = (
-                ordered[reverse_index][1].p_value * family_size / rank
+                ordered[reverse_index][1].p_value
+                * family_size
+                * dependence_penalty
+                / rank
             )
             running_minimum = min(running_minimum, raw_adjusted)
             adjusted[reverse_index] = min(1.0, running_minimum)

@@ -1239,7 +1239,10 @@ class FactorHypothesis(BaseModel):
         default=1.0,
         ge=0.0,
         le=1.0,
-        description="Benjamini-Hochberg adjusted validation significance.",
+        description=(
+            "Benjamini-Yekutieli adjusted validation significance for an "
+            "arbitrarily dependent candidate family."
+        ),
     )
     fdr_family_size: int = Field(
         default=0,

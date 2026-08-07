@@ -1387,8 +1387,9 @@ def test_false_discovery_rate_counts_ineligible_validation_candidates():
         family_size=10,
     )
 
+    harmonic_ten = sum(1.0 / rank for rank in range(1, 11))
     assert [candidate.q_value for candidate in candidates] == pytest.approx(
-        [0.10, 0.20]
+        [0.10 * harmonic_ten, 0.20 * harmonic_ten]
     )
     assert all(candidate.fdr_family_size == 10 for candidate in candidates)
 

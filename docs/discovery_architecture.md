@@ -100,7 +100,9 @@ Reported evidence includes:
   a factor is unavailable for an entire date;
 - a conservative probability interval combining HAC and a signal-date score
   interval;
-- one-sided validation p-values and Benjamini-Hochberg q-values.
+- one-sided validation p-values and Benjamini-Yekutieli q-values, whose
+  harmonic penalty controls false discoveries under arbitrary dependence among
+  overlapping and nested rules.
 
 The normal-tail significance calculation requires at least twenty independent
 validation signal dates. Shorter studies remain visible for exploration but

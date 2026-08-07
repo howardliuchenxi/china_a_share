@@ -615,8 +615,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
         validation_score: 0.027,
         generalization_gap: 0.03,
         support_rate_gap: 0.029,
-        p_value: 0.012,
-        q_value: 0.048,
+        p_value: 0.001,
+        q_value: 0.063,
         fdr_family_size: 18,
         validation_passed: true,
         validation_reason: "passed",
@@ -709,7 +709,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首验证结论");
   await expect(page.locator(".headline-metrics")).toContainText("1 / 1 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
-  await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% FDR");
+  await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
   await expect(page.locator(".window-comparison")).toContainText("规则覆盖（可比事件 1200）");
   await expect(page.locator(".window-comparison")).toContainText("15.3%");
   await expect(page.locator(".window-comparison")).toContainText("180 / 120 / 86");
@@ -729,12 +729,12 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
   await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
-  await expect(page.getByText("18 个盲测候选 · 通过 10% FDR", { exact: true })).toBeVisible();
+  await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true })).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
 
   await expect(page.locator(".rule-card")).toContainText("收益超过 5.0%");
   await expect(page.locator(".rule-card")).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
-  await expect(page.locator(".rule-card")).toContainText("验证判定：训练与验证同向，且通过 10% FDR");
+  await expect(page.locator(".rule-card")).toContainText("验证判定：训练与验证同向，且通过 10% BY-FDR");
   await expect(page.locator(".rule-card")).toContainText("训练—验证提升差距：3.0%");
   await expect(page.locator(".rule-card")).toContainText("保守相对提升：2.7%");
 
