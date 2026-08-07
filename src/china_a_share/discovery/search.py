@@ -61,14 +61,20 @@ class RuleSearchEngine:
         train = self._finite_factor_frame(train, factors)
         validation = self._finite_factor_frame(validation, factors)
         conditions = self._build_conditions(train, factors)
-        single_candidates, single_evaluated = self._evaluate_training_formulas(
+        pairing_single_candidates, single_evaluated = self._evaluate_training_formulas(
             conditions,
             train,
+            require_outcome_coverage=False,
         )
+        single_candidates = [
+            candidate
+            for candidate in pairing_single_candidates
+            if self._meets_outcome_coverage(candidate.train_result)
+        ]
         candidates = list(single_candidates)
         evaluated_count = single_evaluated
         if max_conditions >= 2:
-            strongest = self._select_pairing_conditions(single_candidates)
+            strongest = self._select_pairing_conditions(pairing_single_candidates)
             pairs = [
                 (
                     f"({left}) and ({right})",
@@ -345,6 +351,8 @@ class RuleSearchEngine:
         self,
         formulas: Sequence[Tuple[str, str]],
         train: pd.DataFrame,
+        *,
+        require_outcome_coverage: bool = True,
     ) -> Tuple[List[FactorHypothesis], int]:
         candidates = []
         for formula, fields in formulas:
@@ -363,10 +371,11 @@ class RuleSearchEngine:
                 or train_result.security_count < self._min_security_count
                 or train_result.effective_security_count
                 < self._min_security_count
-                or train_result.outcome_coverage_rate
-                < self._min_outcome_coverage
-                or train_result.baseline_outcome_coverage_rate
-                < self._min_outcome_coverage
+            ):
+                continue
+            if (
+                require_outcome_coverage
+                and not self._meets_outcome_coverage(train_result)
             ):
                 continue
             threshold_source = self._threshold_source(formula, train)
@@ -389,6 +398,14 @@ class RuleSearchEngine:
             )
         candidates.sort(key=self._training_rank_key, reverse=True)
         return candidates, len(formulas)
+
+    def _meets_outcome_coverage(self, result: BacktestResult) -> bool:
+        """Return whether both selected and comparable outcomes meet coverage."""
+        return (
+            result.outcome_coverage_rate >= self._min_outcome_coverage
+            and result.baseline_outcome_coverage_rate
+            >= self._min_outcome_coverage
+        )
 
     @staticmethod
     def _threshold_source(formula: str, train: pd.DataFrame) -> str:

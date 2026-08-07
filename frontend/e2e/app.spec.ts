@@ -756,6 +756,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await page.locator(".factor-checkbox").filter({ hasText: "近3日上涨天数" }).locator("input").check();
   await expect(page.getByText(/25 个配对席位会先覆盖所有存在有效候选的因子/)).toBeVisible();
   await expect(page.getByText(/每个因子方向按训练排名补入一个次优阈值/)).toBeVisible();
+  await expect(page.getByText(/单条件标签覆盖不足时仍可参与交互生成.*最终交互仍须重新通过全部覆盖门槛/)).toBeVisible();
   await expect(page.getByText(/训练提升非正或无法抵御标签缺失的规则不会占用预留验证名额/)).toBeVisible();
   await expect(page.getByText(/离散因子会枚举全部实际阈值/)).toBeVisible();
   await expect(page.getByLabel("最少交易日")).toHaveAttribute("max", "30");

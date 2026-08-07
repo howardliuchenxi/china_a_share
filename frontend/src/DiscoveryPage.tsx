@@ -379,7 +379,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           </fieldset>
           {submitError && <p className="discovery-error" role="alert">{submitError}</p>}
           <div className="discovery-submit-row">
-            <p>连续因子搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；有限取值不超过 10 个的离散因子会枚举全部实际阈值，避免罕见序列状态被宽分位遗漏。候选按相对可比基准提升的保守 95% 下界排序，同分时依次比较 5% 下行收益和中位收益，避免平均值被单个异常上涨拉高。{discoveryFactorFields.size} 个配对席位会先覆盖所有存在有效候选的因子，再补充反方向条件，仍有空位时每个因子方向按训练排名补入一个次优阈值；交互生成完成后，训练提升非正或无法抵御标签缺失的规则不会占用预留验证名额，相同训练样本的规则只保留排名最高者。</p>
+            <p>连续因子搜索训练集 10% / 25% / 50% / 75% / 90% 分位阈值；有限取值不超过 10 个的离散因子会枚举全部实际阈值，避免罕见序列状态被宽分位遗漏。候选按相对可比基准提升的保守 95% 下界排序，同分时依次比较 5% 下行收益和中位收益，避免平均值被单个异常上涨拉高。{discoveryFactorFields.size} 个配对席位会先覆盖所有存在有效候选的因子，再补充反方向条件，仍有空位时每个因子方向按训练排名补入一个次优阈值；单条件标签覆盖不足时仍可参与交互生成，因为条件交集可能恢复覆盖，但它不能单独入榜，最终交互仍须重新通过全部覆盖门槛。交互生成完成后，训练提升非正或无法抵御标签缺失的规则不会占用预留验证名额，相同训练样本的规则只保留排名最高者。</p>
             <button type="submit" disabled={isSubmitting || taskStatus?.status === "running"}>{isSubmitting ? "正在提交…" : taskStatus?.status === "running" ? "研究进行中" : "开始反向搜索"}</button>
           </div>
         </form>

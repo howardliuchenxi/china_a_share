@@ -1542,6 +1542,8 @@ def test_training_failures_do_not_consume_the_holdout_validation_budget(monkeypa
                 mean_return=-0.01,
                 eval_time_ms=0,
                 win_rate_lift=-0.01,
+                outcome_coverage_rate=1.0,
+                baseline_outcome_coverage_rate=1.0,
                 outcome_robust_lift_lower=-0.02,
                 lift_confidence_lower=-0.02,
             ),
@@ -1557,6 +1559,8 @@ def test_training_failures_do_not_consume_the_holdout_validation_budget(monkeypa
             mean_return=0.01,
             eval_time_ms=0,
             win_rate_lift=0.10,
+            outcome_coverage_rate=1.0,
+            baseline_outcome_coverage_rate=1.0,
             outcome_robust_lift_lower=0.01,
             lift_confidence_lower=-0.20,
         ),
@@ -1571,7 +1575,10 @@ def test_training_failures_do_not_consume_the_holdout_validation_budget(monkeypa
     monkeypatch.setattr(
         RuleSearchEngine,
         "_evaluate_training_formulas",
-        lambda self, formulas, train: ([*blocked, eligible], len(blocked) + 1),
+        lambda self, formulas, train, **kwargs: (
+            [*blocked, eligible],
+            len(blocked) + 1,
+        ),
     )
     monkeypatch.setattr(
         RuleSearchEngine,
@@ -1780,6 +1787,42 @@ def test_rule_search_preserves_pairing_budget_for_pure_interactions():
     assert interaction_rules
     assert interaction_rules[0].train_result.win_rate == pytest.approx(1.0)
     assert interaction_rules[0].train_result.win_rate_lift == pytest.approx(0.5)
+
+
+def test_rule_search_allows_outcome_coverage_to_recover_in_an_interaction():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{index:02d}" for index in range(1, 21)],
+            "first": [1.0] * 10 + [0.0] * 10,
+            "second": [1.0] * 5 + [None] * 5 + [1.0] * 5 + [0.0] * 5,
+            "forward_return": [0.10] * 5 + [None] * 5 + [-0.10] * 10,
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(
+        min_sample_count=4,
+        min_outcome_coverage=0.90,
+    ).search(
+        dataset,
+        dataset.copy(),
+        ["first", "second"],
+        max_conditions=2,
+        top_n=20,
+    )
+
+    interaction = next(
+        candidate
+        for candidate in candidates
+        if "first >= 1" in candidate.formula
+        and "second >= 1" in candidate.formula
+    )
+    assert interaction.train_result.outcome_coverage_rate == 1.0
+    assert interaction.train_result.baseline_outcome_coverage_rate == 1.0
+    assert interaction.train_result.win_rate_lift == pytest.approx(2 / 3)
+    assert all(
+        candidate.formula != "first >= 1"
+        for candidate in candidates
+    )
 
 
 def test_rule_search_enumerates_rare_discrete_sequence_states():
