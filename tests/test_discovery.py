@@ -1038,9 +1038,7 @@ def test_rule_search_finds_explainable_single_and_double_factor_candidates():
     assert all(candidate.train_result.sample_count >= 4 for candidate in candidates)
     assert all(candidate.val_result is not None for candidate in candidates)
     training_scores = [
-        candidate.train_result.win_rate_lift
-        - 1.6448536269514722
-        * candidate.train_result.lift_standard_error
+        candidate.train_result.lift_confidence_lower
         for candidate in candidates
     ]
     assert training_scores == sorted(training_scores, reverse=True)
@@ -1069,6 +1067,8 @@ def test_training_rank_penalizes_uncertain_lift():
             eval_time_ms=0,
             win_rate_lift=0.08,
             lift_standard_error=0.01,
+            lift_confidence_lower=0.05,
+            lift_confidence_upper=0.11,
         ),
     )
     uncertain = FactorHypothesis(
@@ -1082,11 +1082,48 @@ def test_training_rank_penalizes_uncertain_lift():
             eval_time_ms=0,
             win_rate_lift=0.12,
             lift_standard_error=0.05,
+            lift_confidence_lower=-0.02,
+            lift_confidence_upper=0.26,
         ),
     )
 
     assert RuleSearchEngine._training_rank_key(precise) > (
         RuleSearchEngine._training_rank_key(uncertain)
+    )
+
+
+def test_training_rank_does_not_treat_zero_standard_error_as_certainty():
+    degenerate = FactorHypothesis(
+        formula="value >= 1",
+        description="Degenerate rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.80,
+            mean_return=0.05,
+            eval_time_ms=0,
+            win_rate_lift=0.30,
+            lift_standard_error=0.0,
+            lift_confidence_lower=-0.05,
+            lift_confidence_upper=0.65,
+        ),
+    )
+    identifiable = FactorHypothesis(
+        formula="value >= 2",
+        description="Identifiable rule",
+        reasoning="Test evidence",
+        train_result=BacktestResult(
+            win_rate=0.60,
+            mean_return=0.02,
+            eval_time_ms=0,
+            win_rate_lift=0.10,
+            lift_standard_error=0.02,
+            lift_confidence_lower=0.04,
+            lift_confidence_upper=0.16,
+        ),
+    )
+
+    assert RuleSearchEngine._training_rank_key(identifiable) > (
+        RuleSearchEngine._training_rank_key(degenerate)
     )
 
 
@@ -1103,6 +1140,8 @@ def test_training_rank_uses_robust_returns_instead_of_outlier_mean():
             eval_time_ms=0,
             win_rate_lift=0.10,
             lift_standard_error=0.02,
+            lift_confidence_lower=0.04,
+            lift_confidence_upper=0.16,
         ),
     )
     outlier_driven = FactorHypothesis(
@@ -1117,6 +1156,8 @@ def test_training_rank_uses_robust_returns_instead_of_outlier_mean():
             eval_time_ms=0,
             win_rate_lift=0.10,
             lift_standard_error=0.02,
+            lift_confidence_lower=0.04,
+            lift_confidence_upper=0.16,
         ),
     )
 

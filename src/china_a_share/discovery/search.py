@@ -406,13 +406,13 @@ class RuleSearchEngine:
     def _training_rank_key(
         candidate: FactorHypothesis,
     ) -> tuple[float, float, float]:
-        """Prefer conservative lift, downside tail, then median return."""
+        """Prefer the conservative lift bound, downside tail, then median return."""
         result = candidate.train_result
-        conservative_lift = (
-            result.win_rate_lift
-            - ONE_SIDED_95_Z_SCORE * result.lift_standard_error
+        return (
+            result.lift_confidence_lower,
+            result.return_p05,
+            result.median_return,
         )
-        return conservative_lift, result.return_p05, result.median_return
 
     @staticmethod
     def _clustered_lift_tail_probability(

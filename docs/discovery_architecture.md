@@ -77,10 +77,13 @@ pairing pool first covers every factor with an eligible single-condition
 candidate and then adds alternate directions. This caps the pair search at 276
 combinations.
 
-Candidates are ranked only on training data by conservative lift:
+Candidates are ranked only on training data by the conservative lower 95%
+lift bound. This bound is the lower edge of the envelope combining the
+date-clustered HAC interval with the difference between rule and baseline score
+intervals, so a zero HAC standard error is not mistaken for certainty:
 
 ```text
-training win-rate lift - 1.6448536269514722 * clustered lift standard error
+min(HAC lift lower bound, rule score lower bound - baseline score upper bound)
 ```
 
 Ties are resolved by the fifth-percentile forward return and then median return,

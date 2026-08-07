@@ -334,7 +334,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             <div className="rule-body">
               <div className="rule-heading"><div><h3>{ruleTitle(hypothesis.formula)}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" disabled={applicationLimitation !== null} title={applicationLimitation ?? undefined} onClick={() => onApplyFormula(hypothesis.formula)}>{applicationLimitation ? "暂不可带入" : "带入分析页"}</button></div></div>
               {applicationLimitation && <p className="confidence-note">带入限制：{applicationLimitation}。研究结果仍可查看，但不会交给模型猜测执行口径。</p>}
-              <p>阈值来源：{thresholdSource(hypothesis.threshold_source)}。规则按扣除单侧 95% 不确定性惩罚后的相对提升完成排名锁定；同分时优先选择 5% 下行分位和中位收益更高的规则。随后进入独立验证，验证结果未参与重新排序。</p>
+              <p>阈值来源：{thresholdSource(hypothesis.threshold_source)}。规则按训练期相对提升的保守 95% 下界完成排名锁定；该下界同时包络日期聚类 HAC 区间与规则—基准 score 区间差，避免把零标准误误认为确定性。同分时优先选择 5% 下行分位和中位收益更高的规则。随后进入独立验证，验证结果未参与重新排序。</p>
               <div className="window-comparison">
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
                 <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>
