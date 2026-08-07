@@ -4,6 +4,7 @@ import {
   BacktestResult,
   DiscoveryTaskRequest,
   DiscoveryTaskStatusResponse,
+  FactorHypothesis,
 } from "./contracts";
 
 interface DiscoveryPageProps {
@@ -20,6 +21,19 @@ const discoveryFactorFields = new Set([
 
 function percent(value: number, digits = 1) {
   return `${(value * 100).toFixed(digits)}%`;
+}
+
+function validationReason(hypothesis: FactorHypothesis) {
+  if (!hypothesis.train_result || hypothesis.train_result.win_rate_lift <= 0) {
+    return "训练期未获得正提升";
+  }
+  if (!hypothesis.val_result || hypothesis.val_result.win_rate_lift <= 0) {
+    return "验证期未复现正提升";
+  }
+  if (hypothesis.q_value > 0.1) {
+    return "未通过 10% FDR";
+  }
+  return "训练与验证同向，且通过 10% FDR";
 }
 
 function MetricSet({ result }: { result: BacktestResult }) {
@@ -240,7 +254,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       {bestRule && <section className="results-panel discovery-summary-panel">
         <div className="section-heading"><span>03</span><h2>验证集摘要</h2></div>
         <div className="headline-metrics">
-          <div><small>独立验证结论</small><strong className={bestRule.validation_passed ? "metric-positive" : "metric-negative"}>{bestRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>训练排名已锁定</em></div>
+          <div><small>独立验证结论</small><strong className={bestRule.validation_passed ? "metric-positive" : "metric-negative"}>{bestRule.validation_passed ? "验证通过" : "未通过验证"}</strong><em>{validationReason(bestRule)}</em></div>
           <div><small>超过 {percent(bestRule.val_result!.target_return)} 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>HAC + {bestRule.val_result!.trading_day_count} 日 score 下限：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)} · N={bestRule.val_result!.baseline_sample_count}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
@@ -266,6 +280,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
               <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
               <p className="confidence-note">保守可信分：{hypothesis.validation_score.toFixed(3)} · 训练—验证差距：{percent(hypothesis.generalization_gap)}</p>
               <p className="confidence-note">相对基准提升检验 p-value：{hypothesis.p_value.toFixed(3)} · FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}（{hypothesis.fdr_family_size} 个盲测候选）</p>
+              <p className="confidence-note">验证判定：{validationReason(hypothesis)}</p>
             </div>
           </article>)}
         </div>

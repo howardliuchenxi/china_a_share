@@ -668,6 +668,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
+  await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% FDR");
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");
@@ -683,6 +684,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
 
   await expect(page.locator(".rule-card")).toContainText("收益超过 5.0%");
   await expect(page.locator(".rule-card")).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
+  await expect(page.locator(".rule-card")).toContainText("验证判定：训练与验证同向，且通过 10% FDR");
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();
