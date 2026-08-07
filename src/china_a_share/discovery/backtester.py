@@ -353,6 +353,8 @@ class FactorBacktester:
                 ),
                 baseline_sample_count=len(baseline),
                 baseline_outcome_coverage_rate=baseline_outcome_coverage_rate,
+                confidence_lower=0.0,
+                confidence_upper=1.0,
                 target_return=target_return,
                 security_count=security_count,
                 effective_security_count=effective_security_count,

@@ -921,7 +921,32 @@ def test_rule_evaluation_preserves_schema_for_an_empty_match():
 
     assert result.sample_count == 0
     assert result.win_rate == 0.0
+    assert result.confidence_lower == 0.0
+    assert result.confidence_upper == 1.0
+    assert result.lift_confidence_lower == -1.0
+    assert result.lift_confidence_upper == 1.0
     assert result.event_examples == []
+
+
+def test_rule_evaluation_keeps_all_missing_outcomes_fully_uncertain():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260105", "20260106", "20260107"],
+            "factor": [1.0, 1.0, 1.0],
+            "forward_return": [None, None, None],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.matched_sample_count == 3
+    assert result.sample_count == 0
+    assert result.missing_outcome_count == 3
+    assert result.outcome_coverage_rate == 0.0
+    assert result.confidence_lower == 0.0
+    assert result.confidence_upper == 1.0
+    assert result.lift_confidence_lower == -1.0
+    assert result.lift_confidence_upper == 1.0
 
 
 def test_rule_evaluation_retains_bounded_recent_event_examples():

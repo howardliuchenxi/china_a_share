@@ -165,6 +165,8 @@ Reported evidence includes:
   correction counts only dates with comparable or selected observations;
 - a conservative probability interval combining HAC and a signal-date score
   interval;
+- a fully uncertain `[0, 1]` probability interval when no matched outcome is
+  observable, rather than a default zero-width interval at zero;
 - finite-date, one-sided Student-t validation p-values and Benjamini-Yekutieli
   q-values, whose
   harmonic penalty controls false discoveries under arbitrary dependence among
