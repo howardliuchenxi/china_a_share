@@ -1186,6 +1186,18 @@ class BacktestResult(BaseModel):
         ),
     )
     win_rate_lift: float = 0.0
+    lift_confidence_lower: float = Field(
+        default=-1.0,
+        ge=-1.0,
+        le=1.0,
+        description="Conservative lower 95% bound for win-rate lift over baseline.",
+    )
+    lift_confidence_upper: float = Field(
+        default=1.0,
+        ge=-1.0,
+        le=1.0,
+        description="Conservative upper 95% bound for win-rate lift over baseline.",
+    )
     confidence_lower: float = 0.0
     confidence_upper: float = 0.0
     target_return: float = 0.0

@@ -807,6 +807,8 @@ def test_rule_evaluation_does_not_claim_precision_from_one_trading_day():
     assert result.confidence_lower == 0.0
     assert result.confidence_upper == 1.0
     assert result.cluster_standard_error == 0.0
+    assert result.lift_confidence_lower == -1.0
+    assert result.lift_confidence_upper == 1.0
 
 
 def test_hac_standard_error_is_zero_for_one_cluster():
@@ -852,6 +854,29 @@ def test_rule_evaluation_accounts_for_overlap_when_estimating_lift_uncertainty()
 
     assert result.win_rate_lift == pytest.approx(0.25)
     assert result.lift_standard_error == pytest.approx(0.25)
+    assert result.lift_confidence_lower <= result.win_rate_lift
+    assert result.lift_confidence_upper >= result.win_rate_lift
+
+
+def test_lift_interval_stays_uncertain_at_boundary_probabilities():
+    dates = [f"202601{index:02d}" for index in range(1, 21)]
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [date for date in dates for _ in range(2)],
+            "factor": [value for _ in range(20) for value in (1.0, 0.0)],
+            "forward_return": [
+                outcome
+                for _ in range(20)
+                for outcome in (0.10, -0.10)
+            ],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.win_rate_lift == pytest.approx(0.50)
+    assert 0.0 < result.lift_confidence_lower < result.win_rate_lift
+    assert result.win_rate_lift < result.lift_confidence_upper < 1.0
 
 
 def test_lift_uncertainty_preserves_dates_without_comparable_factor_events():

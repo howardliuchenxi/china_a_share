@@ -190,10 +190,15 @@ class FactorBacktester:
             if "ts_code" in evaluation_frame
             else len(evaluation_frame)
         )
-        baseline = pd.to_numeric(
-            baseline_frame["forward_return"], errors="coerce"
-        ).dropna()
-        baseline = baseline[baseline.map(math.isfinite)]
+        baseline_evaluation_frame = baseline_frame.assign(
+            forward_return=pd.to_numeric(
+                baseline_frame["forward_return"], errors="coerce"
+            )
+        ).dropna(subset=["forward_return"])
+        baseline_evaluation_frame = baseline_evaluation_frame.loc[
+            baseline_evaluation_frame["forward_return"].map(math.isfinite)
+        ]
+        baseline = baseline_evaluation_frame["forward_return"]
         missing_outcome_count = matched_sample_count - len(returns)
         outcome_coverage_rate = (
             len(returns) / matched_sample_count if matched_sample_count else 0.0
@@ -240,6 +245,28 @@ class FactorBacktester:
             dependence_lag_days,
             research_frame["trade_date"],
         )
+        (
+            baseline_confidence_lower,
+            baseline_confidence_upper,
+            _,
+            _,
+        ) = FactorBacktester._clustered_confidence_interval(
+            baseline_evaluation_frame,
+            target_return,
+            dependence_lag_days,
+            research_frame["trade_date"],
+        )
+        (
+            lift_confidence_lower,
+            lift_confidence_upper,
+        ) = FactorBacktester._lift_confidence_interval(
+            float(win_rate - baseline_win_rate),
+            lift_standard_error,
+            confidence_lower,
+            confidence_upper,
+            baseline_confidence_lower,
+            baseline_confidence_upper,
+        )
         return BacktestResult(
             win_rate=float(win_rate),
             mean_return=float(returns.mean()),
@@ -257,6 +284,8 @@ class FactorBacktester:
             baseline_win_rate=baseline_win_rate,
             baseline_sample_count=len(baseline),
             win_rate_lift=float(win_rate - baseline_win_rate),
+            lift_confidence_lower=lift_confidence_lower,
+            lift_confidence_upper=lift_confidence_upper,
             confidence_lower=confidence_lower,
             confidence_upper=confidence_upper,
             target_return=target_return,
@@ -265,6 +294,28 @@ class FactorBacktester:
             cluster_standard_error=cluster_standard_error,
             lift_standard_error=lift_standard_error,
             dependence_lag_days=dependence_lag_days,
+        )
+
+    @staticmethod
+    def _lift_confidence_interval(
+        lift: float,
+        standard_error: float,
+        selected_lower: float,
+        selected_upper: float,
+        baseline_lower: float,
+        baseline_upper: float,
+    ) -> tuple[float, float]:
+        """Return a conservative 95% interval for selected-versus-baseline lift."""
+        margin = 1.959963984540054 * standard_error
+        hac_lower = lift - margin
+        hac_upper = lift + margin
+        # The probability-bound difference remains conservative at boundary
+        # rates where a zero HAC error alone would imply false certainty.
+        probability_lower = selected_lower - baseline_upper
+        probability_upper = selected_upper - baseline_lower
+        return (
+            max(-1.0, min(hac_lower, probability_lower)),
+            min(1.0, max(hac_upper, probability_upper)),
         )
 
     def _load_trade_dates(

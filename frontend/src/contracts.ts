@@ -301,6 +301,8 @@ export interface BacktestResult {
   baseline_win_rate: number;
   baseline_sample_count: number;
   win_rate_lift: number;
+  lift_confidence_lower: number;
+  lift_confidence_upper: number;
   confidence_lower: number;
   confidence_upper: number;
   target_return: number;

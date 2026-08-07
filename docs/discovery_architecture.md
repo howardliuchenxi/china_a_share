@@ -95,6 +95,8 @@ Reported evidence includes:
 - observable-outcome coverage;
 - hit rate, mean and median forward return, and fifth-percentile return;
 - hit-rate lift over the factor-comparable baseline;
+- a conservative lift interval enveloping the date-clustered HAC interval and
+  the difference between selected and baseline probability intervals;
 - date-clustered HAC uncertainty that accounts for overlapping horizons;
 - zero-influence calendar gaps that preserve true trading-session HAC lags when
   a factor is unavailable for an entire date;
