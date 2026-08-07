@@ -82,11 +82,15 @@ class RuleSearchEngine:
         unique = self._deduplicate_by_training_selection(candidates, train)
         # Freeze a bounded training-ranked shortlist before touching validation.
         validation_limit = max(top_n, VALIDATION_CANDIDATE_LIMIT)
+        validation_shortlist = unique[:validation_limit]
         validated = self._validate_candidates(
-            unique[:validation_limit],
+            validation_shortlist,
             validation,
         )
-        self._apply_false_discovery_rate(validated)
+        self._apply_false_discovery_rate(
+            validated,
+            family_size=len(validation_shortlist),
+        )
         for candidate in validated:
             candidate.validation_passed = (
                 candidate.q_value <= VALIDATION_FDR_THRESHOLD
@@ -300,16 +304,24 @@ class RuleSearchEngine:
         return min(1.0, max(0.0, probability))
 
     @staticmethod
-    def _apply_false_discovery_rate(candidates: List[FactorHypothesis]) -> None:
-        """Assign monotone Benjamini-Hochberg q-values across all candidates."""
+    def _apply_false_discovery_rate(
+        candidates: List[FactorHypothesis],
+        *,
+        family_size: int,
+    ) -> None:
+        """Assign q-values using every frozen candidate sent to validation."""
         if not candidates:
             return
+        if family_size < len(candidates):
+            raise ValueError("FDR family cannot be smaller than validated candidates.")
         ordered = sorted(enumerate(candidates), key=lambda item: item[1].p_value)
         adjusted = [1.0] * len(ordered)
         running_minimum = 1.0
         for reverse_index in range(len(ordered) - 1, -1, -1):
             rank = reverse_index + 1
-            raw_adjusted = ordered[reverse_index][1].p_value * len(ordered) / rank
+            raw_adjusted = (
+                ordered[reverse_index][1].p_value * family_size / rank
+            )
             running_minimum = min(running_minimum, raw_adjusted)
             adjusted[reverse_index] = min(1.0, running_minimum)
         for ordered_index, (candidate_index, _) in enumerate(ordered):

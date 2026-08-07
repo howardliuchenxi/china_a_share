@@ -7,6 +7,7 @@ from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     DiscoveryTask,
     DiscoveryTaskRequest,
+    FactorHypothesis,
     QueryResult,
     QueryStatus,
 )
@@ -878,6 +879,27 @@ def test_rule_search_corrects_validation_significance_for_multiple_candidates():
     ordered_by_p = sorted(candidates, key=lambda candidate: candidate.p_value)
     assert [candidate.q_value for candidate in ordered_by_p] == sorted(
         candidate.q_value for candidate in candidates
+    )
+
+
+def test_false_discovery_rate_counts_ineligible_validation_candidates():
+    candidates = [
+        FactorHypothesis(
+            formula=f"value >= {index}",
+            description="Test rule",
+            reasoning="Test evidence",
+            p_value=p_value,
+        )
+        for index, p_value in enumerate([0.01, 0.04])
+    ]
+
+    RuleSearchEngine._apply_false_discovery_rate(
+        candidates,
+        family_size=10,
+    )
+
+    assert [candidate.q_value for candidate in candidates] == pytest.approx(
+        [0.10, 0.20]
     )
 
 
