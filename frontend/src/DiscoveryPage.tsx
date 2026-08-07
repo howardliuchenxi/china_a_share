@@ -267,7 +267,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
           {taskStatus.progress.leaderboard.map((hypothesis, index) => <article className="rule-card" key={hypothesis.formula}>
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
-              <div className="rule-heading"><div><h3>{hypothesis.description}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>用于今日筛选</button></div></div>
+              <div className="rule-heading"><div><h3>{hypothesis.description}</h3><code>{hypothesis.formula}</code></div><div className="rule-actions"><strong className={hypothesis.validation_passed ? "metric-positive" : "metric-negative"}>{hypothesis.validation_passed ? "验证通过" : "未通过验证"}</strong><button type="button" onClick={() => onApplyFormula(hypothesis.formula)}>带入分析页</button></div></div>
               <p>{hypothesis.reasoning}</p>
               <div className="window-comparison">
                 <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
@@ -281,6 +281,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             </div>
           </article>)}
         </div>
+        <p className="research-caveat">“带入分析页”会生成今日筛选请求，但仍需经过查询规划。提交后请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
       </section>}
     </div>
   );

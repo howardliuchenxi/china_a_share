@@ -691,6 +691,12 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await page.locator(".factor-checkbox.is-selected").first().click();
   await expect(page.getByText("超过 5.0% 的概率", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid > div")).toHaveCount(3);
+
+  await expect(page.getByText(/仍需经过查询规划/)).toBeVisible();
+  await page.getByRole("button", { name: "带入分析页" }).click();
+  await expect(page.locator("#analysis-prompt")).toHaveValue(/筛选今日全部A股中严格满足以下条件的股票/);
+  await expect(page.locator("#analysis-prompt")).toHaveValue(/不要改变运算符或阈值/);
+  await expect(page.locator("#analysis-prompt")).toHaveValue(/pe_ttm <= 12 and turnover_rate >= 8/);
 });
 
 test("discovery page deduplicates factors restored from the URL", async ({ page }) => {

@@ -1460,7 +1460,7 @@ export default function App() {
         </details>
       </section>
       </> : activePage === "discovery" ? <DiscoveryPage onApplyFormula={(formula) => {
-        setPrompt(`验证公式: ${formula}`);
+        setPrompt(`筛选今日全部A股中严格满足以下条件的股票，不要改变运算符或阈值，并返回股票代码、名称及公式涉及字段：${formula}`);
         setActivePage("analysis");
       }} /> : <ReferenceDataPage />}
     </main>
