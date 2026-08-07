@@ -391,6 +391,32 @@ def test_research_dataset_retains_signals_with_missing_future_prices():
     )
 
 
+def test_research_dataset_requires_a_signal_date_daily_bar():
+    executor = FakeQueryExecutor(
+        ["20260105", "20260106"],
+        {
+            "20260105": [
+                {"ts_code": "000001.SZ", "pe_ttm": 10.0},
+                {"ts_code": "000002.SZ", "pe_ttm": 20.0},
+            ],
+            "20260106": [],
+        },
+        {
+            "20260105": [{"ts_code": "000001.SZ", "close": 10.0}],
+            "20260106": [{"ts_code": "000001.SZ", "close": 11.0}],
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+    )
+
+    assert dataset["ts_code"].tolist() == ["000001.SZ"]
+    assert dataset["forward_return"].tolist() == pytest.approx([0.10])
+
+
 def test_research_dataset_uses_future_prices_without_future_basic_rows():
     securities = ["000001.SZ", "000002.SZ"]
     executor = FakeQueryExecutor(

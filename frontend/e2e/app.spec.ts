@@ -827,6 +827,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/应改用更晚且从未查看的数据再次确认/)).toBeVisible();
   await expect(page.getByText(/这些指标是适用性诊断而非显著性通过门槛/)).toBeVisible();
   await expect(page.getByText(/排除沪市 900xxx 与深市 200xxx B 股/)).toBeVisible();
+  await expect(page.getByText(/信号日停牌等没有可定义收盘信号的证券不会进入当天股票池/)).toBeVisible();
+  await expect(page.getByText(/未来停牌、退市等造成的结果缺失则会保留在分母中/)).toBeVisible();
   await expect(page.getByText("18 个盲测候选 · 通过 10% BY-FDR", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("不等同于可直接交易的组合回测");
   await expect(page.getByText("这是事件研究结果", { exact: false })).toContainText("信号日完整行情通常只能在收盘后确认");
