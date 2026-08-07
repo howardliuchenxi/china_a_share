@@ -37,6 +37,8 @@ DISCOVERY_FACTOR_FIELDS = {
     "pe_ttm",
     "ps",
     "ps_ttm",
+    "positive_days_3",
+    "return_5d_pct",
     "total_mv",
     "total_share",
     "turnover_rate",

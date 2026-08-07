@@ -24,6 +24,7 @@ CALENDAR_EXTENSION_MULTIPLIER = 3
 # A full-month floor covers Spring Festival and exceptional exchange closures
 # when even a one-session forward label can be more than ten calendar days away.
 CALENDAR_EXTENSION_MINIMUM_DAYS = 31
+HISTORICAL_FEATURE_LOOKBACK_SESSIONS = 5
 OUTCOME_RULE_FIELDS = frozenset(
     {"forward_return", "future_adjusted_close", "future_trade_date"}
 )
@@ -55,16 +56,33 @@ class FactorBacktester:
                 CALENDAR_EXTENSION_MINIMUM_DAYS,
             )
         )
+        historical_start = start - timedelta(days=CALENDAR_EXTENSION_MINIMUM_DAYS)
         trade_dates = self._load_trade_dates(
-            start_date,
+            historical_start.strftime("%Y%m%d"),
             extended_end.strftime("%Y%m%d"),
             api_route=api_route,
             request_id=request_id,
         )
-        signal_dates = [date for date in trade_dates if date <= end_date]
-        required_dates = trade_dates[: len(signal_dates) + forward_days]
-        if len(required_dates) < len(signal_dates) + forward_days:
+        signal_dates = [
+            date for date in trade_dates if start_date <= date <= end_date
+        ]
+        if not signal_dates:
+            raise ValueError("Research window contains no trading sessions.")
+        trade_date_index = {
+            trade_date: index for index, trade_date in enumerate(trade_dates)
+        }
+        first_signal_index = trade_date_index[signal_dates[0]]
+        last_signal_index = trade_date_index[signal_dates[-1]]
+        required_end_index = last_signal_index + forward_days
+        if required_end_index >= len(trade_dates):
             raise ValueError("Forward return window extends beyond available sessions.")
+        required_start_index = max(
+            0,
+            first_signal_index - HISTORICAL_FEATURE_LOOKBACK_SESSIONS,
+        )
+        required_dates = trade_dates[
+            required_start_index : required_end_index + 1
+        ]
 
         frames: List[pd.DataFrame] = []
         with ThreadPoolExecutor(max_workers=DATA_FETCH_WORKERS) as pool:
@@ -81,8 +99,8 @@ class FactorBacktester:
         panel = pd.concat(frames, ignore_index=True)
         panel = panel.sort_values(["ts_code", "trade_date"])
         future_date_by_signal = {
-            trade_date: required_dates[index + forward_days]
-            for index, trade_date in enumerate(signal_dates)
+            trade_date: trade_dates[trade_date_index[trade_date] + forward_days]
+            for trade_date in signal_dates
         }
         panel["future_trade_date"] = panel["trade_date"].map(
             future_date_by_signal
@@ -104,10 +122,54 @@ class FactorBacktester:
         panel["forward_return"] = (
             panel["future_adjusted_close"] / panel["adjusted_close"] - 1.0
         )
+        panel = self._add_historical_features(panel, trade_dates)
         # Keep signals without a future price so every rule can disclose and
         # constrain outcome attrition instead of silently studying survivors.
         dataset = panel[panel["trade_date"].between(start_date, end_date)]
         return dataset.reset_index(drop=True)
+
+    @staticmethod
+    def _add_historical_features(
+        panel: pd.DataFrame,
+        trade_dates: List[str],
+    ) -> pd.DataFrame:
+        """Attach point-in-time features only across consecutive market sessions."""
+        enriched = panel.sort_values(["ts_code", "trade_date"]).copy()
+        session_rank = enriched["trade_date"].map(
+            {trade_date: rank for rank, trade_date in enumerate(trade_dates)}
+        )
+        grouped_rank = session_rank.groupby(enriched["ts_code"], sort=False)
+        grouped_close = enriched.groupby("ts_code", sort=False)["adjusted_close"]
+
+        prior_rank_5 = grouped_rank.shift(HISTORICAL_FEATURE_LOOKBACK_SESSIONS)
+        prior_close_5 = grouped_close.shift(HISTORICAL_FEATURE_LOOKBACK_SESSIONS)
+        has_five_consecutive_sessions = (
+            session_rank - prior_rank_5 == HISTORICAL_FEATURE_LOOKBACK_SESSIONS
+        ) & prior_close_5.map(math.isfinite)
+        enriched["return_5d_pct"] = (
+            (enriched["adjusted_close"] / prior_close_5 - 1.0) * 100.0
+        ).where(has_five_consecutive_sessions)
+
+        prior_close_1 = grouped_close.shift(1)
+        prior_close_2 = grouped_close.shift(2)
+        prior_close_3 = grouped_close.shift(3)
+        prior_rank_1 = grouped_rank.shift(1)
+        prior_rank_2 = grouped_rank.shift(2)
+        prior_rank_3 = grouped_rank.shift(3)
+        has_three_consecutive_sessions = (
+            (session_rank - prior_rank_1 == 1)
+            & (session_rank - prior_rank_2 == 2)
+            & (session_rank - prior_rank_3 == 3)
+            & prior_close_1.map(math.isfinite)
+            & prior_close_2.map(math.isfinite)
+            & prior_close_3.map(math.isfinite)
+        )
+        enriched["positive_days_3"] = (
+            enriched["adjusted_close"].gt(prior_close_1).astype(int)
+            + prior_close_1.gt(prior_close_2).astype(int)
+            + prior_close_2.gt(prior_close_3).astype(int)
+        ).where(has_three_consecutive_sessions)
+        return enriched
 
     def run_backtest(
         self,

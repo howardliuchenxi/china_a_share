@@ -15,7 +15,7 @@ const terminalStatuses = new Set(["succeeded", "failed"]);
 const discoveryFactorFields = new Set([
   "amount", "circ_mv", "close", "dv_ratio", "dv_ttm", "float_share",
   "free_share", "open", "pb", "pct_chg", "pe", "pe_ttm", "ps",
-  "ps_ttm", "total_mv", "total_share", "turnover_rate",
+  "ps_ttm", "positive_days_3", "return_5d_pct", "total_mv", "total_share", "turnover_rate",
   "turnover_rate_f", "vol", "volume_ratio",
 ]);
 const discoveryFactorEntries = DATA_DICTIONARY_ENTRIES.filter(entry =>

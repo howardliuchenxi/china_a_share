@@ -28,6 +28,8 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "量比", field: "volume_ratio", description: "开市后平均每分钟的成交量与过去5个交易日平均每分钟成交量的比值。", formula: "当前分钟成交量 / 过去5日均分钟成交量", source: "Tushare" },
   { label: "涨跌额", field: "change", description: "当前收盘价相对前一交易日收盘价的变动金额。", formula: "当日收盘价 - 前一交易日收盘价", source: "Tushare" },
   { label: "日度涨跌幅", field: "pct_chg", description: "股票在一个交易日内的价格变动百分比。", formula: "(当日收盘价 - 前一交易日收盘价) / 前一交易日收盘价 * 100%", source: "Tushare" },
+  { label: "近3日上涨天数", field: "positive_days_3", description: "截至信号日的最近3个连续市场交易日中，该证券复权收盘价上涨的天数；历史记录不连续时为空。", formula: "count(adjusted_close[t] > adjusted_close[t-1], 3 consecutive market sessions)", source: "A-Share Lab 衍生计算" },
+  { label: "复权5日收益率", field: "return_5d_pct", description: "信号日复权收盘价相对5个市场交易日前的收益率；证券记录不连续时为空。", formula: "(当日复权收盘价 / 5个交易日前复权收盘价 - 1) * 100%", source: "A-Share Lab 衍生计算" },
   { label: "区间收益率", field: "period_return_pct", description: "股票在特定日期区间的价格变动百分比。", formula: "(期末收盘价 - 期初前一交易日收盘价) / 期初前一交易日收盘价 * 100%", source: "A-Share Lab 衍生计算" },
   { label: "收盘价", field: "close", description: "证券在该交易日的收盘价格。", formula: "-", source: "Tushare" },
   { label: "开盘价", field: "open", description: "证券在该交易日的开盘价格。", formula: "-", source: "Tushare" },

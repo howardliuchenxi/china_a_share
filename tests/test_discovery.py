@@ -92,6 +92,70 @@ def test_research_dataset_aligns_features_with_future_trading_session_returns():
     assert dataset["pe_ttm"].tolist() == [10.0, 11.0]
 
 
+def test_research_dataset_derives_point_in_time_sequence_features():
+    trade_dates = [f"202601{index:02d}" for index in range(5, 12)]
+    executor = FakeQueryExecutor(
+        trade_dates,
+        {date: [{"ts_code": "000001.SZ"}] for date in trade_dates},
+        {
+            date: [
+                {
+                    "ts_code": "000001.SZ",
+                    "close": 1.0 if index == 6 else 10.0 + index,
+                }
+            ]
+            for index, date in enumerate(trade_dates)
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260110",
+        "20260110",
+        forward_days=1,
+    )
+
+    assert dataset["return_5d_pct"].tolist() == pytest.approx([50.0])
+    assert dataset["positive_days_3"].tolist() == [3.0]
+    assert dataset["forward_return"].tolist() == pytest.approx([1.0 / 15.0 - 1.0])
+
+
+def test_sequence_features_reject_non_consecutive_security_history():
+    trade_dates = [f"202601{index:02d}" for index in range(5, 12)]
+    prices = {}
+    for index, date in enumerate(trade_dates):
+        rows = [
+            {
+                "ts_code": "000002.SZ",
+                "close": 20.0 + index,
+                "pct_chg": 1.0,
+            }
+        ]
+        if date != "20260108":
+            rows.append(
+                {
+                    "ts_code": "000001.SZ",
+                    "close": 10.0 + index,
+                    "pct_chg": 1.0,
+                }
+            )
+        prices[date] = rows
+    executor = FakeQueryExecutor(
+        trade_dates,
+        {date: [] for date in trade_dates},
+        prices,
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260110",
+        "20260110",
+        forward_days=1,
+    ).set_index("ts_code")
+
+    assert pd.isna(dataset.loc["000001.SZ", "return_5d_pct"])
+    assert pd.isna(dataset.loc["000001.SZ", "positive_days_3"])
+    assert dataset.loc["000002.SZ", "positive_days_3"] == 3.0
+
+
 def test_research_dataset_resolves_forward_returns_across_a_long_market_closure():
     executor = FakeQueryExecutor(
         ["20200123", "20200203"],
@@ -113,6 +177,17 @@ def test_research_dataset_resolves_forward_returns_across_a_long_market_closure(
 
     assert dataset["future_trade_date"].tolist() == ["20200203"]
     assert dataset["forward_return"].tolist() == pytest.approx([0.10])
+
+
+def test_research_dataset_rejects_a_window_without_trading_sessions():
+    executor = FakeQueryExecutor([], {}, {})
+
+    with pytest.raises(ValueError, match="contains no trading sessions"):
+        FactorBacktester(executor).build_dataset(
+            "20260105",
+            "20260106",
+            forward_days=1,
+        )
 
 
 def test_research_dataset_prefers_daily_market_fields_over_daily_basic_duplicates():
@@ -1740,6 +1815,19 @@ def test_discovery_request_accepts_a_percentage_point_return_target():
 
     assert request.target_return_pct == 5.0
     assert request.max_generations == 1
+
+
+def test_discovery_request_accepts_point_in_time_sequence_factors():
+    request = DiscoveryTaskRequest(
+        target_pool="A_SHARE",
+        train_start="20250101",
+        train_end="20251231",
+        val_start="20260101",
+        val_end="20260630",
+        factors=["positive_days_3", "return_5d_pct"],
+    )
+
+    assert request.factors == ["positive_days_3", "return_5d_pct"]
 
 
 @pytest.mark.parametrize(

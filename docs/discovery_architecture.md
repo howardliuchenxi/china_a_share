@@ -49,6 +49,13 @@ factors, and adjustment factors for every required signal and outcome session.
 It computes forward returns from consistently split-and-dividend-adjusted close
 prices.
 
+The dataset also derives point-in-time historical features without an extra
+provider source: split-and-dividend-adjusted five-session return and the number
+of positive adjusted-close returns across the latest three consecutive market sessions.
+It loads five pre-window sessions solely for feature history. A security missing
+any required market session receives a missing feature instead of having rows
+across a suspension joined into a false consecutive sequence.
+
 Signal rows are retained when their future price is unavailable. This makes
 outcome attrition measurable instead of silently studying only surviving rows.
 Training observations whose outcome date reaches the validation window are
