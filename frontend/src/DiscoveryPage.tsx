@@ -28,7 +28,7 @@ function MetricSet({ result }: { result: BacktestResult }) {
       <span><small>上涨概率</small><strong>{percent(result.win_rate)}</strong></span>
       <span><small>相对基准</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
-      <span><small>样本数</small><strong>{result.sample_count}</strong></span>
+      <span><small>样本 / 交易日</small><strong>{result.sample_count} / {result.trading_day_count}</strong></span>
     </div>
   );
 }
@@ -218,13 +218,13 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       {bestRule && <section className="results-panel discovery-summary-panel">
         <div className="section-heading"><span>03</span><h2>验证集摘要</h2></div>
         <div className="headline-metrics">
-          <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>95% 区间 {percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
+          <div><small>超过 {targetReturnPct}% 的概率</small><strong>{percent(bestRule.val_result!.win_rate)}</strong><em>按 {bestRule.val_result!.trading_day_count} 个交易日聚类：{percent(bestRule.val_result!.confidence_lower)} – {percent(bestRule.val_result!.confidence_upper)}</em></div>
           <div><small>相对全样本提升</small><strong className={bestRule.val_result!.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{bestRule.val_result!.win_rate_lift >= 0 ? "+" : ""}{percent(bestRule.val_result!.win_rate_lift)}</strong><em>全样本 {percent(bestRule.val_result!.baseline_win_rate)}</em></div>
           <div><small>平均未来收益</small><strong>{percent(bestRule.val_result!.mean_return, 2)}</strong><em>中位数 {percent(bestRule.val_result!.median_return, 2)}</em></div>
           <div><small>事件曲线最大回撤</small><strong>{percent(bestRule.val_result!.max_drawdown, 2)}</strong><em>{bestRule.val_result!.sample_count} 个验证样本</em></div>
           <div><small>多重检验 q-value</small><strong>{bestRule.q_value.toFixed(3)}</strong><em>{bestRule.q_value <= 0.1 ? "通过 10% FDR 阈值" : "未通过 10% FDR 阈值"}</em></div>
         </div>
-        <p className="research-caveat">这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。q-value 使用事件独立的二项近似，只用于抑制批量搜索中的偶然发现，不代表因果关系。</p>
+        <p className="research-caveat">这是事件研究结果，不等同于可直接交易的组合回测；当前尚未计入涨跌停成交约束、手续费和持仓重叠。置信区间和 q-value 按信号交易日聚类，以降低同日股票共同波动造成的虚假精确度；统计关联仍不代表因果关系。</p>
       </section>}
 
       {taskStatus && taskStatus.progress.leaderboard.length > 0 && <section className="results-panel">

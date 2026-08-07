@@ -133,7 +133,12 @@ class FactorBacktester:
             selected = dataset.query(formula, engine="python")
         except Exception as exc:
             raise ValueError(f"Invalid discovery rule: {exc}") from exc
-        returns = pd.to_numeric(selected["forward_return"], errors="coerce").dropna()
+        evaluation_frame = selected.assign(
+            forward_return=pd.to_numeric(
+                selected["forward_return"], errors="coerce"
+            )
+        ).dropna(subset=["forward_return"])
+        returns = evaluation_frame["forward_return"]
         baseline = pd.to_numeric(dataset["forward_return"], errors="coerce").dropna()
         if returns.empty:
             return BacktestResult(
@@ -152,16 +157,17 @@ class FactorBacktester:
         baseline_win_rate = (
             float((baseline > target_return).mean()) if len(baseline) else 0.0
         )
-        confidence_lower, confidence_upper = FactorBacktester._wilson_interval(
-            positive_count,
-            len(returns),
+        (
+            confidence_lower,
+            confidence_upper,
+            cluster_standard_error,
+            trading_day_count,
+        ) = FactorBacktester._clustered_confidence_interval(
+            evaluation_frame,
+            target_return,
         )
         daily_returns = (
-            selected.assign(
-                forward_return=pd.to_numeric(
-                    selected["forward_return"], errors="coerce"
-                )
-            )
+            evaluation_frame
             .groupby("trade_date")["forward_return"]
             .mean()
             .dropna()
@@ -185,6 +191,8 @@ class FactorBacktester:
             confidence_lower=confidence_lower,
             confidence_upper=confidence_upper,
             target_return=target_return,
+            trading_day_count=trading_day_count,
+            cluster_standard_error=cluster_standard_error,
         )
 
     def _load_trade_dates(
@@ -287,4 +295,41 @@ class FactorBacktester:
         return (
             max(0.0, (centre - margin) / denominator),
             min(1.0, (centre + margin) / denominator),
+        )
+
+    @staticmethod
+    def _clustered_confidence_interval(
+        frame: pd.DataFrame,
+        target_return: float,
+    ) -> tuple[float, float, float, int]:
+        """Return a 95% interval with dependence clustered by signal date."""
+        clusters = (
+            frame.assign(hit=frame["forward_return"] > target_return)
+            .groupby("trade_date")["hit"]
+            .agg(["sum", "count"])
+        )
+        cluster_count = len(clusters)
+        successes = int(clusters["sum"].sum())
+        observations = int(clusters["count"].sum())
+        if cluster_count <= 1:
+            lower, upper = FactorBacktester._wilson_interval(
+                successes,
+                observations,
+            )
+            return lower, upper, 0.0, cluster_count
+        probability = successes / observations
+        residuals = clusters["sum"] - probability * clusters["count"]
+        variance = (
+            cluster_count
+            / (cluster_count - 1)
+            * float((residuals**2).sum())
+            / observations**2
+        )
+        standard_error = math.sqrt(max(0.0, variance))
+        margin = 1.959963984540054 * standard_error
+        return (
+            max(0.0, probability - margin),
+            min(1.0, probability + margin),
+            standard_error,
+            cluster_count,
         )

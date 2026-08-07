@@ -605,6 +605,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
           win_rate_lift: 0.11, confidence_lower: 0.56, confidence_upper: 0.70,
           target_return: 0,
+          trading_day_count: 120,
+          cluster_standard_error: 0.04,
         },
         val_result: {
           win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
@@ -612,6 +614,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
           win_rate_lift: 0.09, confidence_lower: 0.49, confidence_upper: 0.70,
           target_return: 0,
+          trading_day_count: 55,
+          cluster_standard_error: 0.06,
         },
       }],
     },

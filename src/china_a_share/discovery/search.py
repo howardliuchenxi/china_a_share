@@ -129,10 +129,10 @@ class RuleSearchEngine:
                 + validation_result.win_rate_lift
                 - generalization_gap
             )
-            p_value = self._binomial_tail_probability(
-                validation_result.positive_count,
-                validation_result.sample_count,
+            p_value = self._clustered_tail_probability(
+                validation_result.win_rate,
                 validation_result.baseline_win_rate,
+                validation_result.cluster_standard_error,
             )
             candidates.append(
                 FactorHypothesis(
@@ -159,24 +159,17 @@ class RuleSearchEngine:
         return candidates, len(formulas)
 
     @staticmethod
-    def _binomial_tail_probability(
-        successes: int,
-        observations: int,
+    def _clustered_tail_probability(
+        observed_probability: float,
         baseline_probability: float,
+        standard_error: float,
     ) -> float:
-        """Approximate P(X >= successes) with a stable continuity correction."""
-        if observations <= 0:
+        """Return a one-sided normal tail using date-clustered uncertainty."""
+        if observed_probability <= baseline_probability:
             return 1.0
-        if baseline_probability <= 0.0:
-            return 0.0 if successes > 0 else 1.0
-        if baseline_probability >= 1.0:
-            return 1.0
-        standard_deviation = math.sqrt(
-            observations * baseline_probability * (1.0 - baseline_probability)
-        )
-        z_score = (
-            successes - 0.5 - observations * baseline_probability
-        ) / standard_deviation
+        if standard_error <= 0.0:
+            return 0.0
+        z_score = (observed_probability - baseline_probability) / standard_error
         probability = 0.5 * math.erfc(z_score / math.sqrt(2.0))
         return min(1.0, max(0.0, probability))
 

@@ -294,6 +294,8 @@ export interface BacktestResult {
   confidence_lower: number;
   confidence_upper: number;
   target_return: number;
+  trading_day_count: number;
+  cluster_standard_error: number;
 }
 
 export interface FactorHypothesis {
