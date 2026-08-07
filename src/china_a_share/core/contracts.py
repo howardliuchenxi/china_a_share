@@ -1138,7 +1138,13 @@ class BacktestResult(BaseModel):
 
     win_rate: float
     mean_return: float
-    max_drawdown: float
+    max_drawdown: Optional[float] = Field(
+        default=None,
+        description=(
+            "Portfolio drawdown, unavailable for overlapping event-endpoint returns "
+            "without a self-financing position path."
+        ),
+    )
     eval_time_ms: int
     sample_count: int = Field(default=0, ge=0)
     matched_sample_count: int = Field(default=0, ge=0)

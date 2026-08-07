@@ -609,7 +609,7 @@ def test_research_dataset_rejects_non_finite_prices():
         )
 
 
-def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
+def test_rule_evaluation_reports_exact_event_statistics_without_fake_drawdown():
     dataset = pd.DataFrame(
         {
             "trade_date": ["20260105", "20260106", "20260107", "20260108"],
@@ -627,7 +627,7 @@ def test_rule_evaluation_reports_exact_event_statistics_and_real_drawdown():
     assert result.mean_return == pytest.approx(0.0666666667)
     assert result.median_return == pytest.approx(0.10)
     assert result.return_p05 == pytest.approx(-0.17)
-    assert result.max_drawdown == pytest.approx(-0.20)
+    assert result.max_drawdown is None
     assert result.eligible_sample_count == 4
     assert result.rule_support_rate == pytest.approx(0.75)
     assert result.baseline_win_rate == pytest.approx(0.75)

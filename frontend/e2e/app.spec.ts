@@ -622,7 +622,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         train_result: {
           win_rate: 0.63, mean_return: 0.071, median_return: 0.052,
           return_p05: -0.16,
-          max_drawdown: -0.12, eval_time_ms: 10, sample_count: 180,
+          max_drawdown: null, eval_time_ms: 10, sample_count: 180,
           matched_sample_count: 184, eligible_sample_count: 1200, rule_support_rate: 0.1533,
           missing_outcome_count: 4, outcome_coverage_rate: 0.978,
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
@@ -639,7 +639,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         val_result: {
           win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
           return_p05: -0.19,
-          max_drawdown: -0.15, eval_time_ms: 8, sample_count: 75,
+          max_drawdown: null, eval_time_ms: 8, sample_count: 75,
           matched_sample_count: 77, eligible_sample_count: 420, rule_support_rate: 0.1833,
           missing_outcome_count: 2, outcome_coverage_rate: 0.974,
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,

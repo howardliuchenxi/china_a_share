@@ -286,7 +286,7 @@ export interface DiscoveryTaskRequest {
 export interface BacktestResult {
   win_rate: number;
   mean_return: number;
-  max_drawdown: number;
+  max_drawdown: number | null;
   eval_time_ms: number;
   sample_count: number;
   matched_sample_count: number;

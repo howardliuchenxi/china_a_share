@@ -202,7 +202,6 @@ class FactorBacktester:
             return BacktestResult(
                 win_rate=0.0,
                 mean_return=0.0,
-                max_drawdown=0.0,
                 eval_time_ms=0,
                 matched_sample_count=matched_sample_count,
                 eligible_sample_count=eligible_sample_count,
@@ -240,24 +239,12 @@ class FactorBacktester:
             dependence_lag_days,
             research_frame["trade_date"],
         )
-        daily_returns = (
-            evaluation_frame
-            .groupby("trade_date")["forward_return"]
-            .mean()
-            .dropna()
-        )
-        equity = pd.concat(
-            [pd.Series([1.0], dtype="float64"), (1.0 + daily_returns).cumprod()],
-            ignore_index=True,
-        )
-        drawdown = equity / equity.cummax() - 1.0
         return BacktestResult(
             win_rate=float(win_rate),
             mean_return=float(returns.mean()),
             median_return=float(returns.median()),
             return_p05=float(returns.quantile(0.05)),
             return_std=float(returns.std(ddof=0)),
-            max_drawdown=float(drawdown.min()) if len(drawdown) else 0.0,
             eval_time_ms=0,
             sample_count=len(returns),
             matched_sample_count=matched_sample_count,
