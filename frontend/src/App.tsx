@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 
-import { fetchStocks, StockListRequestError, submitAnalysis } from "./api";
+import { submitAnalysis } from "./api";
 import { UiFeedbackController } from "./UiFeedbackController";
 import { DiscoveryPage } from "./DiscoveryPage";
 import type {
@@ -18,11 +18,8 @@ import type {
   DataQuery,
   QueryResult,
   ServiceError,
-  StockExchange,
-  StockListResponse,
 } from "./contracts";
 
-type ReferenceView = "stocks" | "dictionary";
 type PageView = "analysis" | "reference" | "discovery";
 
 const workflowSteps = [
@@ -47,14 +44,7 @@ const SUPPORTED_ANALYSIS_IMAGE_TYPES = new Set([
 const RESULT_PAGE_SIZE = 100;
 const MAX_PROMPT_HISTORY_ITEMS = 20;
 const PROMPT_HISTORY_STORAGE_KEY = "china-a-share.prompt-history";
-const STOCK_PAGE_SIZE = 20;
 import { DATA_DICTIONARY_ENTRIES, resultColumnMetadata } from "./dataDictionary";
-
-const exchangeLabels: Record<StockExchange, string> = {
-  SSE: "上海",
-  SZSE: "深圳",
-  BSE: "北京",
-};
 
 const errorSourceLabels: Record<string, string> = {
   tushare: "Tushare",
@@ -899,66 +889,9 @@ function groupResults(results: QueryResult[], queries: DataQuery[]): GroupedResu
 }
 
 function ReferenceDataPage() {
-  const [activeView, setActiveView] = useState<ReferenceView>("stocks");
-  const [stockSearch, setStockSearch] = useState("");
-  const [exchangeFilter, setExchangeFilter] = useState<StockExchange>("SSE");
-  const [industryFilter, setIndustryFilter] = useState("");
-  const [stockPage, setStockPage] = useState(1);
   const [dictionaryPage, setDictionaryPage] = useState(1);
   const [dictionarySearch, setDictionarySearch] = useState("");
   const DICTIONARY_PAGE_SIZE = 50;
-  const [stockResponse, setStockResponse] = useState<StockListResponse | null>(null);
-  const [availableIndustries, setAvailableIndustries] = useState<string[]>([]);
-  const [stockServiceError, setStockServiceError] = useState<ServiceError | null>(null);
-  const [stockLocalError, setStockLocalError] = useState("");
-  const [isStockLoading, setIsStockLoading] = useState(false);
-
-  useEffect(() => {
-    if (activeView !== "stocks") return undefined;
-    const controller = new AbortController();
-    setIsStockLoading(true);
-    setStockResponse(null);
-    setStockServiceError(null);
-    setStockLocalError("");
-    fetchStocks({
-      page: stockPage,
-      page_size: STOCK_PAGE_SIZE,
-      search: stockSearch.trim(),
-      exchange: exchangeFilter,
-      industry: industryFilter,
-    }, controller.signal)
-      .then((response) => {
-        setStockResponse(response);
-        setAvailableIndustries(response.available_industries);
-      })
-      .catch((error: unknown) => {
-        if (error instanceof Error && error.name === "AbortError") return;
-        if (error instanceof StockListRequestError) {
-          setStockServiceError(error.serviceError);
-          return;
-        }
-        setStockLocalError(error instanceof Error ? error.message : "股票列表请求失败。");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setIsStockLoading(false);
-      });
-    return () => controller.abort();
-  }, [activeView, exchangeFilter, industryFilter, stockPage, stockSearch]);
-
-  function updateStockSearch(value: string) {
-    setStockSearch(value);
-    setStockPage(1);
-  }
-
-  function updateExchangeFilter(value: StockExchange) {
-    setExchangeFilter(value);
-    setStockPage(1);
-  }
-
-  function updateIndustryFilter(value: string) {
-    setIndustryFilter(value);
-    setStockPage(1);
-  }
 
   function updateDictionarySearch(value: string) {
     setDictionarySearch(value);
@@ -983,114 +916,7 @@ function ReferenceDataPage() {
 
   return (
     <div className="reference-page" data-feedback-id="reference-page">
-      <nav className="reference-tabs" aria-label="基础信息分类" role="tablist">
-        {([
-          ["stocks", "股票列表"],
-          ["dictionary", "数据字典"],
-        ] as const).map(([view, label]) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeView === view}
-            key={view}
-            onClick={() => setActiveView(view)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-
-      {activeView === "stocks" && (
-        <section className="reference-panel" aria-labelledby="stock-list-heading">
-          <div className="reference-view-heading">
-            <div>
-              <h2 id="stock-list-heading">股票列表</h2>
-            </div>
-            <span>{stockResponse ? `共 ${stockResponse.total.toLocaleString()} 只` : "正在读取股票目录"}</span>
-          </div>
-          <div className="stock-filters">
-            <label className="stock-search-field">
-              <span>搜索</span>
-              <input
-                type="search"
-                value={stockSearch}
-                onChange={(event) => updateStockSearch(event.target.value)}
-                placeholder="股票代码、名称或行业"
-              />
-            </label>
-            <label>
-              <span>市场</span>
-              <select
-                value={exchangeFilter}
-                onChange={(event) => updateExchangeFilter(event.target.value as StockExchange)}
-              >
-                <option value="SSE">上海</option>
-                <option value="SZSE">深圳</option>
-                <option value="BSE">北京</option>
-              </select>
-            </label>
-            <label>
-              <span>行业</span>
-              <select value={industryFilter} onChange={(event) => updateIndustryFilter(event.target.value)}>
-                <option value="">全部行业</option>
-                {availableIndustries.map((industry) => <option key={industry}>{industry}</option>)}
-              </select>
-            </label>
-          </div>
-          {isStockLoading && <p className="stock-status" role="status">正在从 Tushare 读取股票列表…</p>}
-          {stockLocalError && <div className="error-card" role="alert"><strong>本地错误</strong><p>{stockLocalError}</p></div>}
-          {stockServiceError && <ErrorCard error={stockServiceError} />}
-          {stockResponse && stockResponse.items.length > 0 && <>
-            <div className="stock-table-scroll">
-              <table className="stock-table">
-                <thead>
-                  <tr>
-                    <th><span className="result-column-title">股票代码<TermHelp label="股票代码" description="证券在 Tushare 中使用的交易所限定代码。" /></span></th>
-                    <th><span className="result-column-title">名称<TermHelp label="名称" description="证券当前公开使用的简称。" /></span></th>
-                    <th><span className="result-column-title">市场<TermHelp label="市场" description="证券挂牌交易的市场板块。" /></span></th>
-                    <th><span className="result-column-title">地区<TermHelp label="地区" description="上市公司在数据源中登记的所属地区。" /></span></th>
-                    <th><span className="result-column-title">行业<TermHelp label="行业" description="上市公司在数据源中登记的行业分类。" /></span></th>
-                    <th><span className="result-column-title">上市日期<TermHelp label="上市日期" description="证券首次挂牌交易的日期。" /></span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stockResponse.items.map((stock) => (
-                    <tr key={stock.code}>
-                      <td className="stock-code">{stock.code}</td>
-                      <td><strong>{stock.name}</strong></td>
-                      <td>{exchangeLabels[stock.exchange]}{stock.board ? ` · ${stock.board}` : ""}</td>
-                      <td>{stock.area ?? "—"}</td>
-                      <td>{stock.industry ?? "—"}</td>
-                      <td>{stock.listed_on}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <nav className="stock-pagination" aria-label="股票列表分页">
-              <button
-                type="button"
-                disabled={stockResponse.page === 1}
-                onClick={() => setStockPage((page) => page - 1)}
-              >
-                上一页
-              </button>
-              <span>第 {stockResponse.page} 页，共 {stockResponse.total_pages} 页</span>
-              <button
-                type="button"
-                disabled={stockResponse.page === stockResponse.total_pages}
-                onClick={() => setStockPage((page) => page + 1)}
-              >
-                下一页
-              </button>
-            </nav>
-          </>}
-          {stockResponse?.items.length === 0 && <p className="empty-state">没有符合当前条件的股票。</p>}
-        </section>
-      )}
-
-      {activeView === "dictionary" && (
-        <section className="reference-panel" aria-labelledby="dictionary-heading">
+      <section className="reference-panel" aria-labelledby="dictionary-heading">
           <div className="reference-view-heading">
             <h2 id="dictionary-heading">数据字典</h2>
             <span>{dictionarySearch.trim() ? `搜索结果 ${filteredDictionary.length} 个字段` : `共 ${DATA_DICTIONARY_ENTRIES.length} 个字段`}</span>
@@ -1150,9 +976,7 @@ function ReferenceDataPage() {
             </nav>
           )}
           {filteredDictionary.length === 0 && <p className="empty-state">没有符合当前搜索条件的字段。</p>}
-        </section>
-      )}
-
+      </section>
     </div>
   );
 }

@@ -906,30 +906,6 @@ table tbody tr:hover { background-color: #f1f3ee; }
   gap: 18px;
 }
 
-.reference-tabs {
-  display: flex;
-  gap: 0;
-  overflow-x: auto;
-  border-bottom: 1px solid #c7ccc3;
-}
-
-.reference-tabs button {
-  flex: 0 0 auto;
-  margin: 0;
-  border: 1px solid transparent;
-  border-bottom: 0;
-  background: transparent;
-  color: #526059;
-  padding: 12px 18px;
-}
-
-.reference-tabs button[aria-selected="true"] {
-  border-color: #b44c27;
-  background: #f8f8f3;
-  color: #18241f;
-  box-shadow: inset 0 -2px 0 #b44c27;
-}
-
 .reference-view-heading {
   display: flex;
   align-items: end;
@@ -1007,16 +983,6 @@ table tbody tr:hover { background-color: #f1f3ee; }
 
 .stock-table tbody tr:hover {
   background: #f2f3ed;
-}
-
-.stock-code {
-  color: #b44c27;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.stock-status {
-  margin: 0;
-  color: #657169;
 }
 
 .stock-pagination,

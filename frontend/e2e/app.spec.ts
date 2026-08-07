@@ -11,7 +11,6 @@ import {
   emptyResultFixture,
   partialSuccessFixture,
   planningErrorFixture,
-  stockListFixture,
   successWithMultiRowFixture,
   successWithSingleRowFixture,
   successWithSingleStockManyRowsFixture,
@@ -31,13 +30,6 @@ async function mockApiRoutes(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(analysisFixture),
-    });
-  });
-  await page.route("**/api/stocks*", (route) => {
-    void route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(stockListFixture),
     });
   });
   await page.route("**/api/health", (route) => {
@@ -439,10 +431,6 @@ test("empty result displays user guidance", async ({ page }) => {
 });
 
 /* ------------------------------------------------------------------ */
-/*  Scenario: reference-data page renders stock list                    */
-/* ------------------------------------------------------------------ */
-
-/* ------------------------------------------------------------------ */
 /*  Scenario: single stock with many rows — no search filter            */
 /* ------------------------------------------------------------------ */
 
@@ -482,25 +470,6 @@ test("multi-stock multi-row result shows search filter", async ({
 
   // Search filter should be shown because there are multiple stocks
   await expect(page.locator(".result-tools")).toBeVisible();
-});
-
-test("basic info page shows stock list with mocked data", async ({ page }) => {
-  await mockApiRoutes(page, successWithMultiRowFixture);
-
-  await page.goto("/analysis");
-
-  // Click the reference data tab
-  await page.locator('.page-tabs button[role="tab"]').nth(2).click();
-
-  // Stock list section should appear
-  await expect(page.locator(".reference-page")).toBeVisible();
-
-  // Stock table should populate with mock data
-  await expect(page.locator(".stock-table")).toBeVisible({ timeout: 5000 });
-
-  // Should contain mocked stock names
-  await expect(page.locator(".stock-table")).toContainText("平安银行");
-  await expect(page.locator(".stock-table")).toContainText("贵州茅台");
 });
 
 test("compatible results grouping merges multiple tables and displays raw details", async ({ page }) => {

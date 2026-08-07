@@ -12,8 +12,6 @@ import type {
   DecisionTraceStep,
   QueryResult,
   ServiceError,
-  StockListItem,
-  StockListResponse,
 } from "../src/contracts";
 
 /* ------------------------------------------------------------------ */
@@ -560,10 +558,6 @@ export const emptyResultFixture: AnalysisResponse = {
   error: null,
 };
 
-/* ------------------------------------------------------------------ */
-/*  Synthetic stock-list fixture used by /api/stocks mock               */
-/* ------------------------------------------------------------------ */
-
 /** Single-stock multi-row fixture (e.g. trade_cal results all for one stock). */
 export const successWithSingleStockManyRowsFixture: AnalysisResponse = {
   request_id: nextRequestId(),
@@ -642,35 +636,4 @@ export const successWithSingleStockManyRowsFixture: AnalysisResponse = {
     },
   ],
   error: null,
-};
-
-export const stockListFixture: StockListResponse = {
-  request_id: nextRequestId(),
-  page: 1,
-  page_size: 20,
-  total: 2,
-  total_pages: 1,
-  available_industries: ["银行", "白酒"],
-  items: [
-    {
-      code: "000001.SZ",
-      symbol: "000001",
-      name: "平安银行",
-      area: "深圳",
-      industry: "银行",
-      board: "主板",
-      exchange: "SZSE",
-      listed_on: "1991-04-03",
-    } satisfies StockListItem,
-    {
-      code: "600519.SH",
-      symbol: "600519",
-      name: "贵州茅台",
-      area: "贵州",
-      industry: "白酒",
-      board: "主板",
-      exchange: "SSE",
-      listed_on: "2001-08-27",
-    } satisfies StockListItem,
-  ],
 };
