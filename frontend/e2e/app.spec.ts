@@ -825,11 +825,12 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator("#analysis-prompt")).toHaveValue(/pe_ttm <= 12 and turnover_rate >= 8/);
 });
 
-test("discovery page deduplicates factors restored from the URL", async ({ page }) => {
-  await page.goto("/analysis?page=discovery&dp_factors=pe_ttm,pe_ttm,pb");
+test("discovery page normalizes factors restored from the URL", async ({ page }) => {
+  await page.goto("/analysis?page=discovery&dp_factors=pe_ttm,retired_factor,pe_ttm,pb");
 
   await expect(page.getByRole("group", { name: /候选因子/ })).toContainText("2");
   await expect(page).toHaveURL(/dp_factors=pe_ttm%2Cpb/);
+  await expect(page).not.toHaveURL(/retired_factor/);
 });
 
 test("discovery page supports broad factor selection and fast reset", async ({ page }) => {

@@ -160,7 +160,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const [maxConditions, setMaxConditions] = useState(Number(params.get("dp_depth")) || 2);
   const [factors, setFactors] = useState<string[]>(() => {
     const selected = params.get("dp_factors");
-    return selected ? [...new Set(selected.split(","))] : ["pe_ttm", "turnover_rate", "circ_mv"];
+    return selected
+      ? [...new Set(selected.split(","))].filter(field => discoveryFactorFields.has(field))
+      : ["pe_ttm", "turnover_rate", "circ_mv"];
   });
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<DiscoveryTaskStatusResponse | null>(null);
