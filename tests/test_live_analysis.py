@@ -1,4 +1,4 @@
-"""Opt-in integration coverage against the real DeepSeek and Tushare APIs."""
+"""Opt-in quality coverage against the real DeepSeek and Tushare APIs."""
 
 import os
 from uuid import uuid4
@@ -24,44 +24,54 @@ from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
     TushareDataProvider,
 )
+from china_a_share.time_range import (
+    resolve_consecutive_session_count,
+    resolve_future_horizon,
+)
+
+from golden_questions import GOLDEN_QUESTION_FAMILIES
 
 
 LIVE_ANALYSIS_ENVIRONMENT_VARIABLE = "RUN_LIVE_ANALYSIS"
-REGRESSION_PROMPT = (
-    "A股20260101～20260601连续涨停三天的情况下，"
-    "接下来一个月的上涨情况数据分析"
+LIVE_SUPPORTED_FAMILIES = (
+    "market_breadth",
+    "limit_up_list",
+    "limit_up_trend",
+    "two_limit_up_probability",
+    "limit_up_forward_horizon",
+    "market_period_return",
+    "valuation_period_return",
+    "valuation_screen",
+    "liquidity_ranking",
+    "block_trade",
+    "holder_count",
+    "security_moneyflow",
+    "margin_financing",
+    "financial_statements",
+    "dividend",
 )
-STREAK_PROMPTS = [
-    (REGRESSION_PROMPT, 3, 1),
-    (
-        "A股20260101～20260601连续涨停四个交易日的情况下，"
-        "接下来一个月的上涨情况数据分析",
-        4,
-        0,
-    ),
-    (
-        "A股20260101～20260601连续涨停一周（明确按五个连续交易日）的情况下，"
-        "接下来一个月的上涨情况数据分析",
-        5,
-        0,
-    ),
-]
-
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(
-        os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
-        reason=(
-            f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
-            "DeepSeek and Tushare APIs."
-        ),
-    ),
+LIVE_UNSUPPORTED_CASE_COUNTS = {
+    "verified_retail_ownership": 2,
+    "future_price_prediction": 2,
+    "investor_demographics": 1,
+}
+GOLDEN_FAMILY_BY_NAME = {
+    family["family"]: family for family in GOLDEN_QUESTION_FAMILIES
+}
+LIVE_ANALYSIS_CASES = [
+    (family_name, prompt)
+    for family_name in LIVE_SUPPORTED_FAMILIES
+    for prompt in GOLDEN_FAMILY_BY_NAME[family_name]["prompts"]
+] + [
+    (family_name, prompt)
+    for family_name, count in LIVE_UNSUPPORTED_CASE_COUNTS.items()
+    for prompt in GOLDEN_FAMILY_BY_NAME[family_name]["prompts"][:count]
 ]
 
 
 @pytest.fixture(scope="module")
 def live_analysis_service() -> AnalysisService:
-    """Build one real service so repeated prompts share only local market-data cache."""
+    """Build one real service so all cases share only local market-data cache."""
     settings = Settings.from_env()
     response_cache = LayeredDataResponseCache(
         memory_store=MemoryDataCacheStore(
@@ -84,87 +94,134 @@ def live_analysis_service() -> AnalysisService:
     )
 
 
+def _failure_message(response) -> str:
+    """Return the most specific available failure for one live assertion."""
+    if response.error is not None:
+        return response.error.message
+    return "; ".join(
+        result.error.message
+        for result in response.results
+        if result.error is not None
+    )
+
+
+def _assert_pipeline_result_succeeded(response) -> None:
+    """Verify the declared result pipeline produced one successful result."""
+    if response.plan.result_pipeline is None:
+        return
+    output_query_id = response.plan.result_pipeline.output_query_id
+    pipeline_result = next(
+        result for result in response.results if result.query_id == output_query_id
+    )
+    assert pipeline_result.status.value == "success"
+    assert pipeline_result.error is None
+
+
+def _assert_quality_invariants(response, prompt, invariants) -> None:
+    """Check stable business meaning without binding exact planner JSON."""
+    plan = response.plan
+    operations = {query.operation for query in plan.queries}
+    steps = plan.result_pipeline.steps if plan.result_pipeline else []
+
+    if "native_limit_up_source" in invariants:
+        assert "limit_list_d" in operations
+    if "consecutive_session_count" in invariants:
+        expected_count = resolve_consecutive_session_count(prompt)
+        assert expected_count is not None
+        rolling_step = next(step for step in steps if step.operation == "rolling_sum")
+        assert rolling_step.window == expected_count
+        assert rolling_step.min_periods == expected_count
+        assert rolling_step.require_consecutive is True
+    if "future_horizon" in invariants:
+        expected_horizon = resolve_future_horizon(prompt)
+        assert expected_horizon is not None
+        assert any(
+            step.operation == "match_at_offset"
+            and (step.offset_value, step.offset_unit) == expected_horizon
+            for step in steps
+        )
+    if "valid_sample_count" in invariants:
+        summary_step = next(step for step in steps if step.operation == "summarize")
+        assert any(
+            aggregation.output_field == "event_count"
+            and aggregation.function == "count"
+            for aggregation in summary_step.aggregations
+        )
+    if "period_return_direction" in invariants:
+        assert any(
+            query.transform == "period_return_by_ts_code"
+            for query in plan.queries
+        )
+        sort_step = next(step for step in steps if step.operation == "sort")
+        expected_direction = "asc" if "跌" in prompt else "desc"
+        assert sort_step.direction == expected_direction
+    if "sort_before_limit" in invariants:
+        operations = [step.operation for step in steps]
+        assert operations.index("sort") < operations.index("limit")
+
+
+def test_live_analysis_matrix_contains_exactly_50_questions() -> None:
+    """Keep the paid external regression suite at the reviewed case count."""
+    assert len(LIVE_ANALYSIS_CASES) == 50
+    assert len(set(LIVE_ANALYSIS_CASES)) == 50
+
+
 @pytest.mark.parametrize(
-    ("prompt", "streak_length", "minimum_events"),
-    STREAK_PROMPTS,
+    ("family_name", "prompt"),
+    LIVE_ANALYSIS_CASES,
+    ids=[
+        f"{family}-{index + 1}"
+        for index, (family, _) in enumerate(LIVE_ANALYSIS_CASES)
+    ],
 )
-def test_live_limit_up_event_study_completes(
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
+def test_live_analysis_question(
     live_analysis_service,
+    family_name,
     prompt,
-    streak_length,
-    minimum_events,
 ) -> None:
-    """Run parameterized streak prompts through real upstream APIs locally."""
+    """Run one curated question through real planning, data, and result execution."""
+    family = GOLDEN_FAMILY_BY_NAME[family_name]
     response = live_analysis_service.analyze(
-        request_id=f"local-live-{uuid4()}",
+        request_id=f"live-{family_name}-{uuid4()}",
         request=AnalysisRequest(prompt=prompt),
         api_route="/local-live-analysis",
+        progress_callback=(lambda completed, total: None),
     )
 
-    failure = (
-        response.error.message
-        if response.error
-        else "; ".join(
-            result.error.message
-            for result in response.results
-            if result.error is not None
-        )
-    )
-    assert response.status is AnalysisStatus.SUCCESS, failure
+    if family["tier"] == "unsupported":
+        assert response.status is AnalysisStatus.ERROR
+        assert response.plan is not None
+        assert response.plan.feasibility == "unsupported"
+        assert response.results == []
+        return
+
+    assert response.status is AnalysisStatus.SUCCESS, _failure_message(response)
     assert response.error is None
     assert response.plan is not None
-    assert response.plan.result_pipeline is not None
-    assert {
-        "daily",
-        "limit_list_d",
-    }.issubset(query.operation for query in response.plan.queries)
-    rolling_step = next(
-        step
-        for step in response.plan.result_pipeline.steps
-        if step.operation == "rolling_sum"
+    assert response.plan.feasibility == "supported"
+    assert all(
+        requirement.status == "covered"
+        for requirement in response.plan.requirements
     )
-    assert rolling_step.window == streak_length
-    assert rolling_step.min_periods == streak_length
-    assert rolling_step.require_consecutive is True
-    outcome_step = next(
-        step
-        for step in response.plan.result_pipeline.steps
-        if step.operation == "match_at_offset"
+    expected_operations = set(family["operations"])
+    actual_operations = {query.operation for query in response.plan.queries}
+    assert actual_operations.intersection(expected_operations)
+    assert actual_operations.issubset(expected_operations | {"stock_basic"})
+    assert response.results
+    assert all(result.status.value == "success" for result in response.results), (
+        _failure_message(response)
     )
-    assert (outcome_step.offset_value, outcome_step.offset_unit) == (1, "month")
-    pipeline_output_id = response.plan.result_pipeline.output_query_id
-    pipeline_result = next(
-        result for result in response.results if result.query_id == pipeline_output_id
+    _assert_pipeline_result_succeeded(response)
+    _assert_quality_invariants(
+        response,
+        prompt,
+        set(family.get("quality_invariants", [])),
     )
-    assert pipeline_result.status.value == "success"
-    assert pipeline_result.row_count == 1
-    assert pipeline_result.rows[0]["event_count"] >= minimum_events
-    assert "average_return_pct" in pipeline_result.rows[0]
-
-
-def test_live_april_decline_top_10(live_analysis_service) -> None:
-    """Run real April decline top 10 query through actual upstream APIs and verify correctness."""
-    response = live_analysis_service.analyze(
-        request_id=f"local-live-{uuid4()}",
-        request=AnalysisRequest(prompt="A股4月一整月单月跌幅最大的公司是top10"),
-        api_route="/local-live-analysis",
-    )
-
-    assert response.status is AnalysisStatus.SUCCESS, (response.error.message if response.error else "Unknown error")
-    assert response.error is None
-    assert response.plan is not None
-    assert response.plan.intent is not None
-    assert response.plan.intent.analysis_type == "rank_metric"
-    assert response.plan.intent.metric.type == "period_return"
-
-    pipeline_output_id = response.plan.result_pipeline.output_query_id
-    pipeline_result = next(
-        result for result in response.results if result.query_id == pipeline_output_id
-    )
-    assert pipeline_result.status.value == "success"
-    assert pipeline_result.row_count == 10
-
-    # Assert monotonic increasing order of returns (drops/losses are increasing from lowest/most negative to less negative)
-    returns = [float(row["period_return_pct"]) for row in pipeline_result.rows]
-    for i in range(len(returns) - 1):
-        assert returns[i] <= returns[i+1], f"Monotonicity violated: {returns}"

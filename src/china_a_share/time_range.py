@@ -39,6 +39,9 @@ CONSECUTIVE_SESSION_PATTERNS = (
     ),
     re.compile(r"(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)连板"),
     re.compile(
+        r"(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)个?交易日连板"
+    ),
+    re.compile(
         r"(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)个?连续交易日"
     ),
 )

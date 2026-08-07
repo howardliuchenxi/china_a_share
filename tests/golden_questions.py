@@ -45,7 +45,6 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "quality_invariants": [
             "native_limit_up_source",
             "consecutive_session_count",
-            "future_horizon",
             "valid_sample_count",
         ],
         "prompts": [

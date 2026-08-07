@@ -33,7 +33,7 @@ CLOUDSDK_PYTHON := $(shell \
 help:
 	printf '%s\n' \
 		'make check   Build the frontend and run backend tests.' \
-		'make live-check  Run the real DeepSeek and Tushare regression test.' \
+		'make live-check  Run 50 real DeepSeek and Tushare end-to-end cases.' \
 		'make deploy  Deploy the clean, pushed main commit and update the GCP inventory.' \
 		'make merge   Validate, merge the current clean branch into main, and push main.' \
 		'make release Merge the current branch into main, then deploy that exact commit.'
