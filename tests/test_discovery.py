@@ -1561,6 +1561,55 @@ def test_rule_search_deduplicates_equivalent_discrete_thresholds():
     assert len(selected_sets) == len(set(selected_sets))
 
 
+def test_rule_search_excludes_conditions_that_do_not_filter_the_cohort():
+    dataset = pd.DataFrame({"binary": [0.0] * 10 + [1.0] * 10})
+
+    conditions = RuleSearchEngine(min_sample_count=2)._build_conditions(
+        dataset,
+        ["binary"],
+    )
+
+    selected_counts = [len(dataset.query(formula)) for formula, _ in conditions]
+    assert selected_counts
+    assert all(0 < count < len(dataset) for count in selected_counts)
+
+
+def test_rule_search_preserves_pairing_budget_for_pure_interactions():
+    factor_rows = [
+        (first, second)
+        for _ in range(25)
+        for first, second in ((0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0))
+    ]
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"2026{index:04d}" for index in range(1, 101)],
+            "first": [row[0] for row in factor_rows],
+            "second": [row[1] for row in factor_rows],
+            "forward_return": [
+                0.10 if first == second else -0.10
+                for first, second in factor_rows
+            ],
+        }
+    )
+
+    candidates, _ = RuleSearchEngine(min_sample_count=20).search(
+        dataset,
+        dataset.copy(),
+        ["first", "second"],
+        max_conditions=2,
+        top_n=10,
+    )
+
+    interaction_rules = [
+        candidate
+        for candidate in candidates
+        if "first" in candidate.formula and "second" in candidate.formula
+    ]
+    assert interaction_rules
+    assert interaction_rules[0].train_result.win_rate == pytest.approx(1.0)
+    assert interaction_rules[0].train_result.win_rate_lift == pytest.approx(0.5)
+
+
 def test_rule_search_enumerates_rare_discrete_sequence_states():
     dataset = pd.DataFrame(
         {

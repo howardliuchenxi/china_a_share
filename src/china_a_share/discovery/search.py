@@ -197,6 +197,12 @@ class RuleSearchEngine:
                         if operator == "<="
                         else train[factor] >= executable_threshold
                     )
+                    # Empty and full-cohort thresholds carry no screening
+                    # information. Excluding them also prevents no-op rules
+                    # from consuming the bounded two-factor pairing budget.
+                    selected_count = int(selection.sum())
+                    if selected_count == 0 or selected_count == len(numeric):
+                        continue
                     signature = selection.to_numpy(dtype=bool).tobytes()
                     if signature in seen_selections:
                         continue

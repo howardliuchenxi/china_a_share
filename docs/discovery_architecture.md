@@ -72,7 +72,10 @@ a one-session forward horizon.
 value for factors with at most ten finite values, allowing rare discrete states
 such as a three-day streak to remain searchable. Continuous factors use the
 training window's 10%, 25%, 50%, 75%, and 90% quantiles. Equivalent selections
-are deduplicated. Factors are processed in canonical field-name order, so
+are deduplicated. Thresholds that select none or every finite comparable
+observation are removed because they carry no screening information and would
+otherwise consume the bounded interaction-search budget. Factors are processed
+in canonical field-name order, so
 request ordering cannot change threshold generation, bounded pairing, or
 equivalent-cohort selection. When two conditions are allowed, the pairing pool
 reserves one slot for every factor admitted by the public discovery contract
