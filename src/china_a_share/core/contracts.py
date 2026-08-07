@@ -1208,13 +1208,19 @@ class BacktestResult(BaseModel):
         description="Fifth percentile of event-level forward returns.",
     )
     return_std: float = 0.0
-    baseline_win_rate: float = 0.0
+    baseline_win_rate: float = Field(
+        default=0.0,
+        description=(
+            "Hit rate across all factor-comparable events, including events "
+            "selected by the rule; this is not an unmatched control-group rate."
+        ),
+    )
     baseline_sample_count: int = Field(
         default=0,
         ge=0,
         description=(
-            "Finite outcome observations with all rule factors available, used by "
-            "the comparable-event baseline."
+            "Finite outcome observations across all events with every rule factor "
+            "available, including rule-selected observations."
         ),
     )
     baseline_outcome_coverage_rate: float = Field(
@@ -1225,7 +1231,12 @@ class BacktestResult(BaseModel):
             "Share of factor-comparable baseline events with observable outcomes."
         ),
     )
-    win_rate_lift: float = 0.0
+    win_rate_lift: float = Field(
+        default=0.0,
+        description=(
+            "Rule hit rate minus the inclusive factor-comparable baseline hit rate."
+        ),
+    )
     outcome_robust_lift_lower: float = Field(
         default=-1.0,
         ge=-1.0,

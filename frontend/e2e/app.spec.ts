@@ -768,6 +768,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".research-config-grid")).toContainText("30 / 20 / 10");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
   await expect(page.locator(".headline-metrics")).toContainText("可比基准命中率 51.0%");
+  await expect(page.locator(".headline-metrics")).toContainText("含规则样本，N=407");
   await expect(page.locator(".headline-metrics")).toContainText("95% 区间 2.0% – 16.0%");
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首预留验证结论");
   await expect(page.locator(".headline-metrics")).toContainText("1 / 2 条入榜规律验证通过");
@@ -775,6 +776,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
   await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
   await expect(topWindowComparison).toContainText("可比基准命中率");
+  await expect(topWindowComparison).toContainText("可比基准命中率（含规则样本）");
+  await expect(topWindowComparison).toContainText("相对可比全体（N=1182）");
   await expect(topWindowComparison).toContainText("52.0%");
   await expect(topWindowComparison).toContainText("51.0%");
   await expect(topWindowComparison).toContainText("信号日复权收盘");
@@ -817,6 +820,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();
   await expect(page.getByText(/训练和验证窗口相对基准均为正向提升/)).toBeVisible();
+  await expect(page.getByText(/可比基准.*包含规则命中样本.*并不是只由未命中事件组成的对照组/)).toBeVisible();
+  await expect(page.getByText(/提升等于规则命中率减去这个可比全体命中率/)).toBeVisible();
   await expect(page.getByText(/预留验证.*只表示本次任务的搜索和排名没有读取该窗口结果/)).toBeVisible();
   await expect(page.getByText(/同一验证窗口调整因子、日期、门槛或目标收益/)).toBeVisible();
   await expect(page.getByText(/应改用更晚且从未查看的数据再次确认/)).toBeVisible();
