@@ -55,6 +55,7 @@ function MetricSet({ result }: { result: BacktestResult }) {
       <span><small>相对可比基准（N={result.baseline_sample_count}）</small><strong className={result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative"}>{result.win_rate_lift >= 0 ? "+" : ""}{percent(result.win_rate_lift)}</strong></span>
       <span><small>平均收益</small><strong>{percent(result.mean_return, 2)}</strong></span>
       <span><small>样本 / 交易日</small><strong>{result.sample_count} / {result.trading_day_count}</strong></span>
+      <span><small>规则覆盖（可比事件 {result.eligible_sample_count}）</small><strong>{percent(result.rule_support_rate)}</strong></span>
       <span><small>标签覆盖</small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
     </div>
   );

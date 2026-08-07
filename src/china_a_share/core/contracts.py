@@ -1133,6 +1133,17 @@ class BacktestResult(BaseModel):
     eval_time_ms: int
     sample_count: int = Field(default=0, ge=0)
     matched_sample_count: int = Field(default=0, ge=0)
+    eligible_sample_count: int = Field(
+        default=0,
+        ge=0,
+        description="Events with finite values for every factor referenced by the rule.",
+    )
+    rule_support_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Share of factor-eligible events matched by the rule.",
+    )
     missing_outcome_count: int = Field(default=0, ge=0)
     outcome_coverage_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     positive_count: int = Field(default=0, ge=0)

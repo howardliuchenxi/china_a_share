@@ -170,6 +170,12 @@ class FactorBacktester:
             numeric = pd.to_numeric(baseline_frame[field], errors="coerce")
             baseline_frame = baseline_frame.loc[numeric.map(math.isfinite)]
         matched_sample_count = len(selected)
+        eligible_sample_count = len(baseline_frame)
+        rule_support_rate = (
+            matched_sample_count / eligible_sample_count
+            if eligible_sample_count
+            else 0.0
+        )
         evaluation_frame = selected.assign(
             forward_return=pd.to_numeric(
                 selected["forward_return"], errors="coerce"
@@ -194,6 +200,8 @@ class FactorBacktester:
                 max_drawdown=0.0,
                 eval_time_ms=0,
                 matched_sample_count=matched_sample_count,
+                eligible_sample_count=eligible_sample_count,
+                rule_support_rate=rule_support_rate,
                 missing_outcome_count=missing_outcome_count,
                 outcome_coverage_rate=outcome_coverage_rate,
                 baseline_win_rate=(
@@ -247,6 +255,8 @@ class FactorBacktester:
             eval_time_ms=0,
             sample_count=len(returns),
             matched_sample_count=matched_sample_count,
+            eligible_sample_count=eligible_sample_count,
+            rule_support_rate=rule_support_rate,
             missing_outcome_count=missing_outcome_count,
             outcome_coverage_rate=outcome_coverage_rate,
             positive_count=positive_count,

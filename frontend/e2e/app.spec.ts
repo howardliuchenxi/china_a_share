@@ -622,7 +622,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
           win_rate: 0.63, mean_return: 0.071, median_return: 0.052,
           return_p05: -0.16,
           max_drawdown: -0.12, eval_time_ms: 10, sample_count: 180,
-          matched_sample_count: 184, missing_outcome_count: 4, outcome_coverage_rate: 0.978,
+          matched_sample_count: 184, eligible_sample_count: 1200, rule_support_rate: 0.1533,
+          missing_outcome_count: 4, outcome_coverage_rate: 0.978,
           positive_count: 113, return_std: 0.18, baseline_win_rate: 0.52,
           baseline_sample_count: 1200,
           win_rate_lift: 0.11, confidence_lower: 0.56, confidence_upper: 0.70,
@@ -637,7 +638,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
           win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
           return_p05: -0.19,
           max_drawdown: -0.15, eval_time_ms: 8, sample_count: 75,
-          matched_sample_count: 77, missing_outcome_count: 2, outcome_coverage_rate: 0.974,
+          matched_sample_count: 77, eligible_sample_count: 420, rule_support_rate: 0.1833,
+          missing_outcome_count: 2, outcome_coverage_rate: 0.974,
           positive_count: 45, return_std: 0.20, baseline_win_rate: 0.51,
           baseline_sample_count: 420,
           win_rate_lift: 0.09, confidence_lower: 0.49, confidence_upper: 0.70,
@@ -690,6 +692,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("1 / 1 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% FDR");
+  await expect(page.locator(".window-comparison")).toContainText("规则覆盖（可比事件 1200）");
+  await expect(page.locator(".window-comparison")).toContainText("15.3%");
   await expect(page.locator(".headline-metrics")).toContainText("N=420");
   await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
   await expect(page.locator(".factor-coverage-grid")).toContainText("98.0% / 97.0%");

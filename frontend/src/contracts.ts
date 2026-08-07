@@ -289,6 +289,8 @@ export interface BacktestResult {
   eval_time_ms: number;
   sample_count: number;
   matched_sample_count: number;
+  eligible_sample_count: number;
+  rule_support_rate: number;
   missing_outcome_count: number;
   outcome_coverage_rate: number;
   positive_count: number;
