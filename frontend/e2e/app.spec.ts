@@ -597,7 +597,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
         formula: "pe_ttm <= 12 and turnover_rate >= 8",
         description: "Low valuation with active turnover",
         reasoning: "Generated from training-window quantiles and independently validated.",
-        validation_score: 0.54,
+        validation_score: 0.027,
         generalization_gap: 0.03,
         p_value: 0.012,
         q_value: 0.048,
@@ -689,6 +689,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".rule-card")).toContainText("验证集收益超过 5.0% 的概率 95% 区间");
   await expect(page.locator(".rule-card")).toContainText("验证判定：训练与验证同向，且通过 10% FDR");
   await expect(page.locator(".rule-card")).toContainText("训练—验证提升差距：3.0%");
+  await expect(page.locator(".rule-card")).toContainText("保守相对提升：2.7%");
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();

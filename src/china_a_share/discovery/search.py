@@ -14,6 +14,7 @@ SEARCH_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 PAIRING_CANDIDATE_LIMIT = 12
 VALIDATION_CANDIDATE_LIMIT = 50
 VALIDATION_FDR_THRESHOLD = 0.10
+ONE_SIDED_95_Z_SCORE = 1.6448536269514722
 
 
 class RuleSearchEngine:
@@ -296,10 +297,9 @@ class RuleSearchEngine:
             )
             candidate.val_result = validation_result
             candidate.generalization_gap = generalization_gap
-            candidate.validation_score = (
-                validation_result.confidence_lower
-                + validation_result.win_rate_lift
-                - generalization_gap
+            candidate.validation_score = self._conservative_validation_score(
+                validation_result,
+                generalization_gap,
             )
             candidate.p_value = self._clustered_lift_tail_probability(
                 validation_result.win_rate_lift,
@@ -316,6 +316,18 @@ class RuleSearchEngine:
         """Return the absolute change in edge over each window's baseline."""
         return abs(
             train_result.win_rate_lift - validation_result.win_rate_lift
+        )
+
+    @staticmethod
+    def _conservative_validation_score(
+        validation_result: BacktestResult,
+        generalization_gap: float,
+    ) -> float:
+        """Return lift after one-sided uncertainty and stability penalties."""
+        return (
+            validation_result.win_rate_lift
+            - ONE_SIDED_95_Z_SCORE * validation_result.lift_standard_error
+            - generalization_gap
         )
 
     @staticmethod

@@ -1147,7 +1147,7 @@ class FactorHypothesis(BaseModel):
     val_result: Optional[BacktestResult] = None
     validation_score: float = Field(
         default=0.0,
-        description="Conservative score combining validation evidence and stability.",
+        description="Validation lift after one-sided uncertainty and stability penalties.",
     )
     generalization_gap: float = Field(
         default=0.0,

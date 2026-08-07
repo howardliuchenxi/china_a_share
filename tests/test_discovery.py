@@ -869,6 +869,27 @@ def test_generalization_gap_tracks_relative_edge_across_market_regimes():
     assert gap == pytest.approx(0.0)
 
 
+def test_validation_score_penalizes_uncertainty_and_lift_instability():
+    validation_result = BacktestResult(
+        win_rate=0.60,
+        mean_return=0.03,
+        max_drawdown=-0.10,
+        eval_time_ms=1,
+        baseline_win_rate=0.50,
+        win_rate_lift=0.10,
+        lift_standard_error=0.02,
+    )
+
+    score = RuleSearchEngine._conservative_validation_score(
+        validation_result,
+        generalization_gap=0.03,
+    )
+
+    assert score == pytest.approx(
+        0.10 - 1.6448536269514722 * 0.02 - 0.03
+    )
+
+
 def test_rule_search_rejects_many_events_concentrated_on_one_day():
     dataset = pd.DataFrame(
         {

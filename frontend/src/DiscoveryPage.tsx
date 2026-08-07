@@ -288,7 +288,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
               </div>
               <p className="confidence-note">验证集收益超过 {percent(hypothesis.val_result!.target_return)} 的概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
               <p className="confidence-note">验证集下行尾部：5% 分位收益 {percent(hypothesis.val_result!.return_p05, 2)}</p>
-              <p className="confidence-note">保守可信分：{hypothesis.validation_score.toFixed(3)} · 训练—验证提升差距：{percent(hypothesis.generalization_gap)}</p>
+              <p className="confidence-note">保守相对提升：{percent(hypothesis.validation_score)} · 训练—验证提升差距：{percent(hypothesis.generalization_gap)}</p>
               <p className="confidence-note">相对基准提升检验 p-value：{hypothesis.p_value.toFixed(3)} · FDR 校正 q-value：{hypothesis.q_value.toFixed(3)}（{hypothesis.fdr_family_size} 个盲测候选）</p>
               <p className="confidence-note">验证判定：{validationReason(hypothesis)}</p>
             </div>
