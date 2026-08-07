@@ -118,6 +118,12 @@ CORE_OPERATION_GUIDANCE = {
         "local industry classification when an analysis requires an industry universe."
     ),
     "income": "Listed-company income statements by ts_code or reporting dates.",
+    "margin_detail": (
+        "Security-level margin financing and securities lending history. Common "
+        "fields include trade_date,ts_code,rzye,rqye,rzmre,rqyl. To calculate a "
+        "period-over-period change, first use shift grouped by ts_code and ordered "
+        "by trade_date to create the previous value, then derive the change."
+    ),
     "balancesheet": "Listed-company balance sheets by ts_code or reporting dates.",
     "cashflow": "Listed-company cash-flow statements by ts_code or reporting dates.",
     "fina_indicator": (

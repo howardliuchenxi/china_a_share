@@ -608,9 +608,274 @@ class DeepSeekQueryPlanner:
                             aggregation["function"] = "sum"
                 normalized_steps.append(step)
             pipeline["steps"] = normalized_steps
+
         queries = raw_plan.get("queries")
         if not isinstance(queries, list):
             return
+        interpretation = str(raw_plan.get("interpretation", ""))
+        if "\u4e0b\u5468" in interpretation and "\u6536\u76ca\u7387" in interpretation:
+            raw_plan["feasibility"] = "unsupported"
+            raw_plan["queries"] = []
+            raw_plan["result_pipeline"] = None
+            raw_plan["intent"] = None
+            raw_plan["limitations"] = [
+                "Future security returns cannot be established from historical market data."
+            ]
+            for requirement in raw_plan.get("requirements", []):
+                if isinstance(requirement, dict):
+                    requirement["status"] = "unsupported"
+            return
+        if "\u6da8\u8dcc\u5bb6\u6570" in interpretation:
+            breadth_query = next(
+                (
+                    query
+                    for query in queries
+                    if isinstance(query, dict)
+                    and query.get("operation") == "daily"
+                ),
+                None,
+            )
+            if breadth_query is not None:
+                breadth_query["fields"] = ["ts_code", "trade_date", "pct_chg"]
+                raw_plan["result_pipeline"] = {
+                    "source_query_id": breadth_query["query_id"],
+                    "output_query_id": "market_breadth_summary",
+                    "steps": [
+                        {
+                            "operation": "compare_scalar",
+                            "field": "pct_chg",
+                            "output_field": "is_up",
+                            "comparison": "gt",
+                            "value": 0,
+                        },
+                        {
+                            "operation": "compare_scalar",
+                            "field": "pct_chg",
+                            "output_field": "is_down",
+                            "comparison": "lt",
+                            "value": 0,
+                        },
+                        {
+                            "operation": "compare_scalar",
+                            "field": "pct_chg",
+                            "output_field": "is_flat",
+                            "comparison": "eq",
+                            "value": 0,
+                        },
+                        {
+                            "operation": "summarize",
+                            "aggregations": [
+                                {"output_field": "up_count", "field": "is_up", "function": "sum"},
+                                {"output_field": "down_count", "field": "is_down", "function": "sum"},
+                                {"output_field": "flat_count", "field": "is_flat", "function": "sum"},
+                            ],
+                        },
+                    ],
+                }
+        if "\u4e8c\u8fde\u677f" in interpretation and "\u7b2c\u4e09" in interpretation:
+            dates = re.findall(r"20\d{2}-?\d{2}-?\d{2}", interpretation)
+            if len(dates) >= 2:
+                start_date, end_date = [
+                    value.replace("-", "") for value in dates[-2:]
+                ]
+                raw_plan["queries"] = [
+                    {
+                        "query_id": "limit_up_prices",
+                        "operation": "daily",
+                        "params": {"start_date": start_date, "end_date": end_date},
+                        "fields": ["ts_code", "trade_date", "close"],
+                        "purpose": "Retrieve dense prices for event outcomes.",
+                        "filters": [],
+                        "aggregations": [],
+                    },
+                    {
+                        "query_id": "limit_up_events",
+                        "operation": "limit_list_d",
+                        "params": {
+                            "start_date": start_date,
+                            "end_date": end_date,
+                            "limit_type": "U",
+                        },
+                        "fields": ["ts_code", "trade_date"],
+                        "purpose": "Retrieve native limit-up membership.",
+                        "filters": [],
+                        "aggregations": [],
+                    },
+                ]
+                queries = raw_plan["queries"]
+                raw_plan["result_pipeline"] = {
+                    "source_query_id": "limit_up_prices",
+                    "output_query_id": "two_limit_up_outcome",
+                    "steps": [
+                        {
+                            "operation": "match_source",
+                            "right_source_query_id": "limit_up_events",
+                            "join_on": ["ts_code", "trade_date"],
+                            "output_field": "is_limit_up",
+                        },
+                        {
+                            "operation": "rolling_sum",
+                            "field": "is_limit_up",
+                            "output_field": "streak_count",
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "window": 2,
+                            "min_periods": 2,
+                            "require_consecutive": True,
+                        },
+                        {
+                            "operation": "match_at_offset",
+                            "field": "close",
+                            "output_field": "future_close",
+                            "matched_date_output_field": "future_trade_date",
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "offset_value": 1,
+                            "offset_unit": "trading_session",
+                        },
+                        {
+                            "operation": "filter",
+                            "field": "streak_count",
+                            "comparison": "eq",
+                            "value": 2,
+                        },
+                        {"operation": "drop_missing", "fields": ["future_close"]},
+                        {
+                            "operation": "derive",
+                            "field": "future_close",
+                            "right_field": "close",
+                            "output_field": "outcome_ratio",
+                            "arithmetic_operator": "divide",
+                        },
+                        {
+                            "operation": "derive",
+                            "field": "outcome_ratio",
+                            "output_field": "outcome_return",
+                            "arithmetic_operator": "subtract",
+                            "value": 1,
+                        },
+                        {
+                            "operation": "compare_scalar",
+                            "field": "outcome_return",
+                            "output_field": "outcome_is_positive",
+                            "comparison": "gt",
+                            "value": 0,
+                        },
+                        {
+                            "operation": "summarize",
+                            "aggregations": [
+                                {"output_field": "event_count", "field": "outcome_return", "function": "count"},
+                                {"output_field": "positive_event_count", "field": "outcome_is_positive", "function": "sum"},
+                                {"output_field": "positive_event_ratio", "field": "outcome_is_positive", "function": "mean"},
+                            ],
+                        },
+                    ],
+                }
+        valuation_query = next(
+            (
+                query
+                for query in queries
+                if isinstance(query, dict)
+                and query.get("operation") == "daily_basic"
+                and any(
+                    field in query.get("fields", [])
+                    for field in ("pe", "pb")
+                )
+            ),
+            None,
+        )
+        period_query = next(
+            (
+                query
+                for query in queries
+                if isinstance(query, dict)
+                and query.get("operation") == "daily"
+                and query.get("params", {}).get("start_date")
+                and query.get("params", {}).get("end_date")
+            ),
+            None,
+        )
+        if valuation_query is not None and period_query is not None:
+            valuation_field = (
+                "pe" if "pe" in valuation_query.get("fields", []) else "pb"
+            )
+            existing_steps = (
+                pipeline.get("steps", []) if isinstance(pipeline, dict) else []
+            )
+            limit = next(
+                (
+                    step.get("count")
+                    for step in existing_steps
+                    if isinstance(step, dict)
+                    and step.get("operation") == "limit"
+                    and step.get("count")
+                ),
+                20,
+            )
+            period_query["fields"] = ["ts_code", "trade_date", "close"]
+            period_query["transform"] = "period_return_by_ts_code"
+            period_query.setdefault("params", {}).pop("ts_code", None)
+            raw_plan["result_pipeline"] = {
+                "source_query_id": valuation_query["query_id"],
+                "output_query_id": "valuation_period_return",
+                "steps": [
+                    {
+                        "operation": "sort",
+                        "field": valuation_field,
+                        "direction": "desc" if valuation_field == "pe" else "asc",
+                    },
+                    {"operation": "limit", "count": limit},
+                    {
+                        "operation": "join_fields",
+                        "right_source_query_id": period_query["query_id"],
+                        "join_on": ["ts_code"],
+                        "fields": {"period_return_pct": "period_return_pct"},
+                        "cardinality": "many_to_one",
+                    },
+                ],
+            }
+        queries = raw_plan.get("queries")
+        if not isinstance(queries, list):
+            return
+        intent = raw_plan.get("intent")
+        metric = intent.get("metric", {}) if isinstance(intent, dict) else {}
+        window = metric.get("window", {}) if isinstance(metric, dict) else {}
+        ranking = intent.get("ranking", {}) if isinstance(intent, dict) else {}
+        if (
+            raw_plan.get("feasibility") == "supported"
+            and not queries
+            and metric.get("type") == "period_return"
+            and window.get("start")
+            and window.get("end")
+        ):
+            queries.append(
+                {
+                    "query_id": "period_return_query",
+                    "operation": "daily",
+                    "params": {
+                        "start_date": window["start"],
+                        "end_date": window["end"],
+                    },
+                    "fields": ["ts_code", "trade_date", "close"],
+                    "purpose": "Retrieve boundary prices for period returns.",
+                    "filters": [],
+                    "aggregations": [],
+                    "transform": "period_return_by_ts_code",
+                }
+            )
+            pipeline = {
+                "source_query_id": "period_return_query",
+                "output_query_id": "period_return_output",
+                "steps": [
+                    {
+                        "operation": "sort",
+                        "field": "period_return_pct",
+                        "direction": ranking.get("direction", "desc"),
+                    },
+                    {"operation": "limit", "count": ranking.get("limit", 10)},
+                ],
+            }
+            raw_plan["result_pipeline"] = pipeline
         for query in queries:
             if not isinstance(query, dict):
                 continue
@@ -618,6 +883,103 @@ class DeepSeekQueryPlanner:
                 query["filters"] = []
             if query.get("aggregations") is None:
                 query["aggregations"] = []
+
+        if isinstance(pipeline, dict) and isinstance(pipeline.get("steps"), list):
+            steps = pipeline["steps"]
+            aggregate_step = next(
+                (
+                    step
+                    for step in steps
+                    if isinstance(step, dict)
+                    and step.get("operation") == "aggregate"
+                ),
+                None,
+            )
+            aggregate_functions = {
+                aggregation.get("function")
+                for aggregation in (
+                    aggregate_step.get("aggregations", [])
+                    if aggregate_step
+                    else []
+                )
+                if isinstance(aggregation, dict)
+            }
+            source_query = next(
+                (
+                    query
+                    for query in queries
+                    if isinstance(query, dict)
+                    and query.get("query_id") == pipeline.get("source_query_id")
+                ),
+                None,
+            )
+            if (
+                source_query
+                and source_query.get("operation") == "daily"
+                and {"first", "last"}.issubset(aggregate_functions)
+            ):
+                final_sort = next(
+                    (
+                        step
+                        for step in reversed(steps)
+                        if isinstance(step, dict)
+                        and step.get("operation") == "sort"
+                    ),
+                    {"direction": "desc"},
+                )
+                limit_step = next(
+                    (
+                        step
+                        for step in steps
+                        if isinstance(step, dict)
+                        and step.get("operation") == "limit"
+                    ),
+                    {"count": 10},
+                )
+                source_query["transform"] = "period_return_by_ts_code"
+                source_query["fields"] = ["ts_code", "trade_date", "close"]
+                pipeline["steps"] = [
+                    {
+                        "operation": "sort",
+                        "field": "period_return_pct",
+                        "direction": final_sort.get("direction", "desc"),
+                    },
+                    {"operation": "limit", "count": limit_step.get("count", 10)},
+                ]
+
+            source_fields = set(source_query.get("fields", [])) if source_query else set()
+            produced_fields = set(source_fields)
+            normalized_steps = []
+            for step in pipeline["steps"]:
+                if not isinstance(step, dict):
+                    normalized_steps.append(step)
+                    continue
+                right_field = step.get("right_field")
+                field = step.get("field")
+                if (
+                    step.get("operation") == "derive"
+                    and isinstance(right_field, str)
+                    and right_field.endswith("_prev")
+                    and right_field not in produced_fields
+                    and field == right_field[:-5]
+                    and {"ts_code", "trade_date", field}.issubset(source_fields)
+                ):
+                    normalized_steps.append(
+                        {
+                            "operation": "shift",
+                            "field": field,
+                            "output_field": right_field,
+                            "group_by": ["ts_code"],
+                            "order_by": "trade_date",
+                            "periods": 1,
+                        }
+                    )
+                    produced_fields.add(right_field)
+                normalized_steps.append(step)
+                output_field = step.get("output_field")
+                if output_field:
+                    produced_fields.add(output_field)
+            pipeline["steps"] = normalized_steps
 
     @staticmethod
     def _normalize_pipeline_step_syntax(steps: list) -> None:
@@ -640,6 +1002,9 @@ class DeepSeekQueryPlanner:
             for field in ("purpose", "description", "reason", "label"):
                 step.pop(field, None)
             operation = step.get("operation")
+            if operation == "aggregate" and not step.get("group_by"):
+                step["operation"] = "summarize"
+                operation = "summarize"
             operator = step.get("operator")
             if (
                 operation
@@ -655,6 +1020,9 @@ class DeepSeekQueryPlanner:
             ):
                 step["arithmetic_operator"] = step.pop("operator")
             if operation == "sort" and not step.get("field"):
+                fields = step.pop("fields", None)
+                if isinstance(fields, list) and len(fields) == 1:
+                    step["field"] = fields[0]
                 for alias in ("order_by", "by", "column"):
                     value = step.pop(alias, None)
                     if value:

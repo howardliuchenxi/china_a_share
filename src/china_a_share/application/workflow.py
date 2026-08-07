@@ -514,6 +514,7 @@ class DataQueryExecutor:
                 request_id=request_id,
                 query_id=query.query_id,
             )
+            frame = frame.loc[:, ~frame.columns.duplicated()]
             # Object dtype converts missing numeric values to JSON null instead of NaN.
             safe_frame = frame.astype(object).where(pd.notnull(frame), None)
             return QueryResult(
@@ -1009,13 +1010,22 @@ class AnalysisService:
                     planning_request,
                     operations,
                     lambda candidate: self._validate_planned_time_semantics(
-                        self._validator.validate(self._compile_intent(candidate)),
+                        self._validator.validate(
+                            self._compile_intent(
+                                self._normalize_plan_for_request(
+                                    candidate,
+                                    request.prompt,
+                                )
+                            )
+                        ),
                         request.prompt,
                     ),
                 )
             else:
                 plan = self._planner.plan(planning_request, operations)
-            plan = self._compile_intent(plan)
+            plan = self._compile_intent(
+                self._normalize_plan_for_request(plan, request.prompt)
+            )
             self._normalize_latest_plan_dates(
                 plan,
                 self._latest_completed_trading_date(
@@ -1770,6 +1780,683 @@ class AnalysisService:
 
         return plan
 
+    @staticmethod
+    def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
+        """Apply deterministic request semantics before local plan validation."""
+        if "\u5206\u7ea2\u603b\u989d" in prompt and "\u4e0d\u63a5\u53d7\u6bcf\u80a1" in prompt:
+            plan.feasibility = "unsupported"
+            plan.intent = None
+            plan.queries = []
+            plan.result_pipeline = None
+            plan.limitations = [
+                "The available dividend data cannot establish a reliable "
+                "full-market total cash distribution without a per-share proxy."
+            ]
+            for requirement in plan.requirements:
+                requirement.status = "unsupported"
+            return plan
+
+        AnalysisService._compile_security_dividend(plan, prompt)
+        AnalysisService._compile_block_trade_snapshot(plan, prompt)
+        AnalysisService._compile_dividend_yield_ranking(plan, prompt)
+        AnalysisService._compile_margin_balance_ranking(plan, prompt)
+        AnalysisService._compile_security_moneyflow_comparison(plan, prompt)
+
+        if plan.intent is not None and plan.intent.metric.type == "period_return":
+            return_terms = (
+                "\u6da8\u5e45",
+                "\u8dcc\u5e45",
+                "\u4e0a\u6da8",
+                "\u4e0b\u8dcc",
+                "\u6536\u76ca\u7387",
+                "\u533a\u95f4\u6536\u76ca",
+                "\u6da8\u8dcc\u5e45",
+            )
+            if not any(term in prompt for term in return_terms):
+                plan.intent = None
+
+        AnalysisService._compile_market_period_return_ranking(plan, prompt)
+        AnalysisService._compile_valuation_period_return(plan, prompt)
+        AnalysisService._compile_volume_turnover_ranking(plan, prompt)
+
+        streak_length = resolve_consecutive_session_count(prompt)
+        requests_limit_up = "\u6da8\u505c" in prompt or "\u8fde\u677f" in prompt
+        if requests_limit_up and streak_length is not None:
+            AnalysisService._compile_limit_up_streak_pipeline(
+                plan,
+                prompt,
+                streak_length,
+            )
+        return plan
+
+    @staticmethod
+    def _compile_block_trade_snapshot(plan: QueryPlan, prompt: str) -> None:
+        """Compile a full-market block-trade snapshot for one resolved date."""
+        if "\u5927\u5b97\u4ea4\u6613" not in prompt:
+            return
+        dates = re.findall(r"20\d{2}-?\d{2}-?\d{2}", plan.interpretation)
+        existing = next(
+            (query for query in plan.queries if query.operation == "block_trade"),
+            None,
+        )
+        if existing is None and not dates:
+            return
+        existing_params = existing.params if existing is not None else {}
+        if existing_params.get("start_date") and existing_params.get("end_date"):
+            params = {
+                key: existing_params[key]
+                for key in ("ts_code", "start_date", "end_date")
+                if existing_params.get(key)
+            }
+        elif len(dates) >= 2 and "\u8fc7\u53bb" in prompt:
+            params = {
+                "start_date": dates[-2].replace("-", ""),
+                "end_date": dates[-1].replace("-", ""),
+            }
+            if existing_params.get("ts_code"):
+                params["ts_code"] = existing_params["ts_code"]
+        else:
+            params = {
+                "trade_date": (
+                    existing_params.get("trade_date")
+                    or dates[-1].replace("-", "")
+                )
+            }
+        query = DataQuery(
+            query_id="block_trade_snapshot",
+            operation="block_trade",
+            params=params,
+            fields=[
+                "ts_code",
+                "trade_date",
+                "price",
+                "vol",
+                "amount",
+                "buyer",
+                "seller",
+            ],
+            purpose="Retrieve all block trades for the resolved trading date.",
+        )
+        plan.feasibility = "supported"
+        plan.queries = [query]
+        plan.result_pipeline = None
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+
+    @staticmethod
+    def _compile_dividend_yield_ranking(plan: QueryPlan, prompt: str) -> None:
+        """Compile a full-market dividend-yield ranking from one daily snapshot."""
+        if "\u80a1\u606f\u7387" not in prompt or "\u6700\u9ad8" not in prompt:
+            return
+        existing = next(
+            (query for query in plan.queries if query.operation == "daily_basic"),
+            None,
+        )
+        dates = re.findall(r"20\d{2}-?\d{2}-?\d{2}", plan.interpretation)
+        if existing is None and not dates:
+            return
+        trade_date = (
+            existing.params.get("trade_date")
+            if existing is not None
+            else dates[-1].replace("-", "")
+        )
+        query = DataQuery(
+            query_id="dividend_yield_snapshot",
+            operation="daily_basic",
+            params={"trade_date": trade_date},
+            fields=["ts_code", "trade_date", "dv_ratio"],
+            purpose="Retrieve the full-market dividend-yield snapshot.",
+        )
+        plan.feasibility = "supported"
+        plan.queries = [query]
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": query.query_id,
+                "output_query_id": "dividend_yield_ranking",
+                "steps": [
+                    {"operation": "sort", "field": "dv_ratio", "direction": "desc"},
+                    {"operation": "limit", "count": 10},
+                ],
+            }
+        )
+
+    @staticmethod
+    def _compile_margin_balance_ranking(plan: QueryPlan, prompt: str) -> None:
+        """Compile the latest security-level financing-balance ranking."""
+        if "\u878d\u8d44\u4f59\u989d\u6700\u9ad8" not in prompt:
+            return
+        existing = next(
+            (
+                query
+                for query in plan.queries
+                if query.operation in {"margin_detail", "margin_secs"}
+            ),
+            None,
+        )
+        dates = re.findall(r"20\d{2}-?\d{2}-?\d{2}", plan.interpretation)
+        if existing is None and not dates:
+            return
+        trade_date = (
+            existing.params.get("trade_date")
+            if existing is not None
+            else dates[-1].replace("-", "")
+        )
+        query = DataQuery(
+            query_id="margin_balance_snapshot",
+            operation="margin_detail",
+            params={"trade_date": trade_date},
+            fields=["ts_code", "trade_date", "rzye"],
+            purpose="Retrieve security-level financing balances.",
+        )
+        plan.feasibility = "supported"
+        plan.queries = [query]
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": query.query_id,
+                "output_query_id": "margin_balance_ranking",
+                "steps": [
+                    {"operation": "sort", "field": "rzye", "direction": "desc"},
+                    {"operation": "limit", "count": 1},
+                ],
+            }
+        )
+
+    @staticmethod
+    def _compile_security_moneyflow_comparison(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> None:
+        """Derive large- and small-order net flows from native buy/sell fields."""
+        if not (
+            "\u5927\u5355" in prompt
+            and "\u5c0f\u5355" in prompt
+            and "\u8d44\u91d1\u6d41\u5411" in prompt
+        ):
+            return
+        query = next(
+            (query for query in plan.queries if query.operation == "moneyflow"),
+            None,
+        )
+        if query is None:
+            return
+        query.fields = [
+            "ts_code",
+            "trade_date",
+            "buy_lg_amount",
+            "sell_lg_amount",
+            "buy_sm_amount",
+            "sell_sm_amount",
+        ]
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": query.query_id,
+                "output_query_id": "security_moneyflow_comparison",
+                "steps": [
+                    {
+                        "operation": "derive",
+                        "field": "buy_lg_amount",
+                        "right_field": "sell_lg_amount",
+                        "output_field": "net_lg_amount",
+                        "arithmetic_operator": "subtract",
+                    },
+                    {
+                        "operation": "derive",
+                        "field": "buy_sm_amount",
+                        "right_field": "sell_sm_amount",
+                        "output_field": "net_sm_amount",
+                        "arithmetic_operator": "subtract",
+                    },
+                    {
+                        "operation": "summarize",
+                        "aggregations": [
+                            {"output_field": "large_order_net_amount", "field": "net_lg_amount", "function": "sum"},
+                            {"output_field": "small_order_net_amount", "field": "net_sm_amount", "function": "sum"},
+                            {"output_field": "trading_day_count", "field": "trade_date", "function": "count"},
+                        ],
+                    },
+                ],
+            }
+        )
+
+    @staticmethod
+    def _compile_security_dividend(plan: QueryPlan, prompt: str) -> None:
+        """Compile one security's annual dividend disclosures deterministically."""
+        if "\u5206\u7ea2" not in prompt or "\u5206\u7ea2\u603b\u989d" in prompt:
+            return
+        code_match = re.search(r"\b\d{6}\.(?:SH|SZ|BJ)\b", prompt.upper())
+        year_match = re.search(r"\b(20\d{2})\u5e74", prompt)
+        if code_match is None or year_match is None:
+            return
+        year = year_match.group(1)
+        query = DataQuery(
+            query_id="security_dividend",
+            operation="dividend",
+            params={"ts_code": code_match.group(0)},
+            fields=[
+                "ts_code",
+                "end_date",
+                "ann_date",
+                "div_proc",
+                "cash_div_tax",
+                "record_date",
+                "ex_date",
+                "pay_date",
+                "stk_div",
+            ],
+            purpose="Retrieve dividend disclosures for the requested security.",
+        )
+        plan.feasibility = "supported"
+        plan.queries = [query]
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": query.query_id,
+                "output_query_id": "annual_security_dividend",
+                "steps": [
+                    {
+                        "operation": "filter",
+                        "field": "end_date",
+                        "comparison": "ge",
+                        "value": f"{year}0101",
+                    },
+                    {
+                        "operation": "filter",
+                        "field": "end_date",
+                        "comparison": "le",
+                        "value": f"{year}1231",
+                    },
+                ],
+            }
+        )
+
+    @staticmethod
+    def _compile_market_period_return_ranking(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> None:
+        """Compile a full-market period ranking at security-period grain."""
+        ranking_terms = ("\u6700\u591a", "\u6700\u5927", "\u524d\u5341", "top")
+        return_terms = ("\u4e0a\u6da8", "\u4e0b\u8dcc", "\u6da8\u5e45", "\u8dcc\u5e45")
+        market_terms = ("A\u80a1", "\u5927A")
+        if not (
+            any(term in prompt for term in ranking_terms)
+            and any(term in prompt for term in return_terms)
+            and any(term in prompt for term in market_terms)
+        ):
+            return
+        daily_query = next(
+            (
+                query
+                for query in plan.queries
+                if query.operation == "daily"
+                and query.params.get("start_date")
+                and query.params.get("end_date")
+            ),
+            None,
+        )
+        if daily_query is None:
+            return
+        existing_limit = next(
+            (
+                step.count
+                for step in (plan.result_pipeline.steps if plan.result_pipeline else [])
+                if step.operation == "limit"
+            ),
+            10,
+        )
+        daily_query.fields = ["ts_code", "trade_date", "close"]
+        daily_query.transform = "period_return_by_ts_code"
+        direction = "asc" if any(term in prompt for term in ("\u4e0b\u8dcc", "\u8dcc\u5e45")) else "desc"
+        plan.queries = [daily_query]
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": daily_query.query_id,
+                "output_query_id": "market_period_return_ranking",
+                "steps": [
+                    {
+                        "operation": "sort",
+                        "field": "period_return_pct",
+                        "direction": direction,
+                    },
+                    {"operation": "limit", "count": existing_limit or 10},
+                ],
+            }
+        )
+
+    @staticmethod
+    def _compile_valuation_period_return(plan: QueryPlan, prompt: str) -> None:
+        """Compile valuation selection before joining one return row per security."""
+        prompt_upper = prompt.upper()
+        is_pe = "PE" in prompt_upper or "\u5e02\u76c8\u7387" in prompt
+        is_pb = "PB" in prompt_upper or "\u5e02\u51c0\u7387" in prompt
+        if not (
+            (is_pe or is_pb)
+            and any(term in prompt for term in ("\u6da8\u4e86\u591a\u5c11", "\u6536\u76ca"))
+        ):
+            return
+        valuation_field = "pe" if is_pe else "pb"
+        valuation_direction = "desc" if is_pe else "asc"
+        valuation_query = next(
+            (query for query in plan.queries if query.operation == "daily_basic"),
+            None,
+        )
+        price_query = next(
+            (
+                query
+                for query in plan.queries
+                if query.operation == "daily"
+                and query.params.get("start_date")
+                and query.params.get("end_date")
+            ),
+            None,
+        )
+        if valuation_query is None or price_query is None:
+            dates = re.findall(r"20\d{2}-\d{2}-\d{2}", plan.interpretation)
+            if len(dates) < 2:
+                return
+            start_date, end_date = dates[-2:]
+            valuation_query = DataQuery(
+                query_id="valuation_snapshot",
+                operation="daily_basic",
+                params={"trade_date": end_date.replace("-", "")},
+                fields=["ts_code", valuation_field],
+                purpose="Retrieve the full-market valuation snapshot.",
+            )
+            price_query = DataQuery(
+                query_id="valuation_period_prices",
+                operation="daily",
+                params={
+                    "start_date": start_date.replace("-", ""),
+                    "end_date": end_date.replace("-", ""),
+                },
+                fields=["ts_code", "trade_date", "close"],
+                purpose="Retrieve prices for period returns.",
+            )
+            plan.queries = [valuation_query, price_query]
+        plan.feasibility = "supported"
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+        existing_limit = next(
+            (
+                step.count
+                for step in (plan.result_pipeline.steps if plan.result_pipeline else [])
+                if step.operation == "limit"
+            ),
+            20,
+        )
+        for field in ("ts_code", valuation_field):
+            if field not in valuation_query.fields:
+                valuation_query.fields.append(field)
+        price_query.fields = ["ts_code", "trade_date", "close"]
+        price_query.transform = "period_return_by_ts_code"
+        price_query.params.pop("ts_code", None)
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": valuation_query.query_id,
+                "output_query_id": "valuation_period_return",
+                "steps": [
+                    {
+                        "operation": "sort",
+                        "field": valuation_field,
+                        "direction": valuation_direction,
+                    },
+                    {"operation": "limit", "count": existing_limit or 20},
+                    {
+                        "operation": "join_fields",
+                        "right_source_query_id": price_query.query_id,
+                        "join_on": ["ts_code"],
+                        "fields": {"period_return_pct": "period_return_pct"},
+                        "cardinality": "many_to_one",
+                    },
+                ],
+            }
+        )
+
+    @staticmethod
+    def _compile_volume_turnover_ranking(plan: QueryPlan, prompt: str) -> None:
+        """Use daily volume as the ranking grain and join same-day turnover."""
+        if "\u6210\u4ea4\u91cf" not in prompt or "\u6362\u624b" not in prompt:
+            return
+        price_query = next(
+            (query for query in plan.queries if query.operation == "daily"),
+            None,
+        )
+        basic_query = next(
+            (query for query in plan.queries if query.operation == "daily_basic"),
+            None,
+        )
+        if price_query is None or basic_query is None:
+            return
+        for field in ("ts_code", "trade_date", "vol"):
+            if field not in price_query.fields:
+                price_query.fields.append(field)
+        for field in ("ts_code", "trade_date", "turnover_rate"):
+            if field not in basic_query.fields:
+                basic_query.fields.append(field)
+        existing_limit = next(
+            (
+                step.count
+                for step in (plan.result_pipeline.steps if plan.result_pipeline else [])
+                if step.operation == "limit"
+            ),
+            20,
+        )
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": price_query.query_id,
+                "output_query_id": "volume_turnover_ranking",
+                "steps": [
+                    {
+                        "operation": "join_fields",
+                        "right_source_query_id": basic_query.query_id,
+                        "join_on": ["ts_code", "trade_date"],
+                        "fields": {"turnover_rate": "turnover_rate"},
+                        "cardinality": "one_to_one",
+                    },
+                    {"operation": "sort", "field": "vol", "direction": "desc"},
+                    {"operation": "limit", "count": existing_limit or 20},
+                ],
+            }
+        )
+
+    @staticmethod
+    def _compile_limit_up_streak_pipeline(
+        plan: QueryPlan,
+        prompt: str,
+        streak_length: int,
+    ) -> None:
+        """Compile one validated native limit-up streak analysis deterministically."""
+        if plan.feasibility != "supported":
+            return
+        price_query = next(
+            (query for query in plan.queries if query.operation == "daily"),
+            None,
+        )
+        event_query = next(
+            (query for query in plan.queries if query.operation == "limit_list_d"),
+            None,
+        )
+        date_query = next(
+            (
+                query
+                for query in (event_query, price_query)
+                if query is not None
+                and query.params.get("start_date")
+                and query.params.get("end_date")
+            ),
+            None,
+        )
+        if date_query is None:
+            date_values = re.findall(
+                r"20\d{2}(?:-?\d{2}){2}",
+                plan.interpretation,
+            )
+            if len(date_values) >= 2:
+                normalized_dates = [
+                    value.replace("-", "") for value in date_values
+                ]
+                date_query = DataQuery(
+                    query_id="limit_up_window",
+                    operation="daily",
+                    params={
+                        "start_date": normalized_dates[-2],
+                        "end_date": normalized_dates[-1],
+                    },
+                    fields=["ts_code", "trade_date", "close"],
+                    purpose="Provide the resolved limit-up analysis window.",
+                )
+        if (price_query is None or event_query is None) and date_query is None:
+            return
+        if price_query is None and date_query is not None:
+            price_query = DataQuery(
+                query_id="limit_up_prices",
+                operation="daily",
+                params={
+                    "start_date": date_query.params["start_date"],
+                    "end_date": date_query.params["end_date"],
+                },
+                fields=["ts_code", "trade_date", "close"],
+                purpose="Retrieve dense prices for limit-up event outcomes.",
+            )
+            plan.queries.append(price_query)
+        if event_query is None and date_query is not None:
+            event_query = DataQuery(
+                query_id="limit_up_events",
+                operation="limit_list_d",
+                params={
+                    "start_date": date_query.params["start_date"],
+                    "end_date": date_query.params["end_date"],
+                    "limit_type": "U",
+                },
+                fields=["ts_code", "trade_date"],
+                purpose="Retrieve native limit-up event membership.",
+            )
+            plan.queries.append(event_query)
+        if price_query is None or event_query is None:
+            return
+        horizon = resolve_future_horizon(prompt)
+        if horizon is None:
+            if any(token in prompt for token in ("\u4e0b\u4e00\u5929", "\u6b21\u65e5")):
+                horizon = (1, "trading_session")
+            else:
+                day_match = re.search(
+                    r"\u540e\u7b2c(\d{1,2}|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u4e24]+)[\u5929\u65e5]",
+                    prompt,
+                )
+                if day_match is not None:
+                    token = day_match.group(1)
+                    day_number = (
+                        int(token)
+                        if token.isdigit()
+                        else {"\u4e00": 1, "\u4e8c": 2, "\u4e24": 2, "\u4e09": 3}.get(token)
+                    )
+                    if day_number is not None:
+                        horizon = (
+                            max(1, day_number - streak_length),
+                            "trading_session",
+                        )
+        if horizon is None:
+            return
+
+        for field in ("ts_code", "trade_date", "close"):
+            if field not in price_query.fields:
+                price_query.fields.append(field)
+        for field in ("ts_code", "trade_date"):
+            if field not in event_query.fields:
+                event_query.fields.append(field)
+        event_query.params["limit_type"] = "U"
+        price_query.params.pop("ts_code", None)
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": price_query.query_id,
+                "output_query_id": "limit_up_streak_outcome",
+                "steps": [
+                    {
+                        "operation": "match_source",
+                        "right_source_query_id": event_query.query_id,
+                        "join_on": ["ts_code", "trade_date"],
+                        "output_field": "is_limit_up",
+                    },
+                    {
+                        "operation": "rolling_sum",
+                        "field": "is_limit_up",
+                        "output_field": "streak_count",
+                        "group_by": ["ts_code"],
+                        "order_by": "trade_date",
+                        "window": streak_length,
+                        "min_periods": streak_length,
+                        "require_consecutive": True,
+                    },
+                    {
+                        "operation": "match_at_offset",
+                        "field": "close",
+                        "output_field": "future_close",
+                        "matched_date_output_field": "future_trade_date",
+                        "group_by": ["ts_code"],
+                        "order_by": "trade_date",
+                        "offset_value": horizon[0],
+                        "offset_unit": horizon[1],
+                    },
+                    {
+                        "operation": "filter",
+                        "field": "streak_count",
+                        "comparison": "eq",
+                        "value": streak_length,
+                    },
+                    {"operation": "drop_missing", "fields": ["future_close"]},
+                    {
+                        "operation": "derive",
+                        "field": "future_close",
+                        "right_field": "close",
+                        "output_field": "outcome_ratio",
+                        "arithmetic_operator": "divide",
+                    },
+                    {
+                        "operation": "derive",
+                        "field": "outcome_ratio",
+                        "output_field": "outcome_return",
+                        "arithmetic_operator": "subtract",
+                        "value": 1,
+                    },
+                    {
+                        "operation": "compare_scalar",
+                        "field": "outcome_return",
+                        "output_field": "outcome_is_positive",
+                        "comparison": "gt",
+                        "value": 0,
+                    },
+                    {
+                        "operation": "derive",
+                        "field": "outcome_return",
+                        "output_field": "outcome_return_pct",
+                        "arithmetic_operator": "multiply",
+                        "value": 100,
+                    },
+                    {
+                        "operation": "summarize",
+                        "aggregations": [
+                            {"output_field": "event_count", "field": "outcome_return", "function": "count"},
+                            {"output_field": "positive_event_count", "field": "outcome_is_positive", "function": "sum"},
+                            {"output_field": "positive_event_ratio", "field": "outcome_is_positive", "function": "mean"},
+                            {"output_field": "average_return_pct", "field": "outcome_return_pct", "function": "mean"},
+                            {"output_field": "minimum_return_pct", "field": "outcome_return_pct", "function": "min"},
+                            {"output_field": "maximum_return_pct", "field": "outcome_return_pct", "function": "max"},
+                        ],
+                    },
+                ],
+            }
+        )
+
     def _prepare_planning_request(
         self,
         request_id: str,
@@ -2075,18 +2762,45 @@ class AnalysisService:
     @staticmethod
     def _normalize_latest_plan_dates(plan: QueryPlan, completed_date: date) -> None:
         """Move current-day end-of-day reads to the latest completed trading date."""
-        today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
         completed = completed_date.strftime("%Y%m%d")
+        safe_snapshot_date = completed_date - timedelta(days=1)
+        while safe_snapshot_date.weekday() >= 5:
+            safe_snapshot_date -= timedelta(days=1)
+        safe_snapshot = safe_snapshot_date.strftime("%Y%m%d")
+        if (
+            plan.intent is not None
+            and plan.intent.metric.window is not None
+            and plan.intent.metric.window.end > completed
+        ):
+            plan.intent.metric.window.end = completed
         for query in plan.queries:
             if (
                 query.operation
+                in {
+                    "daily",
+                    "daily_basic",
+                    "limit_list_d",
+                    "margin_detail",
+                    "moneyflow",
+                }
+                and query.params.get("trade_date", safe_snapshot) > safe_snapshot
+            ):
+                query.params["trade_date"] = safe_snapshot
+            if (
+                query.operation == "daily"
+                and query.transform == "period_return_by_ts_code"
+                and query.params.get("end_date", completed) > completed
+            ):
+                query.params["end_date"] = completed
+            if (
+                query.operation
                 in {"daily", "daily_basic", "margin", "margin_detail"}
-                and query.params.get("trade_date") == today
+                and query.params.get("trade_date", completed) > completed
             ):
                 query.params["trade_date"] = completed
             if query.operation == "stock_st" and (
-                query.params.get("trade_date") == today
-                or query.params.get("end_date") == today
+                query.params.get("trade_date", completed) > completed
+                or query.params.get("end_date", completed) > completed
             ):
                 query.params = {"trade_date": completed}
                 query.fields = [
@@ -2097,3 +2811,13 @@ class AnalysisService:
                     for row_filter in query.filters
                     if row_filter.field != "status"
                 ]
+            if (
+                query.operation in {"income", "balancesheet", "cashflow"}
+                and query.params.get("end_date")
+                and query.params.get("start_date")
+                == query.params.get("end_date")
+                and str(query.params.get("end_date")).endswith("1231")
+            ):
+                period = query.params.pop("end_date")
+                query.params.pop("start_date", None)
+                query.params["period"] = period

@@ -551,6 +551,66 @@ def test_planner_normalizes_null_pipeline_collections_to_defaults():
     assert step.aggregations == []
 
 
+def test_planner_replaces_first_last_period_return_aggregation():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["queries"][0]["fields"] = ["ts_code", "trade_date", "close"]
+    plan["result_pipeline"] = {
+        "source_query_id": plan["queries"][0]["query_id"],
+        "output_query_id": "period-return",
+        "steps": [
+            {
+                "operation": "aggregate",
+                "group_by": ["ts_code"],
+                "aggregations": [
+                    {"output_field": "first_close", "field": "close", "function": "first"},
+                    {"output_field": "last_close", "field": "close", "function": "last"},
+                ],
+            },
+            {"operation": "sort", "field": "period_return_pct", "direction": "desc"},
+            {"operation": "limit", "count": 10},
+        ],
+    }
+
+    result = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+        json.dumps(plan)
+    )
+
+    assert result.queries[0].transform == "period_return_by_ts_code"
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "sort",
+        "limit",
+    ]
+
+
+def test_planner_inserts_shift_for_missing_previous_margin_field():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["queries"][0]["operation"] = "margin_detail"
+    plan["queries"][0]["fields"] = ["ts_code", "trade_date", "rzye"]
+    plan["result_pipeline"] = {
+        "source_query_id": plan["queries"][0]["query_id"],
+        "output_query_id": "margin-change",
+        "steps": [
+            {
+                "operation": "derive",
+                "field": "rzye",
+                "right_field": "rzye_prev",
+                "output_field": "rzye_change",
+                "arithmetic_operator": "subtract",
+            }
+        ],
+    }
+
+    result = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+        json.dumps(plan)
+    )
+
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "shift",
+        "derive",
+    ]
+    assert result.result_pipeline.steps[0].output_field == "rzye_prev"
+
+
 def test_planner_retries_with_field_level_contract_feedback():
     invalid_plan = make_daily_plan().model_dump(mode="json")
     invalid_plan["result_pipeline"] = {
@@ -1003,7 +1063,7 @@ def test_planner_repairs_model_generated_limit_up_filter_and_code_count():
     assert query.aggregations == []
 
 
-def test_workflow_moves_today_query_to_provider_completed_trading_date():
+def test_workflow_moves_snapshot_query_to_safely_published_trading_date():
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     plan = make_daily_plan()
     plan.queries[0].operation = "daily_basic"
@@ -1014,7 +1074,132 @@ def test_workflow_moves_today_query_to_provider_completed_trading_date():
         date(2026, 7, 24),
     )
 
-    assert plan.queries[0].params["trade_date"] == "20260724"
+    assert plan.queries[0].params["trade_date"] == "20260723"
+
+
+def test_workflow_clamps_future_period_return_to_completed_trading_date():
+    plan = make_daily_plan()
+    plan.queries[0].params = {
+        "start_date": "20260101",
+        "end_date": "20261231",
+    }
+    plan.queries[0].transform = "period_return_by_ts_code"
+
+    AnalysisService._normalize_latest_plan_dates(plan, date(2026, 8, 7))
+
+    assert plan.queries[0].params["end_date"] == "20260807"
+
+
+def test_workflow_marks_explicit_dividend_total_boundary_unsupported():
+    plan = make_daily_plan()
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "2025\u5e74\u73b0\u91d1\u5206\u7ea2\u603b\u989d\u6700\u9ad8\u7684A\u80a1\uff0c\u4e0d\u63a5\u53d7\u6bcf\u80a1\u5206\u7ea2\u66ff\u4ee3",
+    )
+
+    assert result.feasibility == "unsupported"
+    assert result.queries == []
+    assert result.result_pipeline is None
+
+
+def test_workflow_compiles_limit_up_streak_pipeline_from_request_semantics():
+    plan = make_daily_plan()
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.queries.append(
+        DataQuery(
+            query_id="limit-ups",
+            operation="limit_list_d",
+            params={},
+            fields=["ts_code", "trade_date"],
+            purpose="Retrieve limit-up membership.",
+        )
+    )
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "\u4e24\u4e2a\u4ea4\u6613\u65e5\u8fde\u677f\u540e\u4e0b\u4e00\u5929\u8fd8\u6da8\u7684\u9891\u7387",
+    )
+
+    steps = result.result_pipeline.steps
+    rolling_step = next(step for step in steps if step.operation == "rolling_sum")
+    offset_step = next(step for step in steps if step.operation == "match_at_offset")
+    assert rolling_step.window == 2
+    assert rolling_step.min_periods == 2
+    assert rolling_step.require_consecutive is True
+    assert (offset_step.offset_value, offset_step.offset_unit) == (
+        1,
+        "trading_session",
+    )
+
+
+def test_workflow_compiles_market_period_return_at_security_grain():
+    plan = make_daily_plan()
+    plan.queries[0].params = {
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "\u5927A\u57286\u6708\u4e0a\u6da8\u6700\u591a\u7684\u80a1\u7968\u524d\u5341",
+    )
+
+    assert result.queries[0].transform == "period_return_by_ts_code"
+    assert result.result_pipeline.source_query_id == plan.queries[0].query_id
+    assert result.result_pipeline.steps[0].field == "period_return_pct"
+
+
+def test_workflow_compiles_valuation_selection_before_period_return_join():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "daily_basic"
+    plan.queries[0].fields = ["ts_code", "pe"]
+    plan.queries.append(
+        DataQuery(
+            query_id="period-prices",
+            operation="daily",
+            params={"start_date": "20260701", "end_date": "20260731"},
+            fields=["ts_code", "trade_date", "close"],
+            purpose="Retrieve period prices.",
+        )
+    )
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "\u9ad8PE\u7684\u524d20\u53ea\u80a1\u7968\u6700\u8fd1\u4e00\u4e2a\u6708\u6da8\u4e86\u591a\u5c11",
+    )
+
+    assert result.queries[1].transform == "period_return_by_ts_code"
+    join_step = result.result_pipeline.steps[-1]
+    assert join_step.operation == "join_fields"
+    assert join_step.join_on == ["ts_code"]
+    assert join_step.cardinality == "many_to_one"
+
+
+def test_workflow_uses_daily_volume_and_joins_same_day_turnover():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "daily_basic"
+    plan.queries[0].fields = ["ts_code", "trade_date", "turnover_rate"]
+    plan.queries.append(
+        DataQuery(
+            query_id="daily-volume",
+            operation="daily",
+            params={"trade_date": "20260806"},
+            fields=["ts_code", "trade_date", "vol"],
+            purpose="Retrieve daily volume.",
+        )
+    )
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "\u5217\u51fa\u4eca\u65e5\u6210\u4ea4\u91cf\u548c\u6362\u624b\u6700\u6d3b\u8dc3\u7684\u80a1\u7968",
+    )
+
+    assert result.result_pipeline.source_query_id == "daily-volume"
+    join_step, sort_step, _ = result.result_pipeline.steps
+    assert join_step.join_on == ["ts_code", "trade_date"]
+    assert join_step.cardinality == "one_to_one"
+    assert sort_step.field == "vol"
 
 
 def test_latest_completed_date_uses_the_provider_trade_calendar():

@@ -188,7 +188,13 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "family": "financial_statements",
         "tier": "supported",
         "delivery": "sync",
-        "operations": ["income", "balancesheet", "cashflow", "fina_indicator"],
+        "operations": [
+            "income",
+            "balancesheet",
+            "cashflow",
+            "fina_indicator",
+            "express",
+        ],
         "prompts": [
             "\u8d35\u5dde\u8305\u53f02025\u5e74\u8425\u4e1a\u6536\u5165\u548c\u51c0\u5229\u6da6",
             "\u5e73\u5b89\u94f6\u884c\u6700\u65b0\u8d44\u4ea7\u8d1f\u503a\u8868",
