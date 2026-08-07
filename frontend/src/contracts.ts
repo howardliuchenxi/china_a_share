@@ -312,6 +312,17 @@ export interface BacktestResult {
   lift_standard_error: number;
   dependence_lag_days: number;
   return_price_basis: string;
+  /** Bounded recent matched events retained for manual result auditing. */
+  event_examples: Array<{
+    /** Signal market date in YYYYMMDD format. */
+    trade_date: string;
+    /** Security code when available in the research dataset. */
+    ts_code: string | null;
+    /** Market date used to settle the forward-return label. */
+    future_trade_date: string | null;
+    /** Observed adjusted forward return as a ratio. */
+    forward_return: number;
+  }>;
 }
 
 export interface FactorHypothesis {

@@ -868,6 +868,54 @@ def test_rule_evaluation_preserves_schema_for_an_empty_match():
 
     assert result.sample_count == 0
     assert result.win_rate == 0.0
+    assert result.event_examples == []
+
+
+def test_rule_evaluation_retains_bounded_recent_event_examples():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": [f"202601{index:02d}" for index in range(1, 8)],
+            "future_trade_date": [f"202602{index:02d}" for index in range(1, 8)],
+            "ts_code": [f"{index:06d}.SZ" for index in range(1, 8)],
+            "factor": [1.0] * 7,
+            "forward_return": [index / 100.0 for index in range(1, 8)],
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert len(result.event_examples) == 5
+    assert [example.trade_date for example in result.event_examples] == [
+        "20260107",
+        "20260106",
+        "20260105",
+        "20260104",
+        "20260103",
+    ]
+    assert result.event_examples[0].ts_code == "000007.SZ"
+    assert result.event_examples[0].future_trade_date == "20260207"
+    assert result.event_examples[0].forward_return == pytest.approx(0.07)
+
+
+def test_rule_event_examples_are_stable_when_latest_date_exceeds_the_limit():
+    dataset = pd.DataFrame(
+        {
+            "trade_date": ["20260107"] * 7,
+            "ts_code": [f"{index:06d}.SZ" for index in range(7, 0, -1)],
+            "factor": [1.0] * 7,
+            "forward_return": [0.01] * 7,
+        }
+    )
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert [example.ts_code for example in result.event_examples] == [
+        "000001.SZ",
+        "000002.SZ",
+        "000003.SZ",
+        "000004.SZ",
+        "000005.SZ",
+    ]
 
 
 def test_rule_evaluation_reports_missing_outcome_coverage():

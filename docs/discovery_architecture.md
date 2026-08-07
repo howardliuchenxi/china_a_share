@@ -155,6 +155,13 @@ snapshot, factor-coverage diagnostics, validation summary, and training-ranked
 leaderboard. Every rule shows training and validation evidence side by side,
 including event, date, security, support, and label-coverage breadth.
 
+Each window also carries at most five most-recent observable matched events,
+ordered deterministically by signal date and security. The UI keeps these audit
+rows collapsed by default and exposes signal date, security, outcome settlement
+date, and adjusted forward return so a researcher can trace summary statistics
+back to concrete examples without allowing response size to grow with the full
+event population.
+
 The summary explicitly describes the first rule as the training leader and
 reports how many leaderboard entries passed validation. Applying a rule sends
 an explicit natural-language screening request to the analysis page; the user

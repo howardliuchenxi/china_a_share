@@ -91,6 +91,34 @@ function MetricSet({ result }: { result: BacktestResult }) {
   );
 }
 
+function EventExamples({
+  result,
+  windowLabel,
+}: {
+  result: BacktestResult;
+  windowLabel: string;
+}) {
+  if (result.event_examples.length === 0) return null;
+  return (
+    <details className="event-examples">
+      <summary>核验最近 {result.event_examples.length} 条{windowLabel}命中事件</summary>
+      <div className="table-scroll">
+        <table>
+          <thead><tr><th>信号日</th><th>证券</th><th>结算日</th><th>未来收益</th></tr></thead>
+          <tbody>{result.event_examples.map((example, index) => (
+            <tr key={`${example.trade_date}-${example.ts_code ?? index}`}>
+              <td>{example.trade_date}</td>
+              <td>{example.ts_code ?? "—"}</td>
+              <td>{example.future_trade_date ?? "—"}</td>
+              <td>{percent(example.forward_return, 2)}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
 export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const [targetPool] = useState(params.get("dp_pool") || "A_SHARE");
@@ -337,8 +365,8 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
               {applicationLimitation && <p className="confidence-note">带入限制：{applicationLimitation}。研究结果仍可查看，但不会交给模型猜测执行口径。</p>}
               <p>阈值来源：{thresholdSource(hypothesis.threshold_source)}。规则按训练期相对提升的保守 95% 下界完成排名锁定；该下界同时包络日期聚类 HAC 区间与规则—基准 score 区间差，避免把零标准误误认为确定性。同分时优先选择 5% 下行分位和中位收益更高的规则。随后进入独立验证，验证结果未参与重新排序。</p>
               <div className="window-comparison">
-                <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /></div>
-                <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /></div>
+                <div><b>训练窗口</b><MetricSet result={hypothesis.train_result!} /><EventExamples result={hypothesis.train_result!} windowLabel="训练" /></div>
+                <div><b>独立验证</b><MetricSet result={hypothesis.val_result!} /><EventExamples result={hypothesis.val_result!} windowLabel="验证" /></div>
               </div>
               <p className="confidence-note">验证集收益超过 {percent(hypothesis.val_result!.target_return)} 的概率 95% 区间：{percent(hypothesis.val_result!.confidence_lower)} – {percent(hypothesis.val_result!.confidence_upper)}</p>
               <p className="confidence-note">验证集相对基准提升 95% 区间：{percent(hypothesis.val_result!.lift_confidence_lower)} – {percent(hypothesis.val_result!.lift_confidence_upper)}</p>

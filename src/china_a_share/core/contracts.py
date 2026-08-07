@@ -1143,6 +1143,27 @@ class DiscoveryResearchConfig(BaseModel):
     max_conditions: int = Field(description="Maximum conditions in one rule.")
 
 
+class DiscoveryEventExample(BaseModel):
+    """One bounded matched event retained for manual research auditing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trade_date: str = Field(
+        description="Signal market date in YYYYMMDD format.",
+    )
+    ts_code: Optional[str] = Field(
+        default=None,
+        description="Security code when the research dataset contains one.",
+    )
+    future_trade_date: Optional[str] = Field(
+        default=None,
+        description="Market date used to settle the forward-return label.",
+    )
+    forward_return: float = Field(
+        description="Observed split-and-dividend-adjusted forward return as a ratio.",
+    )
+
+
 class BacktestResult(BaseModel):
     """Performance evaluation of a single factor formula."""
     
@@ -1217,6 +1238,10 @@ class BacktestResult(BaseModel):
     return_price_basis: str = Field(
         default="split_and_dividend_adjusted_close",
         description="Price basis used to calculate forward returns.",
+    )
+    event_examples: List[DiscoveryEventExample] = Field(
+        default_factory=list,
+        description="Bounded recent matched events retained for manual auditing.",
     )
 
 

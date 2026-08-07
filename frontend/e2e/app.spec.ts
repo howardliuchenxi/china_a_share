@@ -638,6 +638,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           lift_standard_error: 0.035,
           dependence_lag_days: 19,
           return_price_basis: "split_and_dividend_adjusted_close",
+          event_examples: [{ trade_date: "20251230", ts_code: "000001.SZ", future_trade_date: "20260128", forward_return: 0.082 }],
         },
         val_result: {
           win_rate: 0.60, mean_return: 0.054, median_return: 0.041,
@@ -656,6 +657,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
           lift_standard_error: 0.05,
           dependence_lag_days: 19,
           return_price_basis: "split_and_dividend_adjusted_close",
+          event_examples: [{ trade_date: "20260629", ts_code: "000002.SZ", future_trade_date: "20260727", forward_return: 0.061 }],
         },
       }],
     },
@@ -759,6 +761,12 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topRuleCard).toContainText("验证判定：训练与验证同向，且通过 10% BY-FDR");
   await expect(topRuleCard).toContainText("训练—验证提升差距：3.0%");
   await expect(topRuleCard).toContainText("保守相对提升：2.7%");
+  const validationExamples = topRuleCard.getByText("核验最近 1 条验证命中事件");
+  await expect(validationExamples).toBeVisible();
+  await validationExamples.click();
+  await expect(topRuleCard).toContainText("20260629");
+  await expect(topRuleCard).toContainText("000002.SZ");
+  await expect(topRuleCard).toContainText("6.10%");
   await expect(page.getByRole("button", { name: "暂不可带入" })).toBeDisabled();
   await expect(page.locator(".rule-card").nth(1)).toContainText("不会交给模型猜测执行口径");
 

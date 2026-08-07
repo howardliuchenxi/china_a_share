@@ -1474,6 +1474,10 @@ table tbody tr:hover { background-color: #f1f3ee; }
   background: #f7f9f8;
   border-radius: 6px;
 }
+.event-examples { margin-top: 12px; }
+.event-examples summary { cursor: pointer; color: #35594b; font-size: 0.78rem; font-weight: 700; }
+.event-examples .table-scroll { margin-top: 8px; }
+.event-examples th, .event-examples td { padding: 7px 8px; text-align: left; white-space: nowrap; }
 .rule-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(70px, 1fr));

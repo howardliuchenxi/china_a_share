@@ -14,6 +14,7 @@ from china_a_share.application.workflow import DataQueryExecutor
 from china_a_share.core.contracts import (
     BacktestResult,
     DataQuery,
+    DiscoveryEventExample,
     QueryResult,
     QueryStatus,
 )
@@ -25,6 +26,7 @@ CALENDAR_EXTENSION_MULTIPLIER = 3
 # when even a one-session forward label can be more than ten calendar days away.
 CALENDAR_EXTENSION_MINIMUM_DAYS = 31
 HISTORICAL_FEATURE_LOOKBACK_SESSIONS = 5
+EVENT_EXAMPLE_LIMIT = 5
 OUTCOME_RULE_FIELDS = frozenset(
     {"forward_return", "future_adjusted_close", "future_trade_date"}
 )
@@ -386,7 +388,49 @@ class FactorBacktester:
             cluster_standard_error=cluster_standard_error,
             lift_standard_error=lift_standard_error,
             dependence_lag_days=dependence_lag_days,
+            event_examples=FactorBacktester._event_examples(evaluation_frame),
         )
+
+    @staticmethod
+    def _event_examples(
+        evaluation_frame: pd.DataFrame,
+    ) -> List[DiscoveryEventExample]:
+        """Return a deterministic bounded sample of recent observable events."""
+        if evaluation_frame.empty:
+            return []
+        trade_dates = evaluation_frame["trade_date"].astype(str)
+        recent_parts = []
+        remaining = EVENT_EXAMPLE_LIMIT
+        # Most studies have many securities per date, so scan dates from newest
+        # to oldest and stop once the fixed audit budget is filled. This avoids
+        # sorting every matched event for every candidate.
+        for trade_date in sorted(trade_dates.unique(), reverse=True):
+            same_day = evaluation_frame.loc[trade_dates == trade_date]
+            if "ts_code" in same_day:
+                same_day = same_day.sort_values("ts_code", kind="stable")
+            selected = same_day.head(remaining)
+            recent_parts.append(selected)
+            remaining -= len(selected)
+            if remaining == 0:
+                break
+        recent = pd.concat(recent_parts, ignore_index=True)
+        examples = []
+        for row in recent.itertuples(index=False):
+            ts_code = getattr(row, "ts_code", None)
+            future_trade_date = getattr(row, "future_trade_date", None)
+            examples.append(
+                DiscoveryEventExample(
+                    trade_date=str(row.trade_date),
+                    ts_code=None if pd.isna(ts_code) else str(ts_code),
+                    future_trade_date=(
+                        None
+                        if pd.isna(future_trade_date)
+                        else str(future_trade_date)
+                    ),
+                    forward_return=float(row.forward_return),
+                )
+            )
+        return examples
 
     @staticmethod
     def _lift_confidence_interval(
