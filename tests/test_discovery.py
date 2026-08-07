@@ -128,6 +128,7 @@ def test_research_dataset_derives_point_in_time_sequence_features():
         [expected_volatility]
     )
     assert dataset["max_drawdown_5d_pct"].tolist() == [0.0]
+    assert dataset["distance_from_5d_peak_pct"].tolist() == [0.0]
     assert dataset["positive_days_3"].tolist() == [3.0]
     assert dataset["forward_return"].tolist() == pytest.approx([1.0 / 15.0 - 1.0])
 
@@ -152,6 +153,9 @@ def test_research_dataset_derives_point_in_time_max_drawdown():
 
     assert dataset["max_drawdown_5d_pct"].tolist() == pytest.approx(
         [(8.0 / 12.0 - 1.0) * 100.0]
+    )
+    assert dataset["distance_from_5d_peak_pct"].tolist() == pytest.approx(
+        [(10.0 / 12.0 - 1.0) * 100.0]
     )
 
 
@@ -190,10 +194,12 @@ def test_sequence_features_reject_non_consecutive_security_history():
     assert pd.isna(dataset.loc["000001.SZ", "return_5d_pct"])
     assert pd.isna(dataset.loc["000001.SZ", "volatility_5d_pct"])
     assert pd.isna(dataset.loc["000001.SZ", "max_drawdown_5d_pct"])
+    assert pd.isna(dataset.loc["000001.SZ", "distance_from_5d_peak_pct"])
     assert pd.isna(dataset.loc["000001.SZ", "positive_days_3"])
     assert dataset.loc["000002.SZ", "positive_days_3"] == 3.0
     assert pd.notna(dataset.loc["000002.SZ", "volatility_5d_pct"])
     assert dataset.loc["000002.SZ", "max_drawdown_5d_pct"] == 0.0
+    assert dataset.loc["000002.SZ", "distance_from_5d_peak_pct"] == 0.0
 
 
 def test_research_dataset_resolves_forward_returns_across_a_long_market_closure():
@@ -2169,6 +2175,7 @@ def test_discovery_request_accepts_point_in_time_sequence_factors():
         val_start="20260101",
         val_end="20260630",
         factors=[
+            "distance_from_5d_peak_pct",
             "max_drawdown_5d_pct",
             "positive_days_3",
             "return_5d_pct",
@@ -2177,6 +2184,7 @@ def test_discovery_request_accepts_point_in_time_sequence_factors():
     )
 
     assert request.factors == [
+        "distance_from_5d_peak_pct",
         "max_drawdown_5d_pct",
         "positive_days_3",
         "return_5d_pct",

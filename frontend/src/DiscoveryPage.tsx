@@ -13,7 +13,7 @@ interface DiscoveryPageProps {
 
 const terminalStatuses = new Set(["succeeded", "failed"]);
 const discoveryFactorFields = new Set([
-  "amount", "circ_mv", "close", "dv_ratio", "dv_ttm", "float_share",
+  "amount", "circ_mv", "close", "distance_from_5d_peak_pct", "dv_ratio", "dv_ttm", "float_share",
   "free_share", "max_drawdown_5d_pct", "open", "pb", "pct_chg", "pe", "pe_ttm", "ps",
   "ps_ttm", "positive_days_3", "return_5d_pct", "total_mv", "total_share", "turnover_rate",
   "turnover_rate_f", "vol", "volatility_5d_pct", "volume_ratio",
@@ -25,6 +25,7 @@ const discoveryFactorLabels = new Map(
   discoveryFactorEntries.map(entry => [entry.field, entry.label]),
 );
 const unsupportedDirectApplicationFields = new Set([
+  "distance_from_5d_peak_pct",
   "max_drawdown_5d_pct",
   "positive_days_3",
   "return_5d_pct",

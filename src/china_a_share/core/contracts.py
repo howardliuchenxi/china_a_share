@@ -28,6 +28,7 @@ DISCOVERY_FACTOR_FIELDS = {
     "close",
     "dv_ratio",
     "dv_ttm",
+    "distance_from_5d_peak_pct",
     "float_share",
     "free_share",
     "max_drawdown_5d_pct",

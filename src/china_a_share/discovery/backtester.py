@@ -184,6 +184,14 @@ class FactorBacktester:
         enriched["max_drawdown_5d_pct"] = (
             (historical_prices / historical_peaks - 1.0).min(axis=1) * 100.0
         ).where(has_five_consecutive_sessions)
+        enriched["distance_from_5d_peak_pct"] = (
+            (
+                enriched["adjusted_close"]
+                / historical_peaks.iloc[:, -1]
+                - 1.0
+            )
+            * 100.0
+        ).where(has_five_consecutive_sessions)
 
         prior_rank_1 = grouped_rank.shift(1)
         prior_rank_2 = grouped_rank.shift(2)

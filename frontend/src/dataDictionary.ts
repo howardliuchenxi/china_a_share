@@ -32,6 +32,7 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "复权5日收益率", field: "return_5d_pct", description: "信号日复权收盘价相对5个市场交易日前的收益率；证券记录不连续时为空。", formula: "(当日复权收盘价 / 5个交易日前复权收盘价 - 1) * 100%", source: "A-Share Lab 衍生计算" },
   { label: "复权5日波动率", field: "volatility_5d_pct", description: "截至信号日最近5个连续市场交易日复权单日收益率的总体标准差；证券记录不连续时为空。", formula: "population_std(5 adjusted-close daily returns) * 100%", source: "A-Share Lab 衍生计算" },
   { label: "复权5日最大回撤", field: "max_drawdown_5d_pct", description: "截至信号日的5个收益区间内，复权收盘价从先前峰值到随后低点的最大跌幅；使用6个连续市场交易日价格，历史记录不连续时为空。", formula: "min(adjusted_close / running_peak - 1) * 100% over 6 closes", source: "A-Share Lab 衍生计算" },
+  { label: "复权5日峰值距离", field: "distance_from_5d_peak_pct", description: "信号日复权收盘价相对最近5个收益区间内最高复权收盘价的距离；使用6个连续市场交易日价格，历史记录不连续时为空。", formula: "(current adjusted_close / max(6 adjusted closes) - 1) * 100%", source: "A-Share Lab 衍生计算" },
   { label: "区间收益率", field: "period_return_pct", description: "股票在特定日期区间的价格变动百分比。", formula: "(期末收盘价 - 期初前一交易日收盘价) / 期初前一交易日收盘价 * 100%", source: "A-Share Lab 衍生计算" },
   { label: "收盘价", field: "close", description: "证券在该交易日的收盘价格。", formula: "-", source: "Tushare" },
   { label: "开盘价", field: "open", description: "证券在该交易日的开盘价格。", formula: "-", source: "Tushare" },
