@@ -300,27 +300,14 @@ class ASharePlanValidator:
             return plan
         normalized_prompt = prompt.casefold()
 
-        industry_matches = []
-        industry_patterns = (
-            r"(?:a股|沪深(?:两市)?)\s*([\w\u4e00-\u9fff]{1,16})行业",
-            r"(?:在|从|属于)\s*([\w\u4e00-\u9fff]{1,16})行业",
-            r"^\s*([\w\u4e00-\u9fff]{1,16})行业",
+        expected_industries = ASharePlanValidator._extract_prompt_industries(
+            normalized_prompt
         )
-        for pattern in industry_patterns:
-            industry_matches.extend(re.findall(pattern, normalized_prompt))
-        expected_industries = {
-            re.sub(
-                r"^(?:(?:在|从|属于)|a股|沪深两市|沪深)+",
-                "",
-                value,
-            ).strip()
-            for value in industry_matches
-            if value.strip()
-        }
         declared_industries = {
             str(row_filter.value).casefold().strip()
             for row_filter in intent.universe.filters
-            if row_filter.field == "industry" and row_filter.operator == "eq"
+            if row_filter.field == "industry"
+            and row_filter.operator in {"eq", "contains"}
         }
         missing_industries = expected_industries.difference(declared_industries)
         if missing_industries:
@@ -390,6 +377,48 @@ class ASharePlanValidator:
                 "Typed intent ranking direction does not match the explicit prompt."
             )
         return plan
+
+    @staticmethod
+    def normalize_prompt_classifications(prompt: str, plan: QueryPlan) -> QueryPlan:
+        """Normalize broad natural-language classifications to descendant matching."""
+        intent = plan.intent
+        if intent is None or intent.analysis_type != "rank_metric":
+            return plan
+        normalized_prompt = prompt.casefold()
+        if re.search(r"(?:精确|严格|完全)\s*(?:等于|匹配)?", normalized_prompt):
+            return plan
+        broad_industries = ASharePlanValidator._extract_prompt_industries(
+            normalized_prompt
+        )
+        for row_filter in intent.universe.filters:
+            if (
+                row_filter.field == "industry"
+                and row_filter.operator == "eq"
+                and str(row_filter.value).casefold().strip() in broad_industries
+            ):
+                row_filter.operator = "contains"
+        return plan
+
+    @staticmethod
+    def _extract_prompt_industries(prompt: str) -> set[str]:
+        """Extract explicit broad industry labels without enumerating taxonomy values."""
+        industry_matches = []
+        industry_patterns = (
+            r"(?:a股|沪深(?:两市)?)\s*([\w\u4e00-\u9fff]{1,16})行业",
+            r"(?:在|从|属于)\s*([\w\u4e00-\u9fff]{1,16})行业",
+            r"^\s*([\w\u4e00-\u9fff]{1,16})行业",
+        )
+        for pattern in industry_patterns:
+            industry_matches.extend(re.findall(pattern, prompt))
+        return {
+            re.sub(
+                r"^(?:(?:在|从|属于)|a股|沪深两市|沪深)+",
+                "",
+                value,
+            ).strip()
+            for value in industry_matches
+            if value.strip()
+        }
 
     @staticmethod
     def _parse_bounded_count(value: str) -> Optional[int]:
@@ -1684,9 +1713,15 @@ class AnalysisService:
                 )
             else:
                 plan = self._planner.plan(planning_request, operations)
-            plan = self._compile_intent(
-                self._normalize_plan_for_request(plan, planning_request.prompt)
+            normalized = self._normalize_plan_for_request(
+                plan,
+                planning_request.prompt,
             )
+            ASharePlanValidator.normalize_prompt_classifications(
+                original_prompt,
+                normalized,
+            )
+            plan = self._compile_intent(normalized)
             ASharePlanValidator.validate_prompt_intent_coverage(
                 original_prompt,
                 plan,
@@ -1720,6 +1755,10 @@ class AnalysisService:
     ) -> QueryPlan:
         """Normalize, reconcile, compile, and validate one model candidate."""
         normalized = self._normalize_plan_for_request(candidate, planning_prompt)
+        ASharePlanValidator.normalize_prompt_classifications(
+            original_prompt,
+            normalized,
+        )
         ASharePlanValidator.validate_prompt_intent_coverage(
             original_prompt,
             normalized,

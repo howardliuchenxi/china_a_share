@@ -860,7 +860,7 @@ function ResultTable({
       ) : (
         <div className="empty-result" role="status">
           <strong>{"\u672a\u67e5\u8be2\u5230\u6570\u636e"}</strong>
-          <p>{"\u8bf7\u6c42\u5df2\u6210\u529f\u53d1\u9001\u5230 Tushare\uff0c\u4f46\u8fd4\u56de\u7ed3\u679c\u4e3a\u7a7a\u3002\u8fd9\u4e0d\u8868\u793a\u4e0a\u6da8\u3001\u4e0b\u8dcc\u548c\u5e73\u76d8\u6570\u91cf\u90fd\u662f 0\u3002"}</p>
+          <p>查询已成功执行，但数据源读取或本地筛选后没有保留任何记录。</p>
           {query && (
             <dl>
               <dt>{"\u5b9e\u9645\u67e5\u8be2"}</dt>
@@ -869,8 +869,8 @@ function ResultTable({
               <dd><code>{JSON.stringify(query.params)}</code></dd>
             </dl>
           )}
-          <p>{"\u53ef\u80fd\u539f\u56e0\uff1a\u622a\u56fe\u4e2d\u7684\u80a1\u7968\u4ee3\u7801\u6216\u5b8c\u6574\u65e5\u671f\u4e0d\u6e05\u6670\uff0c\u65e5\u671f\u4e0d\u662f\u4ea4\u6613\u65e5\uff0c\u6216\u95ee\u9898\u6ca1\u6709\u8bf4\u660e\u8981\u67e5\u8be2\u7684\u6307\u6807\u3002"}</p>
-          <p>{"\u5efa\u8bae\u63d0\u95ee\uff1a\u201c\u8bc6\u522b\u622a\u56fe\u4e2d\u7684\u80a1\u7968\u4ee3\u7801\u548c\u65e5\u671f\uff0c\u67e5\u8be2\u5f53\u65e5\u5f00\u76d8\u4ef7\u3001\u6536\u76d8\u4ef7\u548c\u6da8\u8dcc\u5e45\u3002\u201d"}</p>
+          <p>可能原因：指定日期没有可用数据、指标值为空，或分类与筛选条件没有匹配数据源中的标签。</p>
+          <p>请查看查询详情中的日期、字段和过滤条件；对于行业或板块，可尝试数据源使用的更具体分类名称。</p>
         </div>
       )}
       {!isRawChild && (

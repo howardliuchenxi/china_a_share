@@ -2145,6 +2145,60 @@ def test_prompt_intent_reconciliation_accepts_matching_atomic_facts(
     assert reconciled is plan
 
 
+def test_broad_industry_prompt_normalizes_to_descendant_matching():
+    plan = QueryPlan(
+        interpretation="Rank one broad industry.",
+        intent=AnalysisIntent.model_validate(
+            {
+                "analysis_type": "rank_metric",
+                "universe": {
+                    "filters": [
+                        {"field": "industry", "operator": "eq", "value": "汽车"}
+                    ]
+                },
+                "metric": {"type": "pe", "as_of": "20260601"},
+                "ranking": {"direction": "desc", "limit": 10},
+            }
+        ),
+    )
+
+    normalized = ASharePlanValidator.normalize_prompt_classifications(
+        "A股汽车行业20260601市盈率前十的公司",
+        plan,
+    )
+
+    assert normalized.intent.universe.filters[0].operator == "contains"
+
+
+def test_explicit_exact_industry_prompt_preserves_exact_matching():
+    plan = QueryPlan(
+        interpretation="Rank one exact taxonomy label.",
+        intent=AnalysisIntent.model_validate(
+            {
+                "analysis_type": "rank_metric",
+                "universe": {
+                    "filters": [
+                        {
+                            "field": "industry",
+                            "operator": "eq",
+                            "value": "汽车整车",
+                        }
+                    ]
+                },
+                "metric": {"type": "pe", "as_of": "20260601"},
+                "ranking": {"direction": "desc", "limit": 10},
+            }
+        ),
+    )
+
+    normalized = ASharePlanValidator.normalize_prompt_classifications(
+        "行业字段精确等于汽车整车行业时，查询市盈率前10",
+        plan,
+    )
+
+    assert normalized.intent.universe.filters[0].operator == "eq"
+
+
 @pytest.mark.parametrize(
     ("intent_update", "message"),
     [
@@ -3905,6 +3959,36 @@ def test_executor_applies_generic_negative_text_and_membership_filters():
 
     assert result.status == "success"
     assert result.rows == [{"ts_code": "A", "name": "Alpha Auto", "area": "Shanghai"}]
+
+
+def test_executor_matches_broad_classification_descendants():
+    frame = pd.DataFrame(
+        [
+            {"ts_code": "A", "name": "Alpha", "industry": "汽车整车"},
+            {"ts_code": "B", "name": "Beta", "industry": "汽车零部件"},
+            {"ts_code": "C", "name": "Gamma", "industry": "银行"},
+        ]
+    )
+    query = DataQuery(
+        query_id="broad-industry",
+        operation="stock_basic",
+        fields=["ts_code", "name", "industry"],
+        purpose="Match one broad classification and its child labels.",
+        filters=[
+            {"field": "industry", "operator": "contains", "value": "汽车"}
+        ],
+    )
+
+    result = DataQueryExecutor(
+        FakeMarketDataProvider(stock_frame=frame)
+    ).execute(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert [row["ts_code"] for row in result.rows] == ["A", "B"]
 
 
 def test_negative_membership_filter_still_rejects_an_empty_set():
