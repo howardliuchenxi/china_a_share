@@ -704,6 +704,17 @@ test("discovery page submits a bounded study and renders validation evidence", a
       event_examples: [],
     },
   });
+  discoveryStatus.progress.leaderboard.push({
+    ...discoveryStatus.progress.leaderboard[0],
+    formula: "pe_ttm >= 99",
+    description: "High PE training threshold",
+    reasoning: "Generated from a training-window quantile.",
+    validation_score: -0.08,
+    p_value: 0.40,
+    q_value: 1,
+    validation_passed: false,
+    validation_reason: "fdr_not_passed",
+  });
   await page.route("**/api/discovery/tasks", route => {
     const request = route.request().postDataJSON() as { factors: string[]; minimum_trading_days: number; minimum_securities: number; minimum_outcome_coverage_pct: number };
     expect(request.factors).toContain("positive_days_3");
@@ -781,7 +792,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".headline-metrics")).toContainText("含规则样本，N=407");
   await expect(page.locator(".headline-metrics")).toContainText("保守 95% 包络 2.0% – 16.0%");
   await expect(page.locator(".headline-metrics")).toContainText("训练榜首预留验证结论");
-  await expect(page.locator(".headline-metrics")).toContainText("1 / 2 条入榜规律验证通过");
+  await expect(page.locator(".headline-metrics")).toContainText("1 / 3 条入榜规律验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("验证通过");
   await expect(page.locator(".headline-metrics")).toContainText("训练与验证同向，且通过 10% BY-FDR");
   await expect(topWindowComparison).toContainText("规则覆盖（可比事件 1200）");
@@ -864,8 +875,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topRuleCard).toContainText("000002.SZ");
   await expect(topRuleCard).toContainText("市盈率TTM=10.8 · 换手率=9.1");
   await expect(topRuleCard).toContainText("6.10%");
-  await expect(page.getByRole("button", { name: "暂不可带入" })).toBeDisabled();
   const missingValidationCard = page.locator(".rule-card").nth(1);
+  await expect(missingValidationCard.getByRole("button", { name: "暂不可带入" })).toBeDisabled();
   await expect(missingValidationCard).toContainText("不会交给模型猜测执行口径");
   await expect(missingValidationCard).toContainText("验证期暂无可观测结果");
   await expect(missingValidationCard).toContainText("验证判定：验证期有效事件数不足");
@@ -875,6 +886,13 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(missingValidationCard).toContainText("验证期收缩至训练期的 0.0%");
   await expect(missingValidationCard).toContainText("显著性未检验：证据门槛不足，按 p=1.000 计入 BY-FDR");
   await expect(missingValidationCard).not.toContainText("Student-t 提升检验 p-value");
+
+  const failedExecutableCard = page.locator(".rule-card").nth(2);
+  await expect(failedExecutableCard).toContainText("市盈率TTM ≥ 99");
+  await expect(failedExecutableCard.getByRole("button", { name: "暂不可带入" })).toBeDisabled();
+  await expect(failedExecutableCard).toContainText("带入限制：该规律未通过预留验证：未通过 10% BY-FDR");
+  await expect(page.getByText(/只对预留验证通过且分析页能够保持同一计算口径的规则开放/)).toBeVisible();
+  await expect(page.getByText(/验证失败的候选仍保留全部证据供核验，但不会作为已验证规律直接应用/)).toBeVisible();
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();

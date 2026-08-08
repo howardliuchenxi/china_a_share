@@ -453,7 +453,10 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         <div className="section-heading"><span>04</span><h2>候选规律排行榜</h2></div>
         <div className="rule-list">
           {taskStatus.progress.leaderboard.map((hypothesis, index) => {
-            const applicationLimitation = directApplicationLimitation(hypothesis.formula);
+            const applicationLimitation = directApplicationLimitation(hypothesis.formula)
+              ?? (!hypothesis.validation_passed
+                ? `该规律未通过预留验证：${validationReason(hypothesis)}`
+                : null);
             return <article className="rule-card" key={hypothesis.formula}>
             <div className="rule-rank">{String(index + 1).padStart(2, "0")}</div>
             <div className="rule-body">
@@ -476,7 +479,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
             </div>
           </article>})}
         </div>
-        <p className="research-caveat">覆盖保留比例是验证覆盖率除以训练覆盖率，用于识别规则适用人群的扩张或收缩；最大单股和最大单日事件占比分别用于识别虽满足证券数或交易日数、但仍被少数个股或市场日期主导的样本。有效交易日数按每日事件权重进行 Kish 折算，并用于 score 区间；日期越集中，该数值相对原始交易日数越低。这些指标是适用性诊断而非显著性通过门槛。“带入分析页”仅对分析页能够保持同一计算口径的字段开放，并会生成今日筛选请求；含内部复权序列特征的规则在同口径执行器完成前不会被交给模型猜测。提交普通规则后仍需经过查询规划，请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
+        <p className="research-caveat">覆盖保留比例是验证覆盖率除以训练覆盖率，用于识别规则适用人群的扩张或收缩；最大单股和最大单日事件占比分别用于识别虽满足证券数或交易日数、但仍被少数个股或市场日期主导的样本。有效交易日数按每日事件权重进行 Kish 折算，并用于 score 区间；日期越集中，该数值相对原始交易日数越低。这些指标是适用性诊断而非显著性通过门槛。“带入分析页”只对预留验证通过且分析页能够保持同一计算口径的规则开放，并会生成今日筛选请求；验证失败的候选仍保留全部证据供核验，但不会作为已验证规律直接应用。含内部复权序列特征的规则在同口径执行器完成前不会被交给模型猜测。提交普通规则后仍需经过查询规划，请在执行明细中核对公式字段、运算符和阈值是否保持一致。</p>
       </section>}
     </div>
   );
