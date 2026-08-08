@@ -597,6 +597,9 @@ def test_planner_parses_deepseek_json_plan():
     assert "\u4e2d\u56fd\u5e73\u5b89 is 601318.SH" in system_prompt
     assert "full-market request as a fan-out template" in system_prompt
     assert "return separate query results unless" in system_prompt
+    assert "Security classification constraints" in system_prompt
+    assert "filter that universe first" in system_prompt
+    assert "before sorting or limiting" in system_prompt
 
 
 def test_planner_retries_one_contract_invalid_response():
