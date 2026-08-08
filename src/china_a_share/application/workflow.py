@@ -329,6 +329,20 @@ class ASharePlanValidator:
                 + ", ".join(sorted(missing_industries))
             )
 
+        excludes_special_treatment = bool(
+            re.search(r"(?:排除|剔除|不含|非)\s*(?:\*?st)", normalized_prompt)
+        )
+        has_special_treatment_exclusion = any(
+            row_filter.field == "name"
+            and row_filter.operator == "not_contains"
+            and str(row_filter.value).casefold() == "st"
+            for row_filter in intent.universe.filters
+        )
+        if excludes_special_treatment and not has_special_treatment_exclusion:
+            raise PlanValidationError(
+                "Typed intent omitted the explicit special-treatment exclusion."
+            )
+
         for alias, accepted_metrics in RANKING_METRIC_PROMPT_ALIASES.items():
             if re.search(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", normalized_prompt):
                 if intent.metric.type not in accepted_metrics:
@@ -356,17 +370,21 @@ class ASharePlanValidator:
                     "Typed intent ranking limit does not match the explicit prompt."
                 )
 
-        descending_terms = ("最高", "最大", "最多", "降序", "top", "前")
-        ascending_terms = ("最低", "最小", "最少", "升序", "bottom", "后")
-        expected_direction = None
-        if any(term in normalized_prompt for term in descending_terms):
-            expected_direction = "desc"
-        if any(term in normalized_prompt for term in ascending_terms):
-            if expected_direction is not None:
-                raise PlanValidationError(
-                    "Prompt contains conflicting ranking directions."
-                )
+        count_pattern = r"[0-9一二两三四五六七八九十百]+"
+        has_explicit_high = bool(re.search(r"最高|最大|最多|降序", normalized_prompt))
+        has_explicit_low = bool(re.search(r"最低|最小|最少|升序", normalized_prompt))
+        if has_explicit_high and has_explicit_low:
+            raise PlanValidationError("Prompt contains conflicting ranking directions.")
+        if has_explicit_low:
             expected_direction = "asc"
+        elif has_explicit_high:
+            expected_direction = "desc"
+        elif re.search(rf"(?:bottom|后)\s*{count_pattern}", normalized_prompt):
+            expected_direction = "asc"
+        elif re.search(rf"(?:top|前)\s*{count_pattern}", normalized_prompt):
+            expected_direction = "desc"
+        else:
+            expected_direction = None
         if expected_direction and intent.ranking.direction != expected_direction:
             raise PlanValidationError(
                 "Typed intent ranking direction does not match the explicit prompt."
@@ -1475,6 +1493,7 @@ class DataQueryExecutor:
             "gt": lambda values, threshold: values > threshold,
             "ge": lambda values, threshold: values >= threshold,
             "eq": lambda values, threshold: values == threshold,
+            "ne": lambda values, threshold: values != threshold,
             "le": lambda values, threshold: values <= threshold,
             "lt": lambda values, threshold: values < threshold,
         }
@@ -1484,8 +1503,20 @@ class DataQueryExecutor:
                     f"Filter field is missing from provider data: {row_filter.field}"
                 )
             if isinstance(row_filter.value, str):
-                # Contract validation limits string predicates to exact equality.
-                mask = filtered[row_filter.field].astype("string") == row_filter.value
+                values = filtered[row_filter.field].astype("string")
+                string_operators = {
+                    "eq": lambda: values == row_filter.value,
+                    "ne": lambda: values != row_filter.value,
+                    "contains": lambda: values.str.contains(
+                        row_filter.value,
+                        regex=False,
+                    ),
+                    "not_contains": lambda: ~values.str.contains(
+                        row_filter.value,
+                        regex=False,
+                    ),
+                }
+                mask = string_operators[row_filter.operator]()
                 filtered = filtered.loc[mask.fillna(False)]
                 continue
             if isinstance(row_filter.value, list):
@@ -1493,6 +1524,8 @@ class DataQueryExecutor:
                 mask = filtered[row_filter.field].astype("string").isin(
                     row_filter.value
                 )
+                if row_filter.operator == "not_in":
+                    mask = ~mask
                 filtered = filtered.loc[mask.fillna(False)]
                 continue
             values = pd.to_numeric(filtered[row_filter.field], errors="coerce")

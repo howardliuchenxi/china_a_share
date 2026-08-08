@@ -2181,6 +2181,104 @@ def test_prompt_intent_reconciliation_rejects_dropped_atomic_facts(
         )
 
 
+def test_prompt_intent_reconciliation_requires_special_treatment_exclusion():
+    payload = {
+        "analysis_type": "rank_metric",
+        "universe": {
+            "filters": [
+                {"field": "industry", "operator": "eq", "value": "汽车"}
+            ]
+        },
+        "metric": {
+            "type": "pe",
+            "as_of": "20260601",
+            "filters": [{"field": "pe", "operator": "gt", "value": 0}],
+        },
+        "ranking": {"direction": "asc", "limit": 10},
+    }
+    missing_exclusion = QueryPlan(
+        interpretation="Rank listed automotive securities.",
+        intent=AnalysisIntent.model_validate(payload),
+    )
+
+    with pytest.raises(PlanValidationError, match="special-treatment exclusion"):
+        ASharePlanValidator.validate_prompt_intent_coverage(
+            "A股汽车行业排除ST和退市股票后，市盈率最低的10家公司",
+            missing_exclusion,
+        )
+
+    payload["universe"]["filters"].append(
+        {"field": "name", "operator": "not_contains", "value": "ST"}
+    )
+    complete = QueryPlan(
+        interpretation="Rank listed non-ST automotive securities.",
+        intent=AnalysisIntent.model_validate(payload),
+    )
+
+    assert (
+        ASharePlanValidator.validate_prompt_intent_coverage(
+            "A股汽车行业排除ST和退市股票后，市盈率最低的10家公司",
+            complete,
+        )
+        is complete
+    )
+
+
+def test_compiler_binds_generic_negative_universe_filters_before_ranking():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "rank_metric",
+            "universe": {
+                "filters": [
+                    {"field": "industry", "operator": "eq", "value": "汽车"},
+                    {
+                        "field": "name",
+                        "operator": "not_contains",
+                        "value": "ST",
+                    },
+                ]
+            },
+            "metric": {
+                "type": "pe",
+                "as_of": "20260601",
+                "filters": [{"field": "pe", "operator": "gt", "value": 0}],
+            },
+            "ranking": {"direction": "asc", "limit": 10},
+        }
+    )
+    plan = AnalysisService._compile_intent(
+        QueryPlan(
+            interpretation="Rank one listed non-ST industry universe.",
+            intent=intent,
+            requirements=[
+                {
+                    "requirement": "Apply all universe and metric predicates.",
+                    "status": "covered",
+                    "implementation": "Compile typed predicates locally.",
+                    "evidence": "The intent declares each predicate.",
+                }
+            ],
+        )
+    )
+
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(plan)
+
+    universe_query = validated.queries[1]
+    assert universe_query.params == {"list_status": "L"}
+    assert [row_filter.model_dump() for row_filter in universe_query.filters] == [
+        {"field": "industry", "operator": "eq", "value": "汽车"},
+        {"field": "name", "operator": "not_contains", "value": "ST"},
+    ]
+    assert [constraint.operator for constraint in validated.constraints] == [
+        "gt",
+        "eq",
+        "not_contains",
+    ]
+    assert validated.constraints[-1].enforcement_step_index < 3
+
+
 def test_validator_rejects_typed_ranking_with_wrong_snapshot_or_order():
     intent = AnalysisIntent.model_validate(
         {
@@ -3776,6 +3874,46 @@ def test_executor_applies_string_membership_filter():
         "000001.SZ",
         "000002.SZ",
     ]
+
+
+def test_executor_applies_generic_negative_text_and_membership_filters():
+    frame = pd.DataFrame(
+        [
+            {"ts_code": "A", "name": "Alpha Auto", "area": "Shanghai"},
+            {"ts_code": "B", "name": "ST Beta Auto", "area": "Shenzhen"},
+            {"ts_code": "C", "name": "Gamma Auto", "area": "Beijing"},
+        ]
+    )
+    query = DataQuery(
+        query_id="excluded-universe",
+        operation="stock_basic",
+        fields=["ts_code", "name", "area"],
+        purpose="Apply controlled categorical exclusions.",
+        filters=[
+            {"field": "name", "operator": "not_contains", "value": "ST"},
+            {"field": "area", "operator": "not_in", "value": ["Beijing"]},
+        ],
+    )
+
+    result = DataQueryExecutor(
+        FakeMarketDataProvider(stock_frame=frame)
+    ).execute(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.rows == [{"ts_code": "A", "name": "Alpha Auto", "area": "Shanghai"}]
+
+
+def test_negative_membership_filter_still_rejects_an_empty_set():
+    with pytest.raises(ValueError, match="must not be empty"):
+        DataFilter(
+            field="area",
+            operator="not_in",
+            value=[],
+        )
 
 
 def test_executor_calculates_period_returns():

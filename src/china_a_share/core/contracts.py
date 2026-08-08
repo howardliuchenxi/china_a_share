@@ -187,7 +187,18 @@ class DataFilter(BaseModel):
         min_length=1,
         description="Numeric result column evaluated by the filter.",
     )
-    operator: Literal["gt", "ge", "eq", "le", "lt", "in"] = Field(
+    operator: Literal[
+        "gt",
+        "ge",
+        "eq",
+        "ne",
+        "le",
+        "lt",
+        "in",
+        "not_in",
+        "contains",
+        "not_contains",
+    ] = Field(
         description="Comparison operator applied to the numeric result column.",
     )
     value: Union[float, str, List[str]] = Field(
@@ -199,15 +210,29 @@ class DataFilter(BaseModel):
     @model_validator(mode="after")
     def validate_string_operator(self) -> "DataFilter":
         """Keep text and membership predicates explicit and type-safe."""
-        if isinstance(self.value, str) and self.operator != "eq":
-            raise ValueError("string filter values require the eq operator")
+        if isinstance(self.value, str) and self.operator not in {
+            "eq",
+            "ne",
+            "contains",
+            "not_contains",
+        }:
+            raise ValueError(
+                "string filter values require an exact or contains operator"
+            )
         if isinstance(self.value, list):
-            if self.operator != "in":
-                raise ValueError("list filter values require the in operator")
+            if self.operator not in {"in", "not_in"}:
+                raise ValueError(
+                    "list filter values require an in or not_in operator"
+                )
             if not self.value:
                 raise ValueError("membership filter values must not be empty")
-        if self.operator == "in" and not isinstance(self.value, list):
-            raise ValueError("the in operator requires a list value")
+        if self.operator in {"in", "not_in"} and not isinstance(self.value, list):
+            raise ValueError("membership operators require a list value")
+        if self.operator in {"contains", "not_contains"} and not isinstance(
+            self.value,
+            str,
+        ):
+            raise ValueError("contains operators require a string value")
         return self
 
 
@@ -1193,7 +1218,18 @@ class QueryConstraint(BaseModel):
         pattern=OPERATION_NAME_PATTERN,
         description="Exact field evaluated by the executable predicate.",
     )
-    operator: Literal["gt", "ge", "eq", "le", "lt", "in"] = Field(
+    operator: Literal[
+        "gt",
+        "ge",
+        "eq",
+        "ne",
+        "le",
+        "lt",
+        "in",
+        "not_in",
+        "contains",
+        "not_contains",
+    ] = Field(
         description="Comparison operator preserved from the user requirement.",
     )
     value: Union[float, str, List[str]] = Field(
@@ -1215,15 +1251,27 @@ class QueryConstraint(BaseModel):
     @model_validator(mode="after")
     def validate_value_operator(self) -> "QueryConstraint":
         """Keep declared constraint values consistent with executable filters."""
-        if isinstance(self.value, str) and self.operator != "eq":
-            raise ValueError("string constraint values require the eq operator")
+        if isinstance(self.value, str) and self.operator not in {
+            "eq",
+            "ne",
+            "contains",
+            "not_contains",
+        }:
+            raise ValueError(
+                "string constraint values require an exact or contains operator"
+            )
         if isinstance(self.value, list):
-            if self.operator != "in" or not self.value:
+            if self.operator not in {"in", "not_in"} or not self.value:
                 raise ValueError(
-                    "constraint membership values require a non-empty in predicate"
+                    "constraint membership values require a non-empty membership predicate"
                 )
-        if self.operator == "in" and not isinstance(self.value, list):
-            raise ValueError("the in constraint operator requires a list value")
+        if self.operator in {"in", "not_in"} and not isinstance(self.value, list):
+            raise ValueError("constraint membership operators require a list value")
+        if self.operator in {"contains", "not_contains"} and not isinstance(
+            self.value,
+            str,
+        ):
+            raise ValueError("constraint contains operators require a string value")
         return self
 
 
