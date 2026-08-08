@@ -409,34 +409,8 @@ class ASharePlanValidator:
         )
 
         steps = pipeline.steps
-        limit_idx = -1
-        sort_idx = -1
-        for i, s in enumerate(steps):
-            if s.operation == "limit":
-                limit_idx = i
-            elif s.operation == "sort":
-                sort_idx = i
 
-        # 1. limit step must never occur before sort step in ranking pipelines.
-        if limit_idx != -1 and sort_idx != -1 and limit_idx < sort_idx:
-            raise PlanValidationError(
-                "Relational limit operation cannot be executed before sort in ranking pipelines."
-            )
-
-        # Candidate-independent enrichment belongs after selection so provider
-        # results are joined only to the requested ranked cohort. A join may remain
-        # before sorting only when the joined field itself defines the ranking.
-        if limit_idx != -1 and sort_idx != -1:
-            ranking_field = steps[sort_idx].field
-            for join_idx, step in enumerate(steps):
-                if step.operation != "join_fields" or not isinstance(step.fields, dict):
-                    continue
-                if ranking_field not in step.fields.values() and join_idx < limit_idx:
-                    raise PlanValidationError(
-                        "Candidate enrichment must be joined after the ranked limit."
-                    )
-
-        # 2. Prevent deriving multiple closes (start/end close) from the same source query's field close
+        # Prevent deriving multiple closes (start/end close) from the same source query's field close
         # unless different snapshots are merged using join_fields.
         has_join = any(s.operation == "join_fields" for s in steps)
         if (
@@ -2505,21 +2479,20 @@ class AnalysisService:
         )
 
     @staticmethod
-    def _compile_ranked_enrichment(
+    def _compile_composed_result(
         plan: QueryPlan,
         *,
         source_query: DataQuery,
         output_query_id: str,
-        ranking_steps: List[Dict[str, Any]],
-        enrichment_steps: List[Dict[str, Any]],
+        steps: List[Dict[str, Any]],
         output_descriptions: Dict[str, str],
     ) -> None:
-        """Build one trusted rank-then-enrich pipeline and its final contract."""
+        """Build one trusted ordered pipeline and its final answer contract."""
         plan.result_pipeline = ResultPipeline.model_validate(
             {
                 "source_query_id": source_query.query_id,
                 "output_query_id": output_query_id,
-                "steps": ranking_steps + enrichment_steps,
+                "steps": steps,
             }
         )
         plan.answer_contract = AnswerContract.model_validate(
@@ -2601,11 +2574,11 @@ class AnalysisService:
         output_query_id = "limit_up_count_return_ranking"
         plan.intent = None
         plan.queries = [event_query, return_query]
-        AnalysisService._compile_ranked_enrichment(
+        AnalysisService._compile_composed_result(
             plan,
             source_query=event_query,
             output_query_id=output_query_id,
-            ranking_steps=[
+            steps=[
                 {
                     "operation": "aggregate",
                     "group_by": ["ts_code"],
@@ -2623,8 +2596,6 @@ class AnalysisService:
                     "direction": "desc",
                 },
                 {"operation": "limit", "count": result_limit},
-            ],
-            enrichment_steps=[
                 {
                     "operation": "join_fields",
                     "right_source_query_id": return_query.query_id,
@@ -2720,19 +2691,17 @@ class AnalysisService:
         price_query.fields = ["ts_code", "trade_date", "close"]
         price_query.transform = "period_return_by_ts_code"
         price_query.params.pop("ts_code", None)
-        AnalysisService._compile_ranked_enrichment(
+        AnalysisService._compile_composed_result(
             plan,
             source_query=valuation_query,
             output_query_id="valuation_period_return",
-            ranking_steps=[
+            steps=[
                 {
                     "operation": "sort",
                     "field": valuation_field,
                     "direction": valuation_direction,
                 },
                 {"operation": "limit", "count": existing_limit or 20},
-            ],
-            enrichment_steps=[
                 {
                     "operation": "join_fields",
                     "right_source_query_id": price_query.query_id,
@@ -2779,19 +2748,17 @@ class AnalysisService:
             ),
             20,
         )
-        AnalysisService._compile_ranked_enrichment(
+        AnalysisService._compile_composed_result(
             plan,
             source_query=price_query,
             output_query_id="volume_turnover_ranking",
-            ranking_steps=[
+            steps=[
                 {
                     "operation": "sort",
                     "field": "vol",
                     "direction": "desc",
                 },
                 {"operation": "limit", "count": existing_limit or 20},
-            ],
-            enrichment_steps=[
                 {
                     "operation": "join_fields",
                     "right_source_query_id": basic_query.query_id,

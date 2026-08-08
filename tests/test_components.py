@@ -1713,40 +1713,84 @@ def test_workflow_uses_daily_volume_and_joins_same_day_turnover():
     }
 
 
-def test_validator_rejects_enrichment_before_candidate_selection():
+def test_composed_result_supports_filter_join_filter_and_second_join():
     plan = make_daily_plan()
-    plan.queries.append(
-        DataQuery(
-            query_id="enrichment",
-            operation="daily_basic",
-            params={"trade_date": "20260806"},
-            fields=["ts_code", "turnover_rate"],
-            purpose="Retrieve an enrichment metric.",
-        )
+    valuation_query = DataQuery(
+        query_id="valuation-enrichment",
+        operation="daily_basic",
+        params={"trade_date": "20260806"},
+        fields=["ts_code", "pe"],
+        purpose="Retrieve valuation enrichment.",
     )
-    plan.result_pipeline = ResultPipeline.model_validate(
-        {
-            "source_query_id": plan.queries[0].query_id,
-            "output_query_id": "ranked-enrichment",
-            "steps": [
-                {
-                    "operation": "join_fields",
-                    "right_source_query_id": "enrichment",
-                    "join_on": ["ts_code"],
-                    "fields": {"turnover_rate": "turnover_rate"},
-                    "cardinality": "many_to_one",
-                },
-                {"operation": "sort", "field": "change", "direction": "desc"},
-                {"operation": "limit", "count": 10},
-            ],
-        }
+    turnover_query = DataQuery(
+        query_id="turnover-enrichment",
+        operation="daily_basic",
+        params={"trade_date": "20260806"},
+        fields=["ts_code", "turnover_rate"],
+        purpose="Retrieve turnover enrichment.",
+    )
+    plan.queries.extend((valuation_query, turnover_query))
+
+    AnalysisService._compile_composed_result(
+        plan,
+        source_query=plan.queries[0],
+        output_query_id="filtered-multi-stage-result",
+        steps=[
+            {
+                "operation": "filter",
+                "field": "change",
+                "comparison": "gt",
+                "value": 0,
+            },
+            {
+                "operation": "join_fields",
+                "right_source_query_id": valuation_query.query_id,
+                "join_on": ["ts_code"],
+                "fields": {"pe": "pe"},
+                "cardinality": "many_to_one",
+            },
+            {
+                "operation": "filter",
+                "field": "pe",
+                "comparison": "lt",
+                "value": 20,
+            },
+            {
+                "operation": "join_fields",
+                "right_source_query_id": turnover_query.query_id,
+                "join_on": ["ts_code"],
+                "fields": {"turnover_rate": "turnover_rate"},
+                "cardinality": "many_to_one",
+            },
+            {
+                "operation": "filter",
+                "field": "turnover_rate",
+                "comparison": "gt",
+                "value": 1,
+            },
+            {"operation": "sort", "field": "change", "direction": "desc"},
+            {"operation": "limit", "count": 10},
+        ],
+        output_descriptions={
+            "ts_code": "A-share security code.",
+            "change": "Price change used for ranking.",
+            "pe": "Price-to-earnings ratio used for filtering.",
+            "turnover_rate": "Turnover rate used for filtering.",
+        },
     )
 
-    with pytest.raises(
-        PlanValidationError,
-        match="Candidate enrichment must be joined after the ranked limit",
-    ):
-        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    assert [step.operation for step in validated.result_pipeline.steps] == [
+        "filter",
+        "join_fields",
+        "filter",
+        "join_fields",
+        "filter",
+        "sort",
+        "limit",
+    ]
+    assert validated.answer_contract.result_query_id == "filtered-multi-stage-result"
 
 
 def test_validator_allows_join_before_selection_when_enrichment_is_ranked():
@@ -1787,7 +1831,7 @@ def test_validator_allows_join_before_selection_when_enrichment_is_ranked():
     assert validated.result_pipeline.output_query_id == "joined-metric-ranking"
 
 
-def test_ranked_enrichment_compiler_supports_multiple_metrics():
+def test_composed_result_compiler_supports_multiple_metrics():
     plan = make_daily_plan()
     valuation_query = DataQuery(
         query_id="valuation-metric",
@@ -1805,15 +1849,13 @@ def test_ranked_enrichment_compiler_supports_multiple_metrics():
     )
     plan.queries.extend((valuation_query, turnover_query))
 
-    AnalysisService._compile_ranked_enrichment(
+    AnalysisService._compile_composed_result(
         plan,
         source_query=plan.queries[0],
         output_query_id="multi-metric-ranking",
-        ranking_steps=[
+        steps=[
             {"operation": "sort", "field": "change", "direction": "desc"},
             {"operation": "limit", "count": 5},
-        ],
-        enrichment_steps=[
             {
                 "operation": "join_fields",
                 "right_source_query_id": valuation_query.query_id,
