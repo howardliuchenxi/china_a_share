@@ -444,7 +444,7 @@ class ResultPipelineExecutor:
             ordered = frame.sort_values(
                 step.group_by + [step.order_by],
                 kind="mergesort",
-            ).copy()
+            ).reset_index(drop=True)
             numeric = pd.to_numeric(ordered[step.field], errors="coerce")
             rolling = (
                 numeric.groupby(
@@ -624,8 +624,8 @@ class ResultPipelineExecutor:
                         pd.NaT,
                     )
                 )
-            ordered[step.output_field] = None
-            ordered[step.matched_date_output_field] = None
+            matched_values = [None] * len(ordered)
+            matched_dates = [None] * len(ordered)
             for _, indexes in ordered.groupby(
                 step.group_by,
                 sort=False,
@@ -640,14 +640,12 @@ class ResultPipelineExecutor:
                     target = ordered.at[row_index, "_target_date"]
                     match_index = group_date_indexes.get(target)
                     if match_index is not None:
-                        ordered.at[row_index, step.output_field] = ordered.at[
-                            match_index,
-                            step.field,
-                        ]
-                        ordered.at[
-                            row_index,
-                            step.matched_date_output_field,
-                        ] = target.strftime("%Y%m%d")
+                        matched_values[row_index] = ordered.at[match_index, step.field]
+                        matched_dates[row_index] = target.strftime("%Y%m%d")
+            # Assign complete columns once. Repeated scalar writes force pandas to
+            # rebuild object blocks and become prohibitively slow on market-wide data.
+            ordered[step.output_field] = matched_values
+            ordered[step.matched_date_output_field] = matched_dates
             return ordered.drop(columns=["_target_date"]).reset_index(drop=True)
         if step.operation == "compare_fields":
             result = frame.copy()

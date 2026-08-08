@@ -716,6 +716,12 @@ class ExecutionNode(BaseModel):
         min_length=1,
         description="Unique result identifier produced by this execution node.",
     )
+    purpose: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+        description="Human-readable business purpose of this execution node.",
+    )
     kind: Literal["query", "compute"] = Field(
         description="Whether the node calls the provider or applies one local operator.",
     )

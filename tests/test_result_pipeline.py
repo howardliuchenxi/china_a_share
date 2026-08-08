@@ -736,6 +736,54 @@ def test_pipeline_matches_a_global_trading_session_offset():
     assert result.rows[2]["next_close"] is None
 
 
+def test_pipeline_matches_offsets_for_market_wide_data_without_scalar_writes():
+    security_count = 500
+    trading_dates = [f"202601{day:02d}" for day in range(1, 21)]
+    rows = [
+        {
+            "ts_code": f"{security:06d}.SZ",
+            "trade_date": trade_date,
+            "close": float(day),
+        }
+        for security in range(security_count)
+        for day, trade_date in enumerate(trading_dates, start=1)
+    ]
+    source = QueryResult(
+        query_id="daily",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=rows,
+        row_count=len(rows),
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "daily",
+            "output_query_id": "next-session",
+            "steps": [
+                {
+                    "operation": "match_at_offset",
+                    "field": "close",
+                    "output_field": "next_close",
+                    "matched_date_output_field": "next_trade_date",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "offset_value": 1,
+                    "offset_unit": "trading_session",
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.row_count == security_count * len(trading_dates)
+    assert result.rows[0]["next_close"] == 2.0
+    assert result.rows[0]["next_trade_date"] == "20260102"
+    assert result.rows[-1]["next_close"] is None
+    assert result.rows[-1]["next_trade_date"] is None
+
+
 def test_result_pipeline_exists_in_source():
     source = QueryResult(
         query_id="daily",

@@ -10,11 +10,29 @@ from china_a_share.core.contracts import (
     AnalysisStatus,
     DataCacheRecord,
     DataQuery,
+    ExecutionNode,
     QueryPlan,
     QueryResult,
     QueryStatus,
     ServiceError,
 )
+
+
+def test_execution_node_accepts_optional_planner_purpose():
+    node = ExecutionNode(
+        node_id="daily-prices",
+        purpose="Retrieve daily prices for the requested period.",
+        kind="query",
+        query=DataQuery(
+            query_id="daily-prices",
+            operation="daily",
+            purpose="Retrieve daily prices.",
+            params={"trade_date": "20260717"},
+            fields=["ts_code", "close"],
+        ),
+    )
+
+    assert node.purpose == "Retrieve daily prices for the requested period."
 
 
 def test_data_cache_record_serializes_successful_response():
