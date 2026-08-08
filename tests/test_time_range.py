@@ -32,6 +32,10 @@ def test_consecutive_session_counts_are_structured(prompt, expected):
     [
         ("连续两天涨停后第三天上涨的概率", (1, "trading_session")),
         ("过去一个月二连板第三日的平均收益", (1, "trading_session")),
+        (
+            "A股20260101～20260601连续涨停2天的情况下，第三天上涨、下跌的概率",
+            (1, "trading_session"),
+        ),
         ("两个交易日连板后下一天还涨的频率", (1, "trading_session")),
         ("三连板次日收益分布", (1, "trading_session")),
     ],

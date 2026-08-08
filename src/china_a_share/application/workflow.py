@@ -2750,6 +2750,24 @@ class AnalysisService:
             ),
             None,
         )
+        requests_positive_probability = "上涨" in prompt
+        requests_negative_probability = "下跌" in prompt
+        summarized_fields = {
+            aggregation.field
+            for aggregation in (
+                existing_summary.aggregations if existing_summary else []
+            )
+        }
+        summarized_comparisons = {
+            step.comparison
+            for step in existing_steps
+            if step.operation == "compare_scalar"
+            and step.output_field in summarized_fields
+        }
+        requested_outcomes_covered = (
+            (not requests_positive_probability or "gt" in summarized_comparisons)
+            and (not requests_negative_probability or "lt" in summarized_comparisons)
+        )
         if (
             horizon is not None
             and existing_pipeline is not None
@@ -2761,6 +2779,7 @@ class AnalysisService:
             and existing_steps.index(existing_outcome)
             < existing_steps.index(existing_streak_filter)
             and existing_summary is not None
+            and requested_outcomes_covered
         ):
             # Preserve the planner's requested outcome and aggregation. The backend
             # owns market-sequence correctness, but it must not replace a valid mean,
@@ -2898,6 +2917,13 @@ class AnalysisService:
                         "value": 0,
                     },
                     {
+                        "operation": "compare_scalar",
+                        "field": "outcome_return",
+                        "output_field": "outcome_is_negative",
+                        "comparison": "lt",
+                        "value": 0,
+                    },
+                    {
                         "operation": "derive",
                         "field": "outcome_return",
                         "output_field": "outcome_return_pct",
@@ -2910,6 +2936,8 @@ class AnalysisService:
                             {"output_field": "event_count", "field": "outcome_return", "function": "count"},
                             {"output_field": "positive_event_count", "field": "outcome_is_positive", "function": "sum"},
                             {"output_field": "positive_event_ratio", "field": "outcome_is_positive", "function": "mean"},
+                            {"output_field": "negative_event_count", "field": "outcome_is_negative", "function": "sum"},
+                            {"output_field": "negative_event_ratio", "field": "outcome_is_negative", "function": "mean"},
                             {"output_field": "average_return_pct", "field": "outcome_return_pct", "function": "mean"},
                             {"output_field": "minimum_return_pct", "field": "outcome_return_pct", "function": "min"},
                             {"output_field": "maximum_return_pct", "field": "outcome_return_pct", "function": "max"},

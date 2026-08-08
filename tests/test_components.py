@@ -1241,6 +1241,41 @@ def test_workflow_compiles_limit_up_streak_pipeline_from_request_semantics():
     )
 
 
+def test_workflow_compiles_separated_ordinal_outcome_with_both_probabilities():
+    plan = make_daily_plan()
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.queries.append(
+        DataQuery(
+            query_id="limit-ups",
+            operation="limit_list_d",
+            params={},
+            fields=["ts_code", "trade_date"],
+            purpose="Retrieve limit-up membership.",
+        )
+    )
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "A股20260101～20260601连续涨停2天的情况下，第三天上涨、下跌的概率",
+    )
+
+    assert len(result.result_pipeline.steps) > 3
+    offset = next(
+        step
+        for step in result.result_pipeline.steps
+        if step.operation == "match_at_offset"
+    )
+    assert (offset.offset_value, offset.offset_unit) == (
+        1,
+        "trading_session",
+    )
+    summary = result.result_pipeline.steps[-1]
+    assert summary.operation == "summarize"
+    assert {item.output_field for item in summary.aggregations}.issuperset(
+        {"positive_event_ratio", "negative_event_ratio"}
+    )
+
+
 def test_workflow_preserves_planner_selected_limit_up_aggregation():
     plan = make_daily_plan()
     plan.queries[0].fields = ["ts_code", "trade_date", "close"]

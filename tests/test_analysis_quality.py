@@ -209,6 +209,8 @@ def test_replayed_event_study_is_normalized_validated_and_executed_end_to_end():
             "event_count": 1,
             "positive_event_count": 1,
             "positive_event_ratio": 1.0,
+            "negative_event_count": 0,
+            "negative_event_ratio": 0.0,
             "average_return_pct": 25.0,
             "minimum_return_pct": 25.0,
             "maximum_return_pct": 25.0,

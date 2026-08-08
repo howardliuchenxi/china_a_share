@@ -36,7 +36,7 @@ FUTURE_HORIZON_PATTERN = re.compile(
     r"(?P<unit>个?交易日|天|周|个?月|季度|年)"
 )
 SEQUENCE_OUTCOME_PATTERN = re.compile(
-    r"(?:连板|涨停)(?:后)?第(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
+    r"第(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
     r"(?:个)?(?:交易日|天|日)"
 )
 CONSECUTIVE_SESSION_PATTERNS = (
