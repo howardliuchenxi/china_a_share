@@ -2499,6 +2499,44 @@ def test_planner_accepts_fixed_non_top10_float_retail_proxy():
     assert result.queries[0].transform == "cr10_float_trend"
     assert len(result.limitations) == 1
     assert "non_top10_float_ratio" in result.limitations[0]
+    assert len(result.clarification_options) == 2
+
+
+def test_planner_removes_redundant_join_key_identity_mapping():
+    plan = QueryPlan(
+        interpretation="Join the latest shareholder disclosure to company names.",
+        queries=[
+            DataQuery(
+                query_id="holders",
+                operation="stk_holdernumber",
+                fields=["ts_code", "ann_date", "end_date", "holder_num"],
+                purpose="Retrieve shareholder counts.",
+            ),
+            DataQuery(
+                query_id="companies",
+                operation="stock_basic",
+                fields=["ts_code", "name"],
+                purpose="Retrieve company names.",
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "holders",
+            "output_query_id": "ranked-holders",
+            "steps": [
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": "companies",
+                    "join_on": ["ts_code"],
+                    "fields": {"ts_code": "ts_code", "name": "name"},
+                    "cardinality": "many_to_one",
+                }
+            ],
+        },
+    )
+
+    DeepSeekQueryPlanner._normalize_join_field_mappings(plan)
+
+    assert plan.result_pipeline.steps[0].fields == {"name": "name"}
 
 
 def test_planner_preserves_universe_query_for_generic_retail_ranking_pipeline():

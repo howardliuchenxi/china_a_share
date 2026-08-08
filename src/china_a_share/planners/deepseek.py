@@ -35,6 +35,16 @@ RETAIL_PROXY_DISCLOSURE = (
     "It includes retail holders and institutions outside the disclosed top ten "
     "and is not a verified individual-investor ownership percentage."
 )
+RETAIL_PROXY_CLARIFICATION_OPTIONS = [
+    (
+        "\u6309\u975e\u524d\u5341\u5927\u6d41\u901a\u80a1\u4e1c\u6301\u80a1\u5360\u6bd4\u4f5c\u4e3a\u6563\u6237\u6bd4\u4f8b\u4ee3\u7406\uff0c"
+        "\u67e5\u8be2\u5168A\u80a1\u6700\u65b0\u62ab\u9732\u6570\u636eTop10\u3002"
+    ),
+    (
+        "\u6309\u6700\u65b0\u62ab\u9732\u7684\u80a1\u4e1c\u6237\u6570\u4ece\u9ad8\u5230\u4f4e\u6392\u5e8f\uff0c"
+        "\u67e5\u8be2\u5168A\u80a1\u80a1\u4e1c\u6237\u6570Top10\u3002"
+    ),
+]
 
 
 def build_query_plan_system_prompt(
@@ -302,6 +312,7 @@ class DeepSeekQueryPlanner:
     def _finalize_plan(self, plan: QueryPlan) -> None:
         """Apply deterministic normalization before semantic validation."""
         self._normalize_fields(plan)
+        self._normalize_join_field_mappings(plan)
         self._normalize_limit_list_queries(plan)
         self._normalize_event_study_source(plan)
         self._normalize_pipeline_query_windows(plan)
@@ -330,11 +341,38 @@ class DeepSeekQueryPlanner:
         if plan.feasibility != "supported":
             return
 
-        if any(
+        uses_retail_proxy = any(
             query.transform == "cr10_float_trend"
             for query in plan.queries
-        ) and RETAIL_PROXY_DISCLOSURE not in plan.limitations:
+        )
+        if uses_retail_proxy and RETAIL_PROXY_DISCLOSURE not in plan.limitations:
             plan.limitations.append(RETAIL_PROXY_DISCLOSURE)
+        if uses_retail_proxy and not plan.clarification_options:
+            plan.clarification_options.extend(
+                RETAIL_PROXY_CLARIFICATION_OPTIONS
+            )
+
+    @staticmethod
+    def _normalize_join_field_mappings(plan: QueryPlan) -> None:
+        """Remove redundant identity copies of keys from join steps."""
+        pipeline = plan.result_pipeline
+        if pipeline is None:
+            return
+        normalized_steps = []
+        for step in pipeline.steps:
+            if step.operation != "join_fields" or not isinstance(step.fields, dict):
+                normalized_steps.append(step)
+                continue
+            # Join keys already survive a left join. Copying a key onto itself would
+            # overwrite an existing column without adding any information.
+            step.fields = {
+                source: output
+                for source, output in step.fields.items()
+                if not (source in step.join_on and source == output)
+            }
+            if step.fields:
+                normalized_steps.append(step)
+        pipeline.steps = normalized_steps
 
     def _decode_plan_response(self, response: Any) -> QueryPlan:
         """Validate one planner response before any deterministic normalization."""
