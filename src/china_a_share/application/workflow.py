@@ -2700,6 +2700,83 @@ class AnalysisService:
             plan.queries.append(event_query)
         if price_query is None or event_query is None:
             return
+        existing_pipeline = plan.result_pipeline
+        existing_steps = existing_pipeline.steps if existing_pipeline else []
+        existing_membership = next(
+            (
+                step
+                for step in existing_steps
+                if step.operation == "match_source"
+                and step.right_source_query_id == event_query.query_id
+            ),
+            None,
+        )
+        existing_streak = next(
+            (
+                step
+                for step in existing_steps
+                if step.operation == "rolling_sum"
+                and step.window == streak_length
+            ),
+            None,
+        )
+        existing_outcome = next(
+            (
+                step
+                for step in existing_steps
+                if step.operation == "match_at_offset"
+                and horizon is not None
+                and (step.offset_value, step.offset_unit) == horizon
+            ),
+            None,
+        )
+        existing_streak_filter = next(
+            (
+                step
+                for step in existing_steps
+                if existing_streak is not None
+                and step.operation == "filter"
+                and step.field == existing_streak.output_field
+                and step.comparison == "eq"
+                and step.value == streak_length
+            ),
+            None,
+        )
+        existing_summary = next(
+            (
+                step
+                for step in existing_steps
+                if step.operation in {"aggregate", "summarize"}
+            ),
+            None,
+        )
+        if (
+            horizon is not None
+            and existing_pipeline is not None
+            and existing_pipeline.source_query_id == price_query.query_id
+            and existing_membership is not None
+            and existing_streak is not None
+            and existing_outcome is not None
+            and existing_streak_filter is not None
+            and existing_steps.index(existing_outcome)
+            < existing_steps.index(existing_streak_filter)
+            and existing_summary is not None
+        ):
+            # Preserve the planner's requested outcome and aggregation. The backend
+            # owns market-sequence correctness, but it must not replace a valid mean,
+            # probability, count, or other executable analytical result with a fixed
+            # report shape.
+            existing_streak.field = existing_membership.output_field
+            existing_streak.min_periods = streak_length
+            existing_streak.require_consecutive = True
+            for field in ("ts_code", "trade_date", existing_outcome.field):
+                if field not in price_query.fields:
+                    price_query.fields.append(field)
+            for field in existing_membership.join_on:
+                if field not in event_query.fields:
+                    event_query.fields.append(field)
+            event_query.params["limit_type"] = "U"
+            return
         if horizon is None:
             if any(token in prompt for token in ("\u4e0b\u4e00\u5929", "\u6b21\u65e5")):
                 horizon = (1, "trading_session")

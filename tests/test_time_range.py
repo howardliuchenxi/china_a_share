@@ -27,6 +27,22 @@ def test_consecutive_session_counts_are_structured(prompt, expected):
     assert resolve_consecutive_session_count(prompt) == expected
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("连续两天涨停后第三天上涨的概率", (1, "trading_session")),
+        ("过去一个月二连板第三日的平均收益", (1, "trading_session")),
+        ("两个交易日连板后下一天还涨的频率", (1, "trading_session")),
+        ("三连板次日收益分布", (1, "trading_session")),
+    ],
+)
+def test_sequence_outcome_phrases_resolve_to_a_trading_session_offset(
+    prompt,
+    expected,
+):
+    assert resolve_future_horizon(prompt) == expected
+
+
 def test_year_and_half_year_resolve_to_distinct_windows():
     end_date = date(2026, 7, 27)
 

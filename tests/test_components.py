@@ -871,7 +871,7 @@ def test_planner_normalizes_event_summary_syntax():
     assert summary_step.aggregations[1].function == "mean"
 
 
-def test_planner_compiles_event_study_to_a_deterministic_pipeline():
+def test_planner_preserves_a_valid_event_study_aggregation():
     plan = make_daily_plan().model_dump(mode="json")
     plan["queries"][0]["params"] = {
         "start_date": "20260105",
@@ -894,7 +894,7 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
         }
     )
     plan["result_pipeline"] = {
-        "source_query_id": "limit-ups",
+        "source_query_id": "market_direction",
         "output_query_id": "event-study",
         "steps": [
             {
@@ -913,22 +913,6 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
                 "min_periods": 1,
             },
             {
-                "operation": "compare_scalar",
-                "field": "streak_count",
-                "comparison": "eq",
-                "value": 3,
-            },
-            {
-                "operation": "match_at_offset",
-                "field": "trade_date",
-                "output_field": "future_date",
-                "matched_date_output_field": "matched_date",
-                "group_by": ["ts_code"],
-                "order_by": "trade_date",
-                "offset_value": 1,
-                "offset_unit": "month",
-            },
-            {
                 "operation": "match_at_offset",
                 "field": "close",
                 "output_field": "future_close",
@@ -939,12 +923,39 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
                 "offset_unit": "month",
             },
             {
-                "operation": "aggregate",
-                "group_by": ["ts_code"],
+                "operation": "filter",
+                "field": "streak_count",
+                "comparison": "eq",
+                "value": 3,
+            },
+            {"operation": "drop_missing", "fields": ["future_close"]},
+            {
+                "operation": "derive",
+                "field": "future_close",
+                "right_field": "close",
+                "output_field": "outcome_ratio",
+                "arithmetic_operator": "divide",
+            },
+            {
+                "operation": "derive",
+                "field": "outcome_ratio",
+                "output_field": "outcome_return",
+                "arithmetic_operator": "subtract",
+                "value": 1,
+            },
+            {
+                "operation": "derive",
+                "field": "outcome_return",
+                "output_field": "outcome_return_pct",
+                "arithmetic_operator": "multiply",
+                "value": 100,
+            },
+            {
+                "operation": "summarize",
                 "aggregations": [
                     {
-                        "output_field": "future_return",
-                        "field": "future_return",
+                        "output_field": "average_return_pct",
+                        "field": "outcome_return_pct",
                         "function": "mean",
                     }
                 ],
@@ -964,7 +975,6 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
         "drop_missing",
         "derive",
         "derive",
-        "compare_scalar",
         "derive",
         "summarize",
     ]
@@ -975,8 +985,9 @@ def test_planner_compiles_event_study_to_a_deterministic_pipeline():
     assert steps[5].field == "future_close"
     assert steps[5].right_field == "close"
     assert steps[6].arithmetic_operator == "subtract"
-    assert steps[-1].aggregations[2].field == "outcome_is_positive"
-    assert steps[-1].aggregations[2].function == "mean"
+    assert len(steps[-1].aggregations) == 1
+    assert steps[-1].aggregations[0].output_field == "average_return_pct"
+    assert steps[-1].aggregations[0].function == "mean"
     assert result.result_pipeline.source_query_id == "market_direction"
     source_query = next(
         query for query in result.queries if query.query_id == "market_direction"
@@ -1228,6 +1239,98 @@ def test_workflow_compiles_limit_up_streak_pipeline_from_request_semantics():
         1,
         "trading_session",
     )
+
+
+def test_workflow_preserves_planner_selected_limit_up_aggregation():
+    plan = make_daily_plan()
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.queries.append(
+        DataQuery(
+            query_id="limit-ups",
+            operation="limit_list_d",
+            params={},
+            fields=["ts_code", "trade_date"],
+            purpose="Retrieve limit-up membership.",
+        )
+    )
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "average-third-day-return",
+            "steps": [
+                {
+                    "operation": "match_source",
+                    "right_source_query_id": "limit-ups",
+                    "join_on": ["ts_code", "trade_date"],
+                    "output_field": "is_limit_up",
+                },
+                {
+                    "operation": "rolling_sum",
+                    "field": "is_limit_up",
+                    "output_field": "streak_count",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "window": 2,
+                },
+                {
+                    "operation": "match_at_offset",
+                    "field": "close",
+                    "output_field": "future_close",
+                    "matched_date_output_field": "future_trade_date",
+                    "group_by": ["ts_code"],
+                    "order_by": "trade_date",
+                    "offset_value": 1,
+                    "offset_unit": "trading_session",
+                },
+                {
+                    "operation": "filter",
+                    "field": "streak_count",
+                    "comparison": "eq",
+                    "value": 2,
+                },
+                {"operation": "drop_missing", "fields": ["future_close"]},
+                {
+                    "operation": "derive",
+                    "field": "future_close",
+                    "right_field": "close",
+                    "output_field": "return_ratio",
+                    "arithmetic_operator": "divide",
+                },
+                {
+                    "operation": "derive",
+                    "field": "return_ratio",
+                    "output_field": "return_value",
+                    "arithmetic_operator": "subtract",
+                    "value": 1,
+                },
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "average_return",
+                            "field": "return_value",
+                            "function": "mean",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "过去一个月二连板第三日的平均收益",
+    )
+
+    assert result.result_pipeline.output_query_id == "average-third-day-return"
+    summary = result.result_pipeline.steps[-1]
+    assert summary.operation == "summarize"
+    assert [item.output_field for item in summary.aggregations] == [
+        "average_return"
+    ]
+    rolling = result.result_pipeline.steps[1]
+    assert rolling.min_periods == 2
+    assert rolling.require_consecutive is True
 
 
 def test_workflow_compiles_market_period_return_at_security_grain():

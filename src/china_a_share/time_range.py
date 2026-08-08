@@ -35,6 +35,10 @@ FUTURE_HORIZON_PATTERN = re.compile(
     r"(?:接下来|未来|之后|此后)(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
     r"(?P<unit>个?交易日|天|周|个?月|季度|年)"
 )
+SEQUENCE_OUTCOME_PATTERN = re.compile(
+    r"(?:连板|涨停)(?:后)?第(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
+    r"(?:个)?(?:交易日|天|日)"
+)
 CONSECUTIVE_SESSION_PATTERNS = (
     re.compile(
         r"连续(?:涨停)?(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
@@ -97,22 +101,34 @@ def resolve_future_horizon(prompt: str) -> Optional[Tuple[int, str]]:
     """Resolve a forward calendar horizon without choosing an outcome metric."""
     normalized = re.sub(r"\s+", "", prompt)
     match = FUTURE_HORIZON_PATTERN.search(normalized)
-    if match is None:
+    if match is not None:
+        token = match.group("amount")
+        amount = int(token) if token.isdigit() else _parse_chinese_number(token)
+        units = {
+            "天": "day",
+            "周": "week",
+            "月": "month",
+            "个月": "month",
+            "季度": "month",
+            "年": "year",
+            "交易日": "trading_session",
+            "个交易日": "trading_session",
+        }
+        unit = match.group("unit")
+        return (amount * 3, "month") if unit == "季度" else (amount, units[unit])
+    if any(token in normalized for token in ("下一天", "次日", "下一交易日")):
+        return (1, "trading_session")
+    sequence_match = SEQUENCE_OUTCOME_PATTERN.search(normalized)
+    streak_length = resolve_consecutive_session_count(normalized)
+    if sequence_match is None or streak_length is None:
         return None
-    token = match.group("amount")
-    amount = int(token) if token.isdigit() else _parse_chinese_number(token)
-    units = {
-        "天": "day",
-        "周": "week",
-        "月": "month",
-        "个月": "month",
-        "季度": "month",
-        "年": "year",
-        "交易日": "trading_session",
-        "个交易日": "trading_session",
-    }
-    unit = match.group("unit")
-    return (amount * 3, "month") if unit == "季度" else (amount, units[unit])
+    token = sequence_match.group("amount")
+    sequence_day = int(token) if token.isdigit() else _parse_chinese_number(token)
+    return (
+        (sequence_day - streak_length, "trading_session")
+        if sequence_day > streak_length
+        else None
+    )
 
 
 def resolve_consecutive_session_count(prompt: str) -> Optional[int]:
