@@ -27,7 +27,7 @@ DEEPSEEK_PLANNER_NAME = "deepseek"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEEPSEEK_TIMEOUT_SECONDS = 180
-DEEPSEEK_MAX_OUTPUT_TOKENS = 2_000
+DEEPSEEK_MAX_OUTPUT_TOKENS = 6_000
 DEEPSEEK_MAX_ATTEMPTS = 3
 DEEPSEEK_RETRY_DELAY_SECONDS = 1
 RETAIL_PROXY_DISCLOSURE = (
@@ -87,6 +87,14 @@ def build_query_plan_system_prompt(
         "that grain, and join each additional metric by stable keys. A joined query "
         "must satisfy its declared key cardinality. The answer_contract must reference "
         "the final pipeline output and include every requested final field. "
+        "For arbitrary multi-stage analysis, use execution_plan instead of queries, "
+        "result_pipeline, or intent. Give every node a unique node_id. Query nodes "
+        "perform provider reads. Compute nodes apply exactly one allowlisted step to "
+        "their first input_result_id and declare every additional right-side result as "
+        "another input. A query node may use one upstream result as a bounded fan-out "
+        "by setting fanout_input_field and fanout_param; use this when an intermediate "
+        "candidate set must drive per-security provider calls. Dependencies must be "
+        "acyclic, and result_node_id must identify the final answer. "
         "Use result_pipeline for deterministic calculations instead of inventing "
         "specialized transforms. Pipelines may compose latest_by_group, derive, "
         "drop_missing, filter, sort, limit, quantile_filter, aggregate, rolling_mean, "

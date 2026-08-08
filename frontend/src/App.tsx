@@ -1451,6 +1451,19 @@ export default function App() {
                   <code>{JSON.stringify({ fields: query.fields, filters: query.filters, aggregations: query.aggregations })}</code>
                 </div>
               ))}
+              {response.plan.execution_plan?.nodes.map((node) => (
+                <div className="query-card" key={node.node_id}>
+                  <strong>{node.node_id} · {node.kind}</strong>
+                  <p>{node.query?.purpose ?? node.step?.operation}</p>
+                  <code>{JSON.stringify({
+                    inputs: node.input_result_ids,
+                    query: node.query,
+                    step: node.step,
+                    fanout_input_field: node.fanout_input_field,
+                    fanout_param: node.fanout_param,
+                  })}</code>
+                </div>
+              ))}
               </>
             ) : (
               <p className="empty-output">完成分析后，可在这里查看经过校验的接口、参数和执行记录。</p>

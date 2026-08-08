@@ -85,6 +85,63 @@ export interface AnswerContract {
   outputs: AnswerOutput[];
 }
 
+export interface ResultPipelineStepContract {
+  /** Allowlisted operation executed by the backend. */
+  operation:
+    | "latest_by_group"
+    | "derive"
+    | "drop_missing"
+    | "filter"
+    | "sort"
+    | "limit"
+    | "quantile_filter"
+    | "aggregate"
+    | "rolling_mean"
+    | "rolling_sum"
+    | "shift"
+    | "match_at_offset"
+    | "match_source"
+    | "exists_in_source"
+    | "join_fields"
+    | "compare_fields"
+    | "compare_scalar"
+    | "summarize";
+  field?: string | null;
+  output_field?: string | null;
+  matched_date_output_field?: string | null;
+  right_field?: string | null;
+  right_source_query_id?: string | null;
+  join_on?: string[];
+  fields?: string[] | Record<string, string>;
+  cardinality?: "one_to_one" | "many_to_one" | null;
+  group_by?: string[];
+  order_by?: string | null;
+  direction?: "asc" | "desc";
+  arithmetic_operator?:
+    | "add"
+    | "subtract"
+    | "multiply"
+    | "divide"
+    | "constant_minus"
+    | null;
+  comparison?: "gt" | "ge" | "eq" | "le" | "lt" | null;
+  value?: number | string | null;
+  count?: number | null;
+  quantile?: number | null;
+  window?: number | null;
+  min_periods?: number | null;
+  periods?: number | null;
+  offset_value?: number | null;
+  offset_unit?: "day" | "week" | "month" | "year" | "trading_session" | null;
+  require_consecutive?: boolean;
+  aggregations?: Array<{
+    output_field: string;
+    label?: string | null;
+    field: string;
+    function: "count" | "sum" | "mean" | "min" | "max";
+  }>;
+}
+
 export interface QueryPlan {
   /** Fixed market boundary enforced for every analysis request. */
   market: "A_SHARE";
@@ -107,62 +164,32 @@ export interface QueryPlan {
     /** Identifier assigned to the transformed result. */
     output_query_id: string;
     /** Ordered allowlisted relational operations. */
-    steps: Array<{
-      /** Allowlisted operation executed by the backend. */
-      operation:
-        | "latest_by_group"
-        | "derive"
-        | "drop_missing"
-        | "filter"
-        | "sort"
-        | "limit"
-        | "quantile_filter"
-        | "aggregate"
-        | "rolling_mean"
-        | "rolling_sum"
-        | "shift"
-        | "match_at_offset"
-        | "match_source"
-        | "compare_fields"
-        | "compare_scalar"
-        | "summarize";
-      field?: string | null;
-      output_field?: string | null;
-      matched_date_output_field?: string | null;
-      right_field?: string | null;
-      right_source_query_id?: string | null;
-      join_on?: string[];
-      fields?: string[];
-      group_by?: string[];
-      order_by?: string | null;
-      direction?: "asc" | "desc";
-      arithmetic_operator?:
-        | "add"
-        | "subtract"
-        | "multiply"
-        | "divide"
-        | "constant_minus"
-        | null;
-      comparison?: "gt" | "ge" | "eq" | "le" | "lt" | null;
-      value?: number | string | null;
-      count?: number | null;
-      quantile?: number | null;
-      window?: number | null;
-      min_periods?: number | null;
-      periods?: number | null;
-      offset_value?: number | null;
-      offset_unit?: "day" | "week" | "month" | "year" | "trading_session" | null;
-      require_consecutive?: boolean;
-      aggregations?: Array<{
-        output_field: string;
-        label?: string | null;
-        field: string;
-        function: "count" | "sum" | "mean" | "min" | "max";
-      }>;
-    }>;
+    steps: ResultPipelineStepContract[];
   } | null;
   /** Ordered provider-native reads required to satisfy the request. */
   queries: DataQuery[];
+  /** Optional dependency graph for arbitrary multi-stage analysis. */
+  execution_plan?: {
+    /** Bounded provider-query and deterministic-compute nodes. */
+    nodes: Array<{
+      /** Unique result identifier produced by this node. */
+      node_id: string;
+      /** Whether this node calls Tushare or applies one local operator. */
+      kind: "query" | "compute";
+      /** Upstream node results required before execution. */
+      input_result_ids: string[];
+      /** Provider request for a query node. */
+      query?: DataQuery | null;
+      /** Allowlisted local operation for a compute node. */
+      step?: ResultPipelineStepContract | null;
+      /** Upstream field whose values drive provider fan-out. */
+      fanout_input_field?: string | null;
+      /** Provider parameter bound from the upstream field. */
+      fanout_param?: string | null;
+    }>;
+    /** Node containing the final user-visible result. */
+    result_node_id: string;
+  } | null;
 }
 
 export interface DecisionTraceStep {

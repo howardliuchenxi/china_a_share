@@ -18,6 +18,7 @@ from china_a_share.core.contracts import (
     AnalysisResponse,
     DataQuery,
     DecisionTraceStep,
+    ExecutionNode,
     QueryPlan,
     QueryResult,
     QueryStatus,
@@ -152,6 +153,9 @@ class ASharePlanValidator:
             raise PlanValidationError(
                 f"A query plan may contain at most {MAX_QUERIES_PER_ANALYSIS} calls."
             )
+        if plan.execution_plan is not None:
+            self._validate_execution_plan(plan)
+            return plan
         pipeline_fields = None
         if plan.result_pipeline:
             pipeline_fields = self._validate_result_pipeline(plan)
@@ -204,6 +208,144 @@ class ASharePlanValidator:
                         f"Aggregation field is not requested: {aggregation.field}"
                     )
         return plan
+
+    def _validate_execution_plan(self, plan: QueryPlan) -> None:
+        """Validate DAG topology, provider calls, field lineage, and final output."""
+        execution_plan = plan.execution_plan
+        node_by_id = {node.node_id: node for node in execution_plan.nodes}
+        if len(node_by_id) != len(execution_plan.nodes):
+            raise PlanValidationError("Execution node identifiers must be unique.")
+        if execution_plan.result_node_id not in node_by_id:
+            raise PlanValidationError(
+                "Execution result_node_id does not match a planned node."
+            )
+        for node in execution_plan.nodes:
+            missing_inputs = set(node.input_result_ids).difference(node_by_id)
+            if missing_inputs:
+                raise PlanValidationError(
+                    f"Execution node {node.node_id} has unknown inputs: "
+                    + ", ".join(sorted(missing_inputs))
+                )
+            if node.node_id in node.input_result_ids:
+                raise PlanValidationError(
+                    f"Execution node {node.node_id} cannot depend on itself."
+                )
+
+        required_ids = {execution_plan.result_node_id}
+        pending_ids = [execution_plan.result_node_id]
+        while pending_ids:
+            current_id = pending_ids.pop()
+            for input_id in node_by_id[current_id].input_result_ids:
+                if input_id not in required_ids:
+                    required_ids.add(input_id)
+                    pending_ids.append(input_id)
+        unused_ids = set(node_by_id).difference(required_ids)
+        if unused_ids:
+            raise PlanValidationError(
+                "Execution plan contains nodes that do not contribute to the result: "
+                + ", ".join(sorted(unused_ids))
+            )
+
+        ordered_nodes = []
+        resolved_ids: set[str] = set()
+        unresolved = list(execution_plan.nodes)
+        while unresolved:
+            ready = [
+                node
+                for node in unresolved
+                if set(node.input_result_ids).issubset(resolved_ids)
+            ]
+            if not ready:
+                raise PlanValidationError("Execution plan contains a dependency cycle.")
+            for node in ready:
+                ordered_nodes.append(node)
+                resolved_ids.add(node.node_id)
+                unresolved.remove(node)
+
+        fields_by_id: Dict[str, set[str]] = {}
+        for node in ordered_nodes:
+            if node.kind == "query":
+                query = node.query
+                if query.query_id != node.node_id:
+                    raise PlanValidationError(
+                        f"Query node {node.node_id} must use the same query_id."
+                    )
+                if not self._provider.supports(query.operation):
+                    raise PlanValidationError(
+                        f"Operation is outside the {self._provider.name} catalog: "
+                        f"{query.operation}"
+                    )
+                for field in query.fields:
+                    if not FIELD_NAME_PATTERN.fullmatch(field):
+                        raise PlanValidationError(f"Invalid output field: {field}")
+                validation_params = dict(query.params)
+                if node.fanout_param is not None:
+                    # Validate the fully bound provider contract without mutating the
+                    # template that will receive real upstream values at execution.
+                    validation_params[node.fanout_param] = "000001.SZ"
+                self._validate_params(query.operation, validation_params)
+                output_fields = set(
+                    TRANSFORM_RESULT_FIELDS.get(query.transform, set(query.fields))
+                )
+                if node.fanout_input_field is not None:
+                    upstream_fields = fields_by_id[node.input_result_ids[0]]
+                    if node.fanout_input_field not in upstream_fields:
+                        raise PlanValidationError(
+                            f"Fan-out node {node.node_id} references unavailable field: "
+                            f"{node.fanout_input_field}"
+                        )
+                    output_fields.add(node.fanout_input_field)
+                fields_by_id[node.node_id] = output_fields
+                continue
+
+            primary_input_id = node.input_result_ids[0]
+            step = node.step
+            if (
+                step.right_source_query_id is not None
+                and step.right_source_query_id not in node.input_result_ids[1:]
+            ):
+                raise PlanValidationError(
+                    f"Compute node {node.node_id} must declare its right source as an input."
+                )
+            pseudo_queries = [
+                DataQuery(
+                    query_id=input_id,
+                    operation="execution_node",
+                    fields=sorted(fields_by_id[input_id]),
+                    purpose="Validate execution-node field lineage.",
+                )
+                for input_id in node.input_result_ids
+            ]
+            pseudo_plan = QueryPlan.model_construct(
+                market="A_SHARE",
+                interpretation="Validate execution-node field lineage.",
+                feasibility="supported",
+                requirements=plan.requirements,
+                limitations=[],
+                clarification_options=[],
+                queries=pseudo_queries,
+                result_pipeline=ResultPipeline(
+                    source_query_id=primary_input_id,
+                    output_query_id=node.node_id,
+                    steps=[step],
+                ),
+            )
+            fields_by_id[node.node_id] = self._validate_result_pipeline(pseudo_plan)
+
+        contract = plan.answer_contract
+        if contract is not None:
+            if contract.result_query_id != execution_plan.result_node_id:
+                raise PlanValidationError(
+                    "Answer contract must reference the execution plan result node."
+                )
+            missing_fields = {
+                output.field for output in contract.outputs
+            }.difference(fields_by_id[execution_plan.result_node_id])
+            if missing_fields:
+                raise PlanValidationError(
+                    "Final execution result does not satisfy the answer contract; "
+                    "missing fields: " + ", ".join(sorted(missing_fields))
+                )
 
     @staticmethod
     def _validate_result_pipeline(plan: QueryPlan) -> set[str]:
@@ -1306,7 +1448,14 @@ class AnalysisService:
                 error=ServiceError(source="system", message=message),
             )
 
-        if self._needs_fanout(validated_plan):
+        if validated_plan.execution_plan is not None:
+            results = self._execute_execution_plan(
+                validated_plan,
+                api_route=api_route,
+                request_id=request_id,
+                progress_callback=progress_callback,
+            )
+        elif self._needs_fanout(validated_plan):
             results = self._execute_with_fanout(
                 validated_plan,
                 api_route=api_route,
@@ -1424,6 +1573,11 @@ class AnalysisService:
     @staticmethod
     def _needs_dynamic_security_fanout(plan: QueryPlan) -> bool:
         """Detect plans that require dynamic per-security provider calls."""
+        if plan.execution_plan is not None:
+            return any(
+                node.kind == "query" and node.fanout_input_field is not None
+                for node in plan.execution_plan.nodes
+            )
         has_universe = any(
             q.operation in UNIVERSE_OPERATIONS for q in plan.queries
         )
@@ -1446,6 +1600,204 @@ class AnalysisService:
         return (
             AnalysisService._needs_dynamic_security_fanout(plan)
             or has_daily_range
+        )
+
+    def _execute_execution_plan(
+        self,
+        plan: QueryPlan,
+        *,
+        api_route: str,
+        request_id: str,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> List[QueryResult]:
+        """Execute a validated dependency graph in deterministic topological order."""
+        execution_plan = plan.execution_plan
+        unresolved = list(execution_plan.nodes)
+        results_by_id: Dict[str, QueryResult] = {}
+        while unresolved:
+            ready = [
+                node
+                for node in unresolved
+                if set(node.input_result_ids).issubset(results_by_id)
+            ]
+            if not ready:
+                raise RuntimeError("Validated execution plan has no runnable node.")
+            for node in ready:
+                logger.info(
+                    "execution_node_started request_id=%s node_id=%s kind=%s",
+                    request_id,
+                    node.node_id,
+                    node.kind,
+                )
+                if node.kind == "query" and node.fanout_input_field is None:
+                    result = self._executor.execute(
+                        node.query,
+                        api_route=api_route,
+                        request_id=request_id,
+                    )
+                elif node.kind == "query":
+                    result = self._execute_candidate_fanout_node(
+                        node,
+                        results_by_id[node.input_result_ids[0]],
+                        api_route=api_route,
+                        request_id=request_id,
+                        progress_callback=progress_callback,
+                    )
+                else:
+                    source = results_by_id[node.input_result_ids[0]]
+                    failed_input = next(
+                        (
+                            results_by_id[input_id]
+                            for input_id in node.input_result_ids
+                            if results_by_id[input_id].status != QueryStatus.SUCCESS
+                        ),
+                        None,
+                    )
+                    if failed_input is not None:
+                        result = QueryResult(
+                            query_id=node.node_id,
+                            provider=self._provider.name,
+                            operation="execution_node",
+                            status=QueryStatus.ERROR,
+                            error=failed_input.error,
+                        )
+                    else:
+                        try:
+                            result = self._result_pipeline_executor.execute(
+                                ResultPipeline(
+                                    source_query_id=source.query_id,
+                                    output_query_id=node.node_id,
+                                    steps=[node.step],
+                                ),
+                                source,
+                                results_by_id,
+                            )
+                        except Exception as exc:
+                            logger.exception(
+                                "execution_node_failed request_id=%s node_id=%s",
+                                request_id,
+                                node.node_id,
+                            )
+                            result = QueryResult(
+                                query_id=node.node_id,
+                                provider=self._provider.name,
+                                operation="execution_node",
+                                status=QueryStatus.ERROR,
+                                error=ServiceError(source="system", message=str(exc)),
+                            )
+                results_by_id[node.node_id] = result
+                logger.info(
+                    "execution_node_completed request_id=%s node_id=%s "
+                    "status=%s row_count=%s",
+                    request_id,
+                    node.node_id,
+                    result.status,
+                    result.row_count,
+                )
+                unresolved.remove(node)
+        return [results_by_id[execution_plan.result_node_id]]
+
+    def _execute_candidate_fanout_node(
+        self,
+        node: ExecutionNode,
+        source: QueryResult,
+        *,
+        api_route: str,
+        request_id: str,
+        progress_callback: Optional[Callable[[int, int], None]],
+    ) -> QueryResult:
+        """Execute one provider template over distinct values from an upstream result."""
+        if source.status != QueryStatus.SUCCESS:
+            return QueryResult(
+                query_id=node.node_id,
+                provider=self._provider.name,
+                operation=node.query.operation,
+                status=QueryStatus.ERROR,
+                error=source.error,
+            )
+        values = sorted(
+            {
+                str(row[node.fanout_input_field])
+                for row in source.rows
+                if row.get(node.fanout_input_field) is not None
+            }
+        )
+        if len(values) > MAX_DYNAMIC_HOLDER_QUERIES:
+            return QueryResult(
+                query_id=node.node_id,
+                provider=self._provider.name,
+                operation=node.query.operation,
+                status=QueryStatus.ERROR,
+                error=ServiceError(
+                    source="system",
+                    message=(
+                        f"Candidate fan-out ({len(values)}) exceeds the limit "
+                        f"({MAX_DYNAMIC_HOLDER_QUERIES})."
+                    ),
+                ),
+            )
+        if progress_callback:
+            progress_callback(0, len(values))
+        logger.info(
+            "candidate_fanout_started request_id=%s node_id=%s candidate_count=%s",
+            request_id,
+            node.node_id,
+            len(values),
+        )
+
+        def _fetch(value: str) -> QueryResult:
+            query = node.query.model_copy(deep=True)
+            query.query_id = f"{node.node_id}-{value}"
+            query.params[node.fanout_param] = value
+            return self._executor.execute(
+                query,
+                api_route=api_route,
+                request_id=request_id,
+            )
+
+        rows: List[Dict[str, Any]] = []
+        errors: List[QueryResult] = []
+        with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
+            for index, result in enumerate(pool.map(_fetch, values), start=1):
+                if result.status == QueryStatus.SUCCESS:
+                    value = values[index - 1]
+                    for row in result.rows:
+                        row.setdefault(node.fanout_input_field, value)
+                    rows.extend(result.rows)
+                else:
+                    errors.append(result)
+                if progress_callback:
+                    progress_callback(index, len(values))
+        if errors:
+            logger.error(
+                "candidate_fanout_failed request_id=%s node_id=%s error_count=%s",
+                request_id,
+                node.node_id,
+                len(errors),
+            )
+            return QueryResult(
+                query_id=node.node_id,
+                provider=self._provider.name,
+                operation=node.query.operation,
+                status=QueryStatus.ERROR,
+                error=errors[0].error,
+            )
+        logger.info(
+            "candidate_fanout_completed request_id=%s node_id=%s "
+            "candidate_count=%s row_count=%s",
+            request_id,
+            node.node_id,
+            len(values),
+            len(rows),
+        )
+        return QueryResult(
+            query_id=node.node_id,
+            provider=self._provider.name,
+            operation=node.query.operation,
+            status=QueryStatus.SUCCESS,
+            columns=list(dict.fromkeys(node.query.fields + [node.fanout_input_field])),
+            rows=rows,
+            row_count=len(rows),
         )
 
     def _execute_with_fanout(
@@ -1843,6 +2195,10 @@ class AnalysisService:
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
+        if plan.execution_plan is not None:
+            # The planner owns DAG business semantics; local code only validates and
+            # executes the declared nodes without applying prompt-specific compilers.
+            return plan
         if "\u5206\u7ea2\u603b\u989d" in prompt and "\u4e0d\u63a5\u53d7\u6bcf\u80a1" in prompt:
             plan.feasibility = "unsupported"
             plan.intent = None
@@ -3236,6 +3592,21 @@ class AnalysisService:
         prompt: str,
     ) -> QueryPlan:
         """Ensure planned ranges and temporal operators preserve trusted input."""
+        planned_queries = list(plan.queries)
+        planned_steps = list(
+            plan.result_pipeline.steps if plan.result_pipeline else []
+        )
+        if plan.execution_plan is not None:
+            planned_queries.extend(
+                node.query
+                for node in plan.execution_plan.nodes
+                if node.kind == "query"
+            )
+            planned_steps.extend(
+                node.step
+                for node in plan.execution_plan.nodes
+                if node.kind == "compute"
+            )
         normalized_prompt = prompt.lower()
         requests_limit_up = (
             "涨停" in prompt
@@ -3260,7 +3631,7 @@ class AnalysisService:
             and plan.feasibility == "supported"
             and not any(
                 query.operation == "limit_list_d"
-                for query in plan.queries
+                for query in planned_queries
             )
         ):
             raise PlanValidationError(
@@ -3276,9 +3647,7 @@ class AnalysisService:
         ):
             rolling_steps = [
                 step
-                for step in (
-                    plan.result_pipeline.steps if plan.result_pipeline else []
-                )
+                for step in planned_steps
                 if step.operation == "rolling_sum"
             ]
             if not any(
@@ -3296,7 +3665,7 @@ class AnalysisService:
             return plan
         matching_steps = [
             step
-            for step in (plan.result_pipeline.steps if plan.result_pipeline else [])
+            for step in planned_steps
             if step.operation == "match_at_offset"
             and (step.offset_value, step.offset_unit) == horizon
         ]
@@ -3309,13 +3678,13 @@ class AnalysisService:
             streak_output = rolling_steps[0].output_field
             outcome_index = next(
                 index
-                for index, step in enumerate(plan.result_pipeline.steps)
+                for index, step in enumerate(planned_steps)
                 if step in matching_steps
             )
             streak_filter_index = next(
                 (
                     index
-                    for index, step in enumerate(plan.result_pipeline.steps)
+                    for index, step in enumerate(planned_steps)
                     if step.operation == "filter"
                     and step.field == streak_output
                     and step.comparison == "eq"
@@ -3340,9 +3709,9 @@ class AnalysisService:
         source_query = next(
             (
                 query
-                for query in plan.queries
-                if plan.result_pipeline
-                and query.query_id == plan.result_pipeline.source_query_id
+                for query in planned_queries
+                if query.params.get("start_date")
+                and query.params.get("end_date")
             ),
             None,
         )
@@ -3493,7 +3862,14 @@ class AnalysisService:
             and plan.intent.metric.window.end > completed
         ):
             plan.intent.metric.window.end = completed
-        for query in plan.queries:
+        queries = list(plan.queries)
+        if plan.execution_plan is not None:
+            queries.extend(
+                node.query
+                for node in plan.execution_plan.nodes
+                if node.kind == "query"
+            )
+        for query in queries:
             if (
                 query.operation
                 in {

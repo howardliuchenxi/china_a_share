@@ -64,6 +64,14 @@ containing provider-neutral operation names, parameters, requested fields,
 purposes, and optional controlled aggregations. The local backend validates and
 executes that plan. Market-data result rows are not sent back to DeepSeek.
 
+Multi-stage requests use a bounded execution DAG. Query nodes perform direct or
+candidate-driven provider reads, while compute nodes apply one allowlisted
+relational operator to upstream results. The backend validates acyclic
+dependencies, provider contracts, field lineage, join cardinality, the final
+answer contract, and fan-out limits before issuing any provider call. This lets
+intermediate filters drive later Tushare queries without embedding business
+phrases or fixed stage counts in the executor.
+
 The application core depends on two replaceable ports:
 
 - `QueryPlanner` translates natural language into a `QueryPlan`; DeepSeek is

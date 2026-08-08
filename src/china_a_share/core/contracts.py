@@ -707,6 +707,82 @@ class AnswerContract(BaseModel):
         return self
 
 
+class ExecutionNode(BaseModel):
+    """One provider-query or deterministic-compute node in an execution graph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(
+        min_length=1,
+        description="Unique result identifier produced by this execution node.",
+    )
+    kind: Literal["query", "compute"] = Field(
+        description="Whether the node calls the provider or applies one local operator.",
+    )
+    input_result_ids: List[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Upstream node results required before this node can execute.",
+    )
+    query: Optional[DataQuery] = Field(
+        default=None,
+        description="Provider query executed by a query node.",
+    )
+    step: Optional[ResultPipelineStep] = Field(
+        default=None,
+        description="Single allowlisted relational operation executed by a compute node.",
+    )
+    fanout_input_field: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Upstream field whose distinct values drive a query-node fan-out.",
+    )
+    fanout_param: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Provider parameter populated from each fan-out input value.",
+    )
+
+    @model_validator(mode="after")
+    def validate_node_contract(self) -> "ExecutionNode":
+        """Require an exact query or compute payload and complete fan-out metadata."""
+        if self.kind == "query":
+            if self.query is None or self.step is not None:
+                raise ValueError("query nodes require query and prohibit step")
+            has_fanout_field = self.fanout_input_field is not None
+            has_fanout_param = self.fanout_param is not None
+            if has_fanout_field != has_fanout_param:
+                raise ValueError("query-node fan-out requires both field and parameter")
+            if has_fanout_field and len(self.input_result_ids) != 1:
+                raise ValueError("fan-out query nodes require exactly one upstream result")
+            if not has_fanout_field and self.input_result_ids:
+                raise ValueError("ordinary query nodes cannot depend on upstream results")
+        else:
+            if self.step is None or self.query is not None:
+                raise ValueError("compute nodes require step and prohibit query")
+            if not self.input_result_ids:
+                raise ValueError("compute nodes require at least one upstream result")
+            if self.fanout_input_field is not None or self.fanout_param is not None:
+                raise ValueError("compute nodes cannot declare provider fan-out")
+        return self
+
+
+class ExecutionPlan(BaseModel):
+    """Validated directed acyclic graph of provider and compute nodes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: List[ExecutionNode] = Field(
+        min_length=1,
+        max_length=32,
+        description="Execution nodes whose dependencies form one bounded DAG.",
+    )
+    result_node_id: str = Field(
+        min_length=1,
+        description="Node identifier containing the final user-visible result.",
+    )
+
+
 class QueryPlan(BaseModel):
     """Structured A-share retrieval plan produced from one user request."""
 
@@ -756,17 +832,31 @@ class QueryPlan(BaseModel):
         default_factory=list,
         description="Ordered provider-native reads required to satisfy the request.",
     )
+    execution_plan: Optional[ExecutionPlan] = Field(
+        default=None,
+        description="Optional dependency graph for arbitrary multi-stage analysis.",
+    )
 
     @model_validator(mode="after")
     def validate_feasibility(self) -> "QueryPlan":
         """Reject executable unsupported plans and empty supported plans."""
-        if self.feasibility == "supported" and not self.queries:
-            raise ValueError("supported plans must contain at least one query")
+        if self.feasibility == "supported" and not (
+            self.queries or self.execution_plan
+        ):
+            raise ValueError("supported plans must contain queries or an execution plan")
         if self.feasibility == "unsupported":
-            if self.queries:
-                raise ValueError("unsupported plans must not contain queries")
+            if self.queries or self.execution_plan:
+                raise ValueError(
+                    "unsupported plans must not contain queries or execution plans"
+                )
             if not self.limitations:
                 raise ValueError("unsupported plans must explain their limitations")
+        if self.execution_plan is not None and (
+            self.queries or self.result_pipeline or self.intent
+        ):
+            raise ValueError(
+                "execution plans cannot be combined with legacy queries, pipelines, or intent"
+            )
         return self
 
 

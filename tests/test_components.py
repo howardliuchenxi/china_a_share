@@ -22,6 +22,8 @@ from china_a_share.core.contracts import (
     DataFilter,
     DataOperation,
     DataQuery,
+    ExecutionNode,
+    ExecutionPlan,
     QueryPlan,
     QueryResult,
     RequirementCoverage,
@@ -1894,6 +1896,265 @@ def test_composed_result_compiler_supports_multiple_metrics():
         "pe",
         "turnover_rate",
     }
+
+
+def test_execution_dag_drives_queries_from_intermediate_candidates():
+    class DagProvider:
+        name = "tushare"
+
+        def __init__(self):
+            self.calls = []
+
+        def supports(self, operation):
+            return operation in {"daily", "daily_basic", "top10_floatholders"}
+
+        def search_operations(self, prompt):
+            return []
+
+        def query(
+            self,
+            operation,
+            params,
+            fields,
+            *,
+            api_route,
+            request_id,
+            query_id,
+        ):
+            self.calls.append((operation, dict(params)))
+            if operation == "daily":
+                return pd.DataFrame(
+                    [
+                        {"ts_code": "000001.SZ", "change": 2.0},
+                        {"ts_code": "000002.SZ", "change": 1.0},
+                        {"ts_code": "600001.SH", "change": -1.0},
+                    ]
+                )
+            if operation == "daily_basic":
+                pe = {"000001.SZ": 12.0, "000002.SZ": 28.0}[params["ts_code"]]
+                return pd.DataFrame([{"pe": pe}])
+            return pd.DataFrame([{"hold_ratio": 10.0}, {"hold_ratio": 20.0}])
+
+    plan = QueryPlan(
+        interpretation="Filter candidates, query valuation, filter again, and summarize holders.",
+        requirements=[
+            {
+                "requirement": "Apply sequential candidate-driven analysis.",
+                "status": "covered",
+                "implementation": "Execute a validated dependency graph.",
+                "evidence": "Every query and compute node declares its dependencies.",
+            }
+        ],
+        answer_contract=AnswerContract.model_validate(
+            {
+                "result_query_id": "holder-summary",
+                "result_kind": "table",
+                "outputs": [
+                    {
+                        "field": "ts_code",
+                        "description": "A-share security code.",
+                    },
+                    {
+                        "field": "average_hold_ratio",
+                        "description": "Mean disclosed holder ratio in percent.",
+                    },
+                ],
+            }
+        ),
+        execution_plan=ExecutionPlan(
+            result_node_id="holder-summary",
+            nodes=[
+                ExecutionNode(
+                    node_id="holder-summary",
+                    kind="compute",
+                    input_result_ids=["holder-details"],
+                    step=ResultPipelineStep.model_validate(
+                        {
+                            "operation": "aggregate",
+                            "group_by": ["ts_code"],
+                            "aggregations": [
+                                {
+                                    "output_field": "average_hold_ratio",
+                                    "field": "hold_ratio",
+                                    "function": "mean",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+                ExecutionNode(
+                    node_id="market",
+                    kind="query",
+                    query=DataQuery(
+                        query_id="market",
+                        operation="daily",
+                        params={"trade_date": "20260717"},
+                        fields=["ts_code", "change"],
+                        purpose="Retrieve the initial market candidates.",
+                    ),
+                ),
+                ExecutionNode(
+                    node_id="positive-candidates",
+                    kind="compute",
+                    input_result_ids=["market"],
+                    step=ResultPipelineStep(
+                        operation="filter",
+                        field="change",
+                        comparison="gt",
+                        value=0,
+                    ),
+                ),
+                ExecutionNode(
+                    node_id="valuations",
+                    kind="query",
+                    input_result_ids=["positive-candidates"],
+                    query=DataQuery(
+                        query_id="valuations",
+                        operation="daily_basic",
+                        fields=["pe"],
+                        purpose="Retrieve valuation for each surviving candidate.",
+                    ),
+                    fanout_input_field="ts_code",
+                    fanout_param="ts_code",
+                ),
+                ExecutionNode(
+                    node_id="low-pe-candidates",
+                    kind="compute",
+                    input_result_ids=["valuations"],
+                    step=ResultPipelineStep(
+                        operation="filter",
+                        field="pe",
+                        comparison="lt",
+                        value=20,
+                    ),
+                ),
+                ExecutionNode(
+                    node_id="holder-details",
+                    kind="query",
+                    input_result_ids=["low-pe-candidates"],
+                    query=DataQuery(
+                        query_id="holder-details",
+                        operation="top10_floatholders",
+                        fields=["hold_ratio"],
+                        purpose="Retrieve holder rows for the filtered candidates.",
+                    ),
+                    fanout_input_field="ts_code",
+                    fanout_param="ts_code",
+                ),
+            ],
+        ),
+    )
+    provider = DagProvider()
+
+    class StaticDagPlanner:
+        name = "static-dag"
+
+        def plan(self, request, candidate_operations):
+            return plan
+
+    service = AnalysisService(
+        planner=StaticDagPlanner(),
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+
+    response = service.analyze(
+        "dag-request",
+        AnalysisRequest(prompt="Run the multi-stage analysis."),
+        api_route="/api/analysis",
+        progress_callback=lambda completed, total: None,
+    )
+
+    assert response.status == "success", response.model_dump()
+    assert response.results[0].query_id == "holder-summary"
+    assert response.results[0].rows == [
+        {"ts_code": "000001.SZ", "average_hold_ratio": 15.0}
+    ]
+    assert [call for call in provider.calls if call[0] == "daily_basic"] == [
+        ("daily_basic", {"ts_code": "000001.SZ"}),
+        ("daily_basic", {"ts_code": "000002.SZ"}),
+    ]
+    assert [call for call in provider.calls if call[0] == "top10_floatholders"] == [
+        ("top10_floatholders", {"ts_code": "000001.SZ"})
+    ]
+
+
+def test_execution_dag_rejects_cycles_before_provider_calls():
+    plan = QueryPlan(
+        interpretation="Reject cyclic execution dependencies.",
+        requirements=[
+            {
+                "requirement": "Validate graph topology.",
+                "status": "covered",
+                "implementation": "Run deterministic dependency validation.",
+                "evidence": "Execution nodes declare every upstream result.",
+            }
+        ],
+        execution_plan=ExecutionPlan(
+            result_node_id="node-a",
+            nodes=[
+                ExecutionNode(
+                    node_id="node-a",
+                    kind="compute",
+                    input_result_ids=["node-b"],
+                    step=ResultPipelineStep(
+                        operation="filter",
+                        field="value",
+                        comparison="gt",
+                        value=0,
+                    ),
+                ),
+                ExecutionNode(
+                    node_id="node-b",
+                    kind="compute",
+                    input_result_ids=["node-a"],
+                    step=ResultPipelineStep(
+                        operation="filter",
+                        field="value",
+                        comparison="lt",
+                        value=10,
+                    ),
+                ),
+            ],
+        ),
+    )
+
+    with pytest.raises(PlanValidationError, match="dependency cycle"):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_execution_dag_rejects_unknown_dependencies():
+    plan = QueryPlan(
+        interpretation="Reject an unknown execution dependency.",
+        requirements=[
+            {
+                "requirement": "Validate graph dependencies.",
+                "status": "covered",
+                "implementation": "Resolve every declared upstream result.",
+                "evidence": "Unknown node identifiers are not executable.",
+            }
+        ],
+        execution_plan=ExecutionPlan(
+            result_node_id="filtered",
+            nodes=[
+                ExecutionNode(
+                    node_id="filtered",
+                    kind="compute",
+                    input_result_ids=["missing-source"],
+                    step=ResultPipelineStep(
+                        operation="filter",
+                        field="value",
+                        comparison="gt",
+                        value=0,
+                    ),
+                )
+            ],
+        ),
+    )
+
+    with pytest.raises(PlanValidationError, match="unknown inputs: missing-source"):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
 def test_workflow_resolves_security_code_adjacent_to_chinese_text():
