@@ -205,7 +205,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
       ? [...new Set(selected.split(","))].filter(field => discoveryFactorFields.has(field))
       : ["pe_ttm", "turnover_rate", "circ_mv"];
   });
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(
+    () => params.get("dp_task") || null,
+  );
   const [taskStatus, setTaskStatus] = useState<DiscoveryTaskStatusResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -246,8 +248,9 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     next.set("dp_depth", String(maxConditions));
     if (prompt) next.set("dp_prompt", prompt); else next.delete("dp_prompt");
     if (factors.length) next.set("dp_factors", factors.join(",")); else next.delete("dp_factors");
+    if (taskId) next.set("dp_task", taskId); else next.delete("dp_task");
     window.history.replaceState({}, "", `${window.location.pathname}?${next.toString()}`);
-  }, [targetPool, trainStart, trainEnd, valStart, valEnd, forwardDays, targetReturnPct, minimumSamples, minimumTradingDays, minimumSecurities, minimumOutcomeCoveragePct, maxConditions, prompt, factors]);
+  }, [targetPool, trainStart, trainEnd, valStart, valEnd, forwardDays, targetReturnPct, minimumSamples, minimumTradingDays, minimumSecurities, minimumOutcomeCoveragePct, maxConditions, prompt, factors, taskId]);
 
   function toggleFactor(field: string) {
     setFactors(current => current.includes(field)

@@ -715,7 +715,9 @@ test("discovery page submits a bounded study and renders validation evidence", a
     validation_passed: false,
     validation_reason: "fdr_not_passed",
   });
+  let discoverySubmissionCount = 0;
   await page.route("**/api/discovery/tasks", route => {
+    discoverySubmissionCount += 1;
     const request = route.request().postDataJSON() as { factors: string[]; minimum_trading_days: number; minimum_securities: number; minimum_outcome_coverage_pct: number };
     expect(request.factors).toContain("positive_days_3");
     expect(request.minimum_trading_days).toBe(20);
@@ -894,6 +896,18 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(failedExecutableCard).toContainText("带入限制：该规律未通过预留验证：未通过 10% BY-FDR");
   await expect(page.getByText(/只对预留验证通过且分析页能够保持同一计算口径的规则开放/)).toBeVisible();
   await expect(page.getByText(/验证失败的候选仍保留全部证据供核验，但不会作为已验证规律直接应用/)).toBeVisible();
+
+  await expect(page).toHaveURL(/dp_task=discovery-e2e/);
+  const pollsBeforePageSwitch = statusPollCount;
+  await page.getByRole("tab", { name: "数据分析" }).click();
+  await expect(page).toHaveURL(/page=analysis/);
+  await expect(page).toHaveURL(/dp_task=discovery-e2e/);
+  await page.getByRole("tab", { name: "策略挖掘" }).click();
+  await expect(page.getByRole("heading", { name: "验证集摘要" })).toBeVisible();
+  await expect(page).toHaveURL(/page=discovery/);
+  await expect(page).toHaveURL(/dp_task=discovery-e2e/);
+  expect(statusPollCount).toBeGreaterThan(pollsBeforePageSwitch);
+  expect(discoverySubmissionCount).toBe(1);
 
   await page.getByLabel("目标收益（%）").fill("10");
   await page.locator(".factor-checkbox.is-selected").first().click();
