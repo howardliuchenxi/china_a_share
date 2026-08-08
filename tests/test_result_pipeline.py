@@ -351,6 +351,263 @@ def test_pipeline_applies_differences_growth_and_rolling_statistics():
     assert result.rows[-1]["rolling_deviation"] == pytest.approx(4.242640687)
 
 
+def test_pipeline_applies_ordered_cumulative_and_row_number_operations():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"group": "B", "date": 2, "value": 4.0},
+            {"group": "A", "date": 2, "value": 3.0},
+            {"group": "A", "date": 1, "value": 1.0},
+        ],
+        row_count=3,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "ordered",
+            "steps": [
+                {
+                    "operation": "row_number",
+                    "output_field": "sequence",
+                    "group_by": ["group"],
+                    "order_by": "date",
+                },
+                {
+                    "operation": "cumulative_sum",
+                    "field": "value",
+                    "output_field": "running_total",
+                    "group_by": ["group"],
+                    "order_by": "date",
+                },
+                {
+                    "operation": "expanding_mean",
+                    "field": "value",
+                    "output_field": "running_mean",
+                    "group_by": ["group"],
+                    "order_by": "date",
+                    "min_periods": 1,
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert [(row["group"], row["date"]) for row in result.rows] == [
+        ("A", 1),
+        ("A", 2),
+        ("B", 2),
+    ]
+    assert [row["sequence"] for row in result.rows] == [1, 2, 1]
+    assert [row["running_total"] for row in result.rows] == [1.0, 4.0, 4.0]
+    assert [row["running_mean"] for row in result.rows] == [1.0, 2.0, 4.0]
+
+
+def test_pipeline_applies_null_bounding_and_conditional_value_operations():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"primary": None, "fallback": 12.0, "score": -2.0},
+            {"primary": 8.0, "fallback": 20.0, "score": 15.0},
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "derived",
+            "steps": [
+                {
+                    "operation": "coalesce",
+                    "fields": ["primary", "fallback"],
+                    "output_field": "selected",
+                },
+                {
+                    "operation": "fill_constant",
+                    "field": "primary",
+                    "output_field": "filled",
+                    "value": 0,
+                },
+                {
+                    "operation": "clip",
+                    "field": "score",
+                    "output_field": "bounded",
+                    "lower_value": 0,
+                    "upper_value": 10,
+                },
+                {
+                    "operation": "conditional_value",
+                    "field": "score",
+                    "output_field": "bucket",
+                    "comparison": "ge",
+                    "value": 10,
+                    "true_value": "high",
+                    "false_value": "normal",
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows == [
+        {
+            "primary": None,
+            "fallback": 12.0,
+            "score": -2.0,
+            "selected": 12.0,
+            "filled": 0.0,
+            "bounded": 0.0,
+            "bucket": "normal",
+        },
+        {
+            "primary": 8.0,
+            "fallback": 20.0,
+            "score": 15.0,
+            "selected": 8.0,
+            "filled": 8.0,
+            "bounded": 10.0,
+            "bucket": "high",
+        },
+    ]
+
+
+def test_pipeline_applies_key_sets_and_bounded_asof_join():
+    left = QueryResult(
+        query_id="left",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"code": "A", "time": 3, "value": 1},
+            {"code": "B", "time": 5, "value": 2},
+            {"code": "C", "time": 5, "value": 3},
+        ],
+        row_count=3,
+    )
+    membership = QueryResult(
+        query_id="membership",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[{"code": "A"}, {"code": "B"}, {"code": "B"}],
+        row_count=3,
+    )
+    history = QueryResult(
+        query_id="history",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"code": "A", "effective_time": 1, "label": "old"},
+            {"code": "A", "effective_time": 2, "label": "current"},
+            {"code": "B", "effective_time": 1, "label": "expired"},
+        ],
+        row_count=3,
+    )
+    intersect = ResultPipeline.model_validate(
+        {
+            "source_query_id": "left",
+            "output_query_id": "intersection",
+            "steps": [
+                {
+                    "operation": "intersect_keys",
+                    "right_source_query_id": "membership",
+                    "join_on": ["code"],
+                }
+            ],
+        }
+    )
+    difference = ResultPipeline.model_validate(
+        {
+            "source_query_id": "left",
+            "output_query_id": "difference",
+            "steps": [
+                {
+                    "operation": "except_keys",
+                    "right_source_query_id": "membership",
+                    "join_on": ["code"],
+                }
+            ],
+        }
+    )
+    asof = ResultPipeline.model_validate(
+        {
+            "source_query_id": "left",
+            "output_query_id": "matched",
+            "steps": [
+                {
+                    "operation": "asof_join",
+                    "right_source_query_id": "history",
+                    "group_by": ["code"],
+                    "order_by": "time",
+                    "right_order_by": "effective_time",
+                    "fields": {"label": "asof_label"},
+                    "asof_direction": "backward",
+                    "tolerance": 2,
+                }
+            ],
+        }
+    )
+    sources = {"membership": membership, "history": history}
+
+    intersect_result = ResultPipelineExecutor().execute(intersect, left, sources)
+    difference_result = ResultPipelineExecutor().execute(difference, left, sources)
+    asof_result = ResultPipelineExecutor().execute(asof, left, sources)
+
+    assert intersect_result.rows == [{"code": "A"}, {"code": "B"}]
+    assert difference_result.rows == [{"code": "C"}]
+    assert "effective_time" not in asof_result.columns
+    assert [row["asof_label"] for row in asof_result.rows] == [
+        "current",
+        None,
+        None,
+    ]
+
+
+def test_pipeline_contract_rejects_unbounded_asof_and_invalid_clip():
+    with pytest.raises(ValueError, match="Missing required arguments for asof_join"):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "source",
+                "output_query_id": "invalid",
+                "steps": [
+                    {
+                        "operation": "asof_join",
+                        "right_source_query_id": "history",
+                        "group_by": ["code"],
+                        "order_by": "time",
+                        "right_order_by": "effective_time",
+                        "fields": {"value": "historical_value"},
+                    }
+                ],
+            }
+        )
+
+    with pytest.raises(ValueError, match="clip lower_value cannot exceed"):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "source",
+                "output_query_id": "invalid",
+                "steps": [
+                    {
+                        "operation": "clip",
+                        "field": "value",
+                        "output_field": "bounded",
+                        "lower_value": 2,
+                        "upper_value": 1,
+                    }
+                ],
+            }
+        )
+
+
 def test_pipeline_contract_rejects_invalid_range_and_quantile_arguments():
     with pytest.raises(ValueError, match="lower_value cannot exceed"):
         ResultPipeline.model_validate(

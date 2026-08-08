@@ -361,11 +361,14 @@ class ResultPipelineStep(BaseModel):
         "rolling_min",
         "rolling_max",
         "rolling_std",
+        "cumulative_sum",
+        "expanding_mean",
         "shift",
         "diff",
         "pct_change",
         "rank",
         "dense_rank",
+        "row_number",
         "top_k_by_group",
         "match_at_offset",
         "match_source",
@@ -373,11 +376,18 @@ class ResultPipelineStep(BaseModel):
         "semi_join",
         "anti_join",
         "inner_join",
+        "asof_join",
+        "intersect_keys",
+        "except_keys",
         "union_all",
         "join_fields",
         "having",
         "compare_fields",
         "compare_scalar",
+        "coalesce",
+        "fill_constant",
+        "clip",
+        "conditional_value",
         "summarize",
     ] = Field(description="Allowlisted relational operation executed by the backend.")
     field: Optional[str] = Field(
@@ -426,6 +436,20 @@ class ResultPipelineStep(BaseModel):
         pattern=OPERATION_NAME_PATTERN,
         description="Column used to select the latest row in each group.",
     )
+    right_order_by: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Right-side time field used by an as-of join.",
+    )
+    asof_direction: Literal["backward", "forward", "nearest"] = Field(
+        default="backward",
+        description="Temporal search direction used by an as-of join.",
+    )
+    tolerance: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Required finite maximum distance allowed by an as-of join.",
+    )
     direction: Literal["asc", "desc"] = Field(
         default="asc",
         description="Stable ordering direction for latest selection or sorting.",
@@ -456,6 +480,14 @@ class ResultPipelineStep(BaseModel):
     upper_value: Optional[Union[int, float]] = Field(
         default=None,
         description="Inclusive upper bound used by range filtering.",
+    )
+    true_value: Optional[Union[int, float, str]] = Field(
+        default=None,
+        description="Scalar emitted when a conditional comparison is true.",
+    )
+    false_value: Optional[Union[int, float, str]] = Field(
+        default=None,
+        description="Scalar emitted when a conditional comparison is false.",
     )
     negate: bool = Field(
         default=False,
@@ -594,6 +626,12 @@ class ResultPipelineStep(BaseModel):
                 and self.order_by
                 and self.window
             ),
+            "cumulative_sum": bool(
+                self.field and self.output_field and self.group_by and self.order_by
+            ),
+            "expanding_mean": bool(
+                self.field and self.output_field and self.group_by and self.order_by
+            ),
             "shift": bool(
                 self.field
                 and self.output_field
@@ -617,6 +655,7 @@ class ResultPipelineStep(BaseModel):
             ),
             "rank": bool(self.field and self.output_field),
             "dense_rank": bool(self.field and self.output_field),
+            "row_number": bool(self.output_field and self.group_by and self.order_by),
             "top_k_by_group": bool(self.field and self.group_by and self.count),
             "match_at_offset": bool(
                 self.field
@@ -645,6 +684,17 @@ class ResultPipelineStep(BaseModel):
                 and isinstance(self.fields, dict)
                 and self.cardinality
             ),
+            "asof_join": bool(
+                self.right_source_query_id
+                and self.group_by
+                and self.order_by
+                and self.right_order_by
+                and isinstance(self.fields, dict)
+                and self.fields
+                and self.tolerance is not None
+            ),
+            "intersect_keys": bool(self.right_source_query_id and self.join_on),
+            "except_keys": bool(self.right_source_query_id and self.join_on),
             "union_all": bool(self.right_source_query_id),
             "join_fields": bool(
                 self.right_source_query_id
@@ -666,6 +716,25 @@ class ResultPipelineStep(BaseModel):
                 and self.output_field
                 and self.comparison
                 and self.value is not None
+            ),
+            "coalesce": bool(
+                self.output_field and isinstance(self.fields, list) and self.fields
+            ),
+            "fill_constant": bool(
+                self.field and self.output_field and self.value is not None
+            ),
+            "clip": bool(
+                self.field
+                and self.output_field
+                and (self.lower_value is not None or self.upper_value is not None)
+            ),
+            "conditional_value": bool(
+                self.field
+                and self.output_field
+                and self.comparison
+                and self.value is not None
+                and self.true_value is not None
+                and self.false_value is not None
             ),
             "summarize": bool(self.aggregations),
         }
@@ -721,10 +790,25 @@ class ResultPipelineStep(BaseModel):
         ):
             raise ValueError("filter_range lower_value cannot exceed upper_value")
         if (
+            self.operation == "clip"
+            and self.lower_value is not None
+            and self.upper_value is not None
+            and self.lower_value > self.upper_value
+        ):
+            raise ValueError("clip lower_value cannot exceed upper_value")
+        if (
             self.operation == "rename_fields"
             and len(set(self.fields.values())) != len(self.fields)
         ):
             raise ValueError("rename_fields outputs must be unique")
+        if self.operation == "asof_join":
+            if len(set(self.fields.values())) != len(self.fields):
+                raise ValueError("asof_join outputs must be unique")
+            reserved_right_fields = set(self.group_by + [self.right_order_by])
+            if reserved_right_fields.intersection(self.fields):
+                raise ValueError(
+                    "asof_join copied fields must exclude grouping and time fields"
+                )
         aggregation_outputs = [
             aggregation.output_field for aggregation in self.aggregations
         ]

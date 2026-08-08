@@ -511,7 +511,8 @@ class ASharePlanValidator:
                 )
             input_fields = (
                 []
-                if step.operation in {"join_fields", "inner_join", "union_all"}
+                if step.operation
+                in {"join_fields", "inner_join", "asof_join", "union_all"}
                 else list(step.fields)
             )
             required_fields = set(input_fields + step.group_by + step.join_on)
@@ -537,6 +538,9 @@ class ASharePlanValidator:
                 "inner_join",
                 "join_fields",
                 "union_all",
+                "asof_join",
+                "intersect_keys",
+                "except_keys",
             }
             if step.operation in right_source_operations:
                 right_query = next(
@@ -575,6 +579,8 @@ class ASharePlanValidator:
                 "anti_join",
                 "inner_join",
                 "join_fields",
+                "intersect_keys",
+                "except_keys",
             }:
                 missing_right = set(step.join_on).difference(right_fields)
                 if missing_right:
@@ -582,6 +588,22 @@ class ASharePlanValidator:
                         f"{step.operation} references unavailable right keys: "
                         + ", ".join(sorted(missing_right))
                     )
+            if step.operation == "asof_join":
+                missing_right = (
+                    set(step.group_by + [step.right_order_by])
+                    | set(step.fields)
+                ).difference(right_fields)
+                if missing_right:
+                    raise PlanValidationError(
+                        "asof_join references unavailable right fields: "
+                        + ", ".join(sorted(missing_right))
+                    )
+                for right_col, out_col in step.fields.items():
+                    if out_col in available_fields:
+                        raise PlanValidationError(
+                            f"asof_join output field already exists: {out_col}"
+                        )
+                    available_fields.add(out_col)
             if step.operation in {"join_fields", "inner_join"}:
                 fields_map = step.fields if isinstance(step.fields, dict) else {}
                 if step.operation == "join_fields" and not fields_map:
@@ -602,6 +624,8 @@ class ASharePlanValidator:
                 raise PlanValidationError(
                     "union_all requires identical left and right field contracts."
                 )
+            if step.operation in {"intersect_keys", "except_keys"}:
+                available_fields = set(step.join_on)
             if step.operation in {
                 "derive",
                 "rolling_mean",
@@ -614,6 +638,13 @@ class ASharePlanValidator:
                 "pct_change",
                 "rank",
                 "dense_rank",
+                "row_number",
+                "cumulative_sum",
+                "expanding_mean",
+                "coalesce",
+                "fill_constant",
+                "clip",
+                "conditional_value",
                 "match_at_offset",
                 "match_source",
                 "exists_in_source",

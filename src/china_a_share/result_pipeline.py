@@ -153,7 +153,12 @@ class ResultPipelineExecutor:
         """Expose only validated parameters from one executed pipeline step."""
         input_fields = [
             field
-            for field in [step.field, step.right_field, step.order_by]
+            for field in [
+                step.field,
+                step.right_field,
+                step.order_by,
+                step.right_order_by,
+            ]
             if field
         ]
         input_fields.extend(step.group_by)
@@ -290,6 +295,40 @@ class ResultPipelineExecutor:
                     f"{step.operation}({expression(step.field)}, {step.periods})"
                 )
                 dependencies[step.output_field] = sources(step.field)
+            elif (
+                step.operation in {"cumulative_sum", "expanding_mean"}
+                and step.output_field
+                and step.field
+            ):
+                formulas[step.output_field] = (
+                    f"{step.operation}({expression(step.field)})"
+                )
+                dependencies[step.output_field] = sources(step.field)
+            elif step.operation == "row_number" and step.output_field:
+                formulas[step.output_field] = "row_number()"
+                dependencies[step.output_field] = set(step.group_by + [step.order_by])
+            elif step.operation == "coalesce" and step.output_field:
+                formulas[step.output_field] = f"coalesce({', '.join(step.fields)})"
+                dependencies[step.output_field] = set().union(
+                    *(sources(field) for field in step.fields)
+                )
+            elif (
+                step.operation in {"fill_constant", "clip"}
+                and step.output_field
+                and step.field
+            ):
+                formulas[step.output_field] = f"{step.operation}({expression(step.field)})"
+                dependencies[step.output_field] = sources(step.field)
+            elif (
+                step.operation == "conditional_value"
+                and step.output_field
+                and step.field
+            ):
+                formulas[step.output_field] = (
+                    f"if({expression(step.field)}, "
+                    f"{step.true_value}, {step.false_value})"
+                )
+                dependencies[step.output_field] = sources(step.field)
             elif step.operation in {"rank", "dense_rank"} and step.output_field and step.field:
                 formulas[step.output_field] = (
                     f"{step.operation}({expression(step.field)})"
@@ -407,7 +446,8 @@ class ResultPipelineExecutor:
         """Execute one validated relational operation."""
         fields_list = (
             []
-            if step.operation in {"join_fields", "inner_join", "union_all"}
+            if step.operation
+            in {"join_fields", "inner_join", "asof_join", "union_all"}
             else (
                 list(step.fields.keys())
                 if isinstance(step.fields, dict)
@@ -607,6 +647,17 @@ class ResultPipelineExecutor:
                 .head(step.count)
                 .reset_index(drop=True)
             )
+        if step.operation == "row_number":
+            ordered = frame.sort_values(
+                step.group_by + [step.order_by],
+                ascending=[True] * len(step.group_by) + [step.direction == "asc"],
+                kind="mergesort",
+                na_position="last",
+            ).reset_index(drop=True)
+            ordered[step.output_field] = (
+                ordered.groupby(step.group_by, sort=False, dropna=False).cumcount() + 1
+            )
+            return ordered
         if step.operation in {"match_source", "exists_in_source"}:
             right_source = sources.get(step.right_source_query_id)
             if right_source is None:
@@ -664,6 +715,30 @@ class ResultPipelineExecutor:
             if step.operation == "anti_join":
                 mask = ~mask
             return matched.loc[mask].reset_index(drop=True)
+        if step.operation in {"intersect_keys", "except_keys"}:
+            right_source = sources.get(step.right_source_query_id)
+            if right_source is None or right_source.status != QueryStatus.SUCCESS:
+                raise ValueError(f"{step.operation} right source is unavailable")
+            right = self._result_frame(right_source)
+            missing_right = set(step.join_on).difference(right.columns)
+            if missing_right:
+                raise ValueError(
+                    f"{step.operation} right fields are missing: "
+                    + ", ".join(sorted(missing_right))
+                )
+            left_keys = frame[step.join_on].drop_duplicates()
+            right_keys = right[step.join_on].drop_duplicates()
+            merged = left_keys.merge(
+                right_keys.assign(_source_member=True),
+                on=step.join_on,
+                how="left",
+                sort=False,
+                validate="one_to_one",
+            )
+            mask = merged.pop("_source_member").notna()
+            if step.operation == "except_keys":
+                mask = ~mask
+            return merged.loc[mask].reset_index(drop=True)
         if step.operation == "inner_join":
             right_source = sources.get(step.right_source_query_id)
             if right_source is None or right_source.status != QueryStatus.SUCCESS:
@@ -692,6 +767,57 @@ class ResultPipelineExecutor:
                 sort=False,
                 validate=step.cardinality,
             ).reset_index(drop=True)
+        if step.operation == "asof_join":
+            right_source = sources.get(step.right_source_query_id)
+            if right_source is None or right_source.status != QueryStatus.SUCCESS:
+                raise ValueError("asof_join right source is unavailable")
+            right = self._result_frame(right_source)
+            fields_map = step.fields if isinstance(step.fields, dict) else {}
+            required_right = set(step.group_by + [step.right_order_by]) | set(
+                fields_map
+            )
+            missing_right = required_right.difference(right.columns)
+            if missing_right:
+                raise ValueError(
+                    "asof_join right fields are missing: "
+                    + ", ".join(sorted(missing_right))
+                )
+            collisions = set(fields_map.values()).intersection(frame.columns)
+            if collisions:
+                raise ValueError(
+                    "asof_join output fields already exist: "
+                    + ", ".join(sorted(collisions))
+                )
+            left = frame.copy()
+            right_subset = right[
+                step.group_by + [step.right_order_by] + list(fields_map)
+            ].copy()
+            left[step.order_by] = pd.to_numeric(
+                left[step.order_by], errors="raise"
+            ).astype(float)
+            right_subset[step.right_order_by] = pd.to_numeric(
+                right_subset[step.right_order_by], errors="raise"
+            ).astype(float)
+            right_subset = right_subset.rename(columns=fields_map)
+            left = left.sort_values(
+                [step.order_by] + step.group_by,
+                kind="mergesort",
+            )
+            right_subset = right_subset.sort_values(
+                [step.right_order_by] + step.group_by, kind="mergesort"
+            )
+            matched = pd.merge_asof(
+                left,
+                right_subset,
+                left_on=step.order_by,
+                right_on=step.right_order_by,
+                by=step.group_by,
+                direction=step.asof_direction,
+                tolerance=step.tolerance,
+            )
+            if step.right_order_by != step.order_by:
+                matched = matched.drop(columns=[step.right_order_by])
+            return matched.reset_index(drop=True)
         if step.operation == "union_all":
             right_source = sources.get(step.right_source_query_id)
             if right_source is None or right_source.status != QueryStatus.SUCCESS:
@@ -786,6 +912,25 @@ class ResultPipelineExecutor:
                 )
             ordered[step.output_field] = shifted
             return ordered.reset_index(drop=True)
+        if step.operation in {"cumulative_sum", "expanding_mean"}:
+            ordered = frame.sort_values(
+                step.group_by + [step.order_by], kind="mergesort"
+            ).reset_index(drop=True)
+            numeric = pd.to_numeric(ordered[step.field], errors="coerce")
+            grouped = numeric.groupby(
+                [ordered[field] for field in step.group_by],
+                sort=False,
+                dropna=False,
+            )
+            if step.operation == "cumulative_sum":
+                values = grouped.cumsum()
+            else:
+                values = grouped.expanding(min_periods=step.min_periods or 1).mean()
+                values = values.reset_index(
+                    level=list(range(len(step.group_by))), drop=True
+                )
+            ordered[step.output_field] = values
+            return ordered
         if step.operation == "match_at_offset":
             ordered = frame.sort_values(
                 step.group_by + [step.order_by],
@@ -862,6 +1007,34 @@ class ResultPipelineExecutor:
                 series,
                 value,
             )
+            return result
+        if step.operation == "coalesce":
+            result = frame.copy()
+            result[step.output_field] = (
+                result[list(step.fields)].bfill(axis=1).iloc[:, 0]
+            )
+            return result
+        if step.operation == "fill_constant":
+            result = frame.copy()
+            result[step.output_field] = result[step.field].fillna(step.value)
+            return result
+        if step.operation == "clip":
+            result = frame.copy()
+            numeric = pd.to_numeric(result[step.field], errors="coerce")
+            result[step.output_field] = numeric.clip(
+                lower=step.lower_value, upper=step.upper_value
+            )
+            return result
+        if step.operation == "conditional_value":
+            result = frame.copy()
+            series = result[step.field]
+            value: object = step.value
+            if isinstance(step.value, (int, float)):
+                series = pd.to_numeric(series, errors="coerce")
+                value = float(step.value)
+            mask = COMPARISONS[step.comparison](series, value).fillna(False)
+            result[step.output_field] = step.false_value
+            result.loc[mask, step.output_field] = step.true_value
             return result
         if step.operation == "summarize":
             row = {
