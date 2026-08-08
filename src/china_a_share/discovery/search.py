@@ -17,10 +17,10 @@ from china_a_share.discovery.backtester import FactorBacktester
 
 SEARCH_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 MAX_EXHAUSTIVE_DISCRETE_VALUES = 10
-# Reserve one first-pass slot for every factor admitted by the public request
-# contract. The schema therefore remains the single source of truth when the
-# factor catalog grows.
-PAIRING_CANDIDATE_LIMIT = len(DISCOVERY_FACTOR_FIELDS)
+# Reserve one first-pass slot per factor and one second-pass slot for its
+# opposite direction. The schema remains the single source of truth when the
+# public factor catalog grows.
+PAIRING_CANDIDATE_LIMIT = 2 * len(DISCOVERY_FACTOR_FIELDS)
 PAIRING_THRESHOLDS_PER_DIRECTION = 2
 VALIDATION_CANDIDATE_LIMIT = 50
 VALIDATION_FDR_THRESHOLD = 0.10
@@ -265,8 +265,6 @@ class RuleSearchEngine:
             seen_fields.add(field)
             seen_buckets.add((field, operator))
             bucket_counts[(field, operator)] = 1
-            if len(selected) == PAIRING_CANDIDATE_LIMIT:
-                return selected
         for candidate in candidates:
             field = RuleSearchEngine._field_for_formula(candidate.formula)
             operator = candidate.formula.split()[1]

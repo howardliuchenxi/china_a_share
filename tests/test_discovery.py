@@ -2018,12 +2018,12 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
 
 
 @pytest.mark.parametrize(
-    ("factor_count", "expected_direction_counts"),
-    [(10, {2}), (13, {1, 2})],
+    ("factor_count", "expected_pool_size"),
+    [(10, 40), (13, PAIRING_CANDIDATE_LIMIT)],
 )
 def test_rule_search_fills_pairing_pool_with_alternate_directions(
     factor_count,
-    expected_direction_counts,
+    expected_pool_size,
 ):
     factor_names = [f"factor_{index}" for index in range(factor_count)]
     dataset = pd.DataFrame(
@@ -2047,8 +2047,8 @@ def test_rule_search_fills_pairing_pool_with_alternate_directions(
         for field in factor_names
     }
 
-    assert len(pairing_pool) == PAIRING_CANDIDATE_LIMIT
-    assert set(direction_counts.values()) == expected_direction_counts
+    assert len(pairing_pool) == expected_pool_size
+    assert set(direction_counts.values()) == {2}
 
 
 def test_rule_search_rejects_same_factor_conditions_in_the_same_direction():
@@ -2077,10 +2077,19 @@ def test_rule_search_prioritizes_factor_breadth_in_the_pairing_pool():
     candidates, _ = search._evaluate_training_formulas(conditions, dataset)
 
     pairing_pool = search._select_pairing_conditions(candidates)
+    direction_buckets = {
+        (field, formula.split()[1])
+        for formula, field in pairing_pool
+    }
 
     assert len(pairing_pool) == PAIRING_CANDIDATE_LIMIT
-    assert PAIRING_CANDIDATE_LIMIT == len(DISCOVERY_FACTOR_FIELDS)
+    assert PAIRING_CANDIDATE_LIMIT == 2 * len(DISCOVERY_FACTOR_FIELDS)
     assert {field for _, field in pairing_pool} == set(factor_names)
+    assert direction_buckets == {
+        (field, operator)
+        for field in factor_names
+        for operator in ("<=", ">=")
+    }
 
 
 def test_rule_search_is_invariant_to_requested_factor_order():
