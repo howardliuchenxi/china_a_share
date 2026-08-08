@@ -154,6 +154,11 @@ class ASharePlanValidator:
                 f"A query plan may contain at most {MAX_QUERIES_PER_ANALYSIS} calls."
             )
         if plan.execution_plan is not None:
+            if plan.constraints:
+                raise PlanValidationError(
+                    "Declared constraints currently require a linear result pipeline "
+                    "with explicit enforcement bindings."
+                )
             self._validate_execution_plan(plan)
             return plan
         pipeline_fields = None
@@ -207,7 +212,98 @@ class ASharePlanValidator:
                     raise PlanValidationError(
                         f"Aggregation field is not requested: {aggregation.field}"
                     )
+        self._validate_constraint_lineage(plan)
         return plan
+
+    @staticmethod
+    def _validate_constraint_lineage(plan: QueryPlan) -> None:
+        """Require declared predicates to restrict the final result before ranking."""
+        if not plan.constraints:
+            return
+
+        queries_by_id = {query.query_id: query for query in plan.queries}
+        pipeline = plan.result_pipeline
+        for constraint in plan.constraints:
+            query = queries_by_id.get(constraint.query_id)
+            if query is None:
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} references an unknown query."
+                )
+            if not any(
+                row_filter.field == constraint.field
+                and row_filter.operator == constraint.operator
+                and row_filter.value == constraint.value
+                for row_filter in query.filters
+            ):
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} is not applied by its "
+                    "declared query filter."
+                )
+
+            if pipeline is None:
+                if (
+                    plan.answer_contract is None
+                    or plan.answer_contract.result_query_id != constraint.query_id
+                ):
+                    raise PlanValidationError(
+                        f"Constraint {constraint.constraint_id} does not contribute "
+                        "to the final answer result."
+                    )
+                if constraint.enforcement_step_index is not None:
+                    raise PlanValidationError(
+                        f"Constraint {constraint.constraint_id} does not need a "
+                        "membership enforcement step."
+                    )
+                continue
+
+            if constraint.query_id == pipeline.source_query_id:
+                if constraint.enforcement_step_index is not None:
+                    raise PlanValidationError(
+                        f"Constraint {constraint.constraint_id} does not need a "
+                        "membership enforcement step."
+                    )
+                continue
+
+            step_index = constraint.enforcement_step_index
+            if step_index is None or step_index >= len(pipeline.steps):
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} must declare a valid "
+                    "membership enforcement step."
+                )
+            enforcement = pipeline.steps[step_index]
+            if (
+                enforcement.operation != "filter"
+                or enforcement.comparison != "eq"
+                or enforcement.value != 1
+            ):
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} enforcement must filter "
+                    "a membership marker equal to 1."
+                )
+            membership = next(
+                (
+                    step
+                    for step in reversed(pipeline.steps[:step_index])
+                    if step.operation in {"match_source", "exists_in_source"}
+                    and step.right_source_query_id == constraint.query_id
+                    and step.output_field == enforcement.field
+                ),
+                None,
+            )
+            if membership is None:
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} has no membership match "
+                    "feeding its enforcement filter."
+                )
+            blocking_operations = {"sort", "limit", "aggregate", "summarize"}
+            if any(
+                step.operation in blocking_operations
+                for step in pipeline.steps[:step_index]
+            ):
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} must be enforced before "
+                    "sorting, limiting, or aggregation."
+                )
 
     def _validate_execution_plan(self, plan: QueryPlan) -> None:
         """Validate DAG topology, provider calls, field lineage, and final output."""

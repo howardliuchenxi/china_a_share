@@ -790,6 +790,60 @@ class AnswerContract(BaseModel):
         return self
 
 
+class QueryConstraint(BaseModel):
+    """One user selection predicate with a machine-verifiable execution binding."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    constraint_id: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Stable identifier for one atomic user selection predicate.",
+    )
+    scope: Literal["universe", "result"] = Field(
+        description=(
+            "Whether the predicate restricts eligible securities or computed rows."
+        ),
+    )
+    field: str = Field(
+        min_length=1,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Exact field evaluated by the executable predicate.",
+    )
+    operator: Literal["gt", "ge", "eq", "le", "lt", "in"] = Field(
+        description="Comparison operator preserved from the user requirement.",
+    )
+    value: Union[float, str, List[str]] = Field(
+        description="Exact scalar or membership values preserved from the request.",
+    )
+    query_id: str = Field(
+        min_length=1,
+        description="Provider query whose local row filter applies this predicate.",
+    )
+    enforcement_step_index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Pipeline filter step that enforces membership when the constrained "
+            "query is not the pipeline source."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_value_operator(self) -> "QueryConstraint":
+        """Keep declared constraint values consistent with executable filters."""
+        if isinstance(self.value, str) and self.operator != "eq":
+            raise ValueError("string constraint values require the eq operator")
+        if isinstance(self.value, list):
+            if self.operator != "in" or not self.value:
+                raise ValueError(
+                    "constraint membership values require a non-empty in predicate"
+                )
+        if self.operator == "in" and not isinstance(self.value, list):
+            raise ValueError("the in constraint operator requires a list value")
+        return self
+
+
 class ExecutionNode(BaseModel):
     """One provider-query or deterministic-compute node in an execution graph."""
 
@@ -900,6 +954,13 @@ class QueryPlan(BaseModel):
     requirements: List[RequirementCoverage] = Field(
         default_factory=list,
         description="Coverage evidence for each atomic user requirement.",
+    )
+    constraints: List[QueryConstraint] = Field(
+        default_factory=list,
+        description=(
+            "Machine-verifiable bindings for every explicit universe or result "
+            "selection predicate in the request."
+        ),
     )
     limitations: List[str] = Field(
         default_factory=list,

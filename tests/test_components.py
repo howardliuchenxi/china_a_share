@@ -158,6 +158,144 @@ def test_catalog_and_validator_accept_stock_operation_plan():
     )
 
 
+def test_validator_accepts_universe_constraint_enforced_before_ranking():
+    plan = QueryPlan(
+        interpretation="Rank valuation inside one classified security universe.",
+        requirements=[
+            {
+                "requirement": "Restrict securities by area before ranking.",
+                "status": "covered",
+                "implementation": "Filter stock_basic and enforce membership.",
+                "evidence": "stock_basic exposes the area classification.",
+            }
+        ],
+        constraints=[
+            {
+                "constraint_id": "target_area",
+                "scope": "universe",
+                "field": "area",
+                "operator": "eq",
+                "value": "上海",
+                "query_id": "classified-universe",
+                "enforcement_step_index": 1,
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="valuation",
+                operation="daily_basic",
+                params={"trade_date": "20260717"},
+                fields=["ts_code", "pe"],
+                purpose="Retrieve market valuation rows.",
+            ),
+            DataQuery(
+                query_id="classified-universe",
+                operation="stock_basic",
+                fields=["ts_code", "area"],
+                purpose="Build the requested classified universe.",
+                filters=[{"field": "area", "operator": "eq", "value": "上海"}],
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "valuation",
+            "output_query_id": "ranked-valuation",
+            "steps": [
+                {
+                    "operation": "match_source",
+                    "right_source_query_id": "classified-universe",
+                    "join_on": ["ts_code"],
+                    "output_field": "in_requested_universe",
+                },
+                {
+                    "operation": "filter",
+                    "field": "in_requested_universe",
+                    "comparison": "eq",
+                    "value": 1,
+                },
+                {"operation": "sort", "field": "pe", "direction": "desc"},
+                {"operation": "limit", "count": 10},
+            ],
+        },
+    )
+
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(plan)
+
+    assert validated.constraints[0].field == "area"
+
+
+def test_validator_rejects_universe_constraint_enforced_after_ranking():
+    plan = QueryPlan(
+        interpretation="Reject late universe enforcement.",
+        requirements=[
+            {
+                "requirement": "Restrict securities by industry before ranking.",
+                "status": "covered",
+                "implementation": "Filter stock_basic and enforce membership.",
+                "evidence": "stock_basic exposes the industry classification.",
+            }
+        ],
+        constraints=[
+            {
+                "constraint_id": "target_industry",
+                "scope": "universe",
+                "field": "industry",
+                "operator": "eq",
+                "value": "汽车",
+                "query_id": "classified-universe",
+                "enforcement_step_index": 2,
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="valuation",
+                operation="daily_basic",
+                params={"trade_date": "20260717"},
+                fields=["ts_code", "pe"],
+                purpose="Retrieve market valuation rows.",
+            ),
+            DataQuery(
+                query_id="classified-universe",
+                operation="stock_basic",
+                fields=["ts_code", "industry"],
+                purpose="Build the requested classified universe.",
+                filters=[
+                    {"field": "industry", "operator": "eq", "value": "汽车"}
+                ],
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "valuation",
+            "output_query_id": "invalid-ranking",
+            "steps": [
+                {"operation": "sort", "field": "pe", "direction": "desc"},
+                {
+                    "operation": "match_source",
+                    "right_source_query_id": "classified-universe",
+                    "join_on": ["ts_code"],
+                    "output_field": "in_requested_universe",
+                },
+                {
+                    "operation": "filter",
+                    "field": "in_requested_universe",
+                    "comparison": "eq",
+                    "value": 1,
+                },
+                {"operation": "limit", "count": 10},
+            ],
+        },
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="must be enforced before sorting, limiting, or aggregation",
+    ):
+        ASharePlanValidator(
+            FakeMarketDataProvider(stock_frame=pd.DataFrame())
+        ).validate(plan)
+
+
 def test_runtime_manifest_covers_every_connected_tushare_operation():
     class FullyConnectedProvider:
         name = "tushare"
