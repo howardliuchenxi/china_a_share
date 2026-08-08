@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -8,6 +8,8 @@ from china_a_share.core.contracts import (
     AnalysisStatus,
     AnalysisTask,
     AnalysisTaskStatus,
+    DiscoveryTask,
+    DiscoveryTaskRequest,
 )
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
@@ -202,6 +204,60 @@ def test_memory_store_returns_isolated_task_copies():
     loaded.status = AnalysisTaskStatus.FAILED
 
     assert store.get("task").status == AnalysisTaskStatus.QUEUED
+
+
+def test_task_coordinator_marks_a_stale_discovery_worker_as_failed():
+    store = MemoryAnalysisTaskStore()
+    coordinator = AnalysisTaskCoordinator(store, FakeDispatcher())
+    now = datetime.now(timezone.utc)
+    task = DiscoveryTask(
+        task_id="stale-discovery",
+        status=AnalysisTaskStatus.RUNNING,
+        request=DiscoveryTaskRequest(
+            target_pool="A_SHARE",
+            train_start="20240101",
+            train_end="20241231",
+            val_start="20250101",
+            val_end="20250630",
+            factors=["pe_ttm"],
+        ),
+        created_at=now - timedelta(hours=1),
+        updated_at=now - timedelta(hours=1),
+    )
+    store.put(task)
+
+    failed = coordinator.get(task.task_id)
+
+    assert failed.status == AnalysisTaskStatus.FAILED
+    assert failed.progress.current_stage == "failed"
+    assert "platform resource limit" in failed.error.message
+    assert store.get(task.task_id).status == AnalysisTaskStatus.FAILED
+
+
+def test_task_coordinator_keeps_a_recent_discovery_worker_running():
+    store = MemoryAnalysisTaskStore()
+    coordinator = AnalysisTaskCoordinator(store, FakeDispatcher())
+    now = datetime.now(timezone.utc)
+    task = DiscoveryTask(
+        task_id="active-discovery",
+        status=AnalysisTaskStatus.RUNNING,
+        request=DiscoveryTaskRequest(
+            target_pool="A_SHARE",
+            train_start="20240101",
+            train_end="20241231",
+            val_start="20250101",
+            val_end="20250630",
+            factors=["pe_ttm"],
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    active = coordinator.get(task.task_id)
+
+    assert active.status == AnalysisTaskStatus.RUNNING
+    assert active.error is None
 
 
 def test_cloud_storage_store_spaces_writes_to_the_same_object(monkeypatch):

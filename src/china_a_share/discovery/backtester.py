@@ -6,7 +6,7 @@ import logging
 import math
 import re
 import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import pandas as pd
 
@@ -14,6 +14,7 @@ from china_a_share.application.workflow import DataQueryExecutor
 from china_a_share.core.contracts import (
     BacktestResult,
     DataQuery,
+    DISCOVERY_SEQUENCE_FACTOR_FIELDS,
     DiscoveryEventExample,
     QueryResult,
     QueryStatus,
@@ -21,6 +22,8 @@ from china_a_share.core.contracts import (
 
 
 DATA_FETCH_WORKERS = 20
+DATA_FETCH_BATCH_SIZE = DATA_FETCH_WORKERS
+SESSION_PRICE_FIELDS = frozenset({"open", "close", "pct_chg", "vol", "amount"})
 CALENDAR_EXTENSION_MULTIPLIER = 3
 # A full-month floor covers Spring Festival and exceptional exchange closures
 # when even a one-session forward label can be more than ten calendar days away.
@@ -48,6 +51,8 @@ class FactorBacktester:
         forward_days: int,
         api_route: str = "/api/discovery",
         request_id: str = "discovery",
+        factor_fields: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> pd.DataFrame:
         """Return signal-date features aligned with future close-to-close returns."""
         start = datetime.strptime(start_date, "%Y%m%d")
@@ -88,15 +93,33 @@ class FactorBacktester:
 
         frames: List[pd.DataFrame] = []
         with ThreadPoolExecutor(max_workers=DATA_FETCH_WORKERS) as pool:
-            for frame in pool.map(
-                lambda date: self._fetch_session(
-                    date,
-                    api_route=api_route,
-                    request_id=request_id,
-                ),
-                required_dates,
-            ):
-                frames.append(frame.dropna(axis=1, how="all"))
+            # Submit only one worker-sized batch at a time. Executor.map eagerly
+            # retains completed results that are waiting behind an earlier slow
+            # request, which can otherwise duplicate hundreds of full-market
+            # session frames in memory before concatenation.
+            for batch_start in range(0, len(required_dates), DATA_FETCH_BATCH_SIZE):
+                batch_dates = required_dates[
+                    batch_start : batch_start + DATA_FETCH_BATCH_SIZE
+                ]
+                for frame in pool.map(
+                    lambda date: self._fetch_session(
+                        date,
+                        api_route=api_route,
+                        request_id=request_id,
+                        factor_fields=factor_fields,
+                    ),
+                    batch_dates,
+                ):
+                    frames.append(
+                        frame
+                        if factor_fields is not None
+                        else frame.dropna(axis=1, how="all")
+                    )
+                if progress_callback is not None:
+                    progress_callback(
+                        min(batch_start + len(batch_dates), len(required_dates)),
+                        len(required_dates),
+                    )
 
         panel = pd.concat(frames, ignore_index=True)
         panel = panel.sort_values(["ts_code", "trade_date"])
@@ -657,14 +680,28 @@ class FactorBacktester:
         *,
         api_route: str,
         request_id: str,
+        factor_fields: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         try:
+            basic_factor_fields = (
+                None
+                if factor_fields is None
+                else sorted(
+                    set(factor_fields)
+                    - SESSION_PRICE_FIELDS
+                    - DISCOVERY_SEQUENCE_FACTOR_FIELDS
+                )
+            )
             basic_result = self._executor.execute(
                 DataQuery(
                     query_id=f"discovery-basic-{trade_date}",
                     operation="daily_basic",
                     params={"trade_date": trade_date},
-                    fields=[],
+                    fields=(
+                        []
+                        if basic_factor_fields is None
+                        else ["ts_code", *basic_factor_fields]
+                    ),
                     purpose="Load point-in-time daily factors.",
                 ),
                 api_route=api_route,
@@ -714,17 +751,22 @@ class FactorBacktester:
             price = price[
                 [
                     field
-                    for field in (
-                        "ts_code",
-                        "open",
-                        "close",
-                        "pct_chg",
-                        "vol",
-                        "amount",
-                    )
+                    for field in ("ts_code", *sorted(SESSION_PRICE_FIELDS))
                     if field in price
+                    and (
+                        factor_fields is None
+                        or field in {"ts_code", "close", *factor_fields}
+                    )
                 ]
             ]
+            if basic_factor_fields is not None:
+                basic = basic[
+                    [
+                        field
+                        for field in ("ts_code", *basic_factor_fields)
+                        if field in basic
+                    ]
+                ]
             adjustment = adjustment[["ts_code", "adj_factor"]]
             price = price.loc[
                 price["ts_code"].map(self._is_a_share_code).astype(bool)

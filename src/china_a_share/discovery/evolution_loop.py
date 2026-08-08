@@ -56,12 +56,24 @@ class EvolutionLoop:
             request.train_end,
             forward_days=request.forward_days,
             request_id=task.task_id,
+            factor_fields=request.factors,
+            progress_callback=lambda _completed, _total: self._update_progress(
+                task,
+                "dataset",
+                task.progress.current_log,
+            ),
         )
         validation = self._backtester.build_dataset(
             request.val_start,
             request.val_end,
             forward_days=request.forward_days,
             request_id=task.task_id,
+            factor_fields=request.factors,
+            progress_callback=lambda _completed, _total: self._update_progress(
+                task,
+                "dataset",
+                task.progress.current_log,
+            ),
         )
         if "future_trade_date" not in train:
             raise ValueError("Training dataset is missing future_trade_date.")

@@ -36,8 +36,10 @@ class FakeQueryExecutor:
         self._basics = basics
         self._prices = prices
         self._adjustments = adjustments
+        self.queries = []
 
     def execute(self, query, *, api_route, request_id):
+        self.queries.append(query)
         if query.operation == "trade_cal":
             rows = [
                 {"cal_date": trade_date, "is_open": "1"}
@@ -143,6 +145,74 @@ def test_research_dataset_aligns_features_with_future_trading_session_returns():
     assert dataset["trade_date"].tolist() == ["20260105", "20260106"]
     assert dataset["forward_return"].tolist() == pytest.approx([0.10, 0.10])
     assert dataset["pe_ttm"].tolist() == [10.0, 11.0]
+
+
+def test_research_dataset_requests_only_selected_daily_basic_factors():
+    trade_dates = ["20260105", "20260106"]
+    executor = FakeQueryExecutor(
+        trade_dates,
+        {
+            date: [
+                {
+                    "ts_code": "000001.SZ",
+                    "pe_ttm": 10.0,
+                    "circ_mv": 100.0,
+                    "pb": 2.0,
+                }
+            ]
+            for date in trade_dates
+        },
+        {
+            date: [{"ts_code": "000001.SZ", "close": close}]
+            for date, close in zip(trade_dates, [10.0, 11.0])
+        },
+    )
+
+    dataset = FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+        factor_fields=["pe_ttm", "close", "return_5d_pct"],
+    )
+
+    basic_queries = [
+        query for query in executor.queries if query.operation == "daily_basic"
+    ]
+    assert basic_queries
+    assert all(query.fields == ["ts_code", "pe_ttm"] for query in basic_queries)
+    assert "pe_ttm" in dataset
+    assert "circ_mv" not in dataset
+    assert "pb" not in dataset
+
+
+def test_research_dataset_reports_progress_after_each_bounded_fetch_batch(
+    monkeypatch,
+):
+    trade_dates = ["20260105", "20260106"]
+    executor = FakeQueryExecutor(
+        trade_dates,
+        {date: [{"ts_code": "000001.SZ"}] for date in trade_dates},
+        {
+            date: [{"ts_code": "000001.SZ", "close": close}]
+            for date, close in zip(trade_dates, [10.0, 11.0])
+        },
+    )
+    progress = []
+    monkeypatch.setattr(
+        "china_a_share.discovery.backtester.DATA_FETCH_BATCH_SIZE",
+        1,
+    )
+
+    FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+        progress_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
+
+    assert progress == [(1, 2), (2, 2)]
 
 
 def test_research_dataset_derives_point_in_time_sequence_features():

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from threading import Lock
@@ -40,6 +40,7 @@ STORAGE_WRITE_RETRY = Retry(
     multiplier=2.0,
     deadline=STORAGE_RETRY_DEADLINE_SECONDS,
 )
+DISCOVERY_TASK_STALE_AFTER = timedelta(minutes=30)
 logger = logging.getLogger(__name__)
 
 
@@ -229,7 +230,36 @@ class AnalysisTaskCoordinator:
 
     def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
         """Return the current persisted task state."""
-        return self._store.get(task_id)
+        task = self._store.get(task_id)
+        if (
+            isinstance(task, DiscoveryTask)
+            and task.status == AnalysisTaskStatus.RUNNING
+            and datetime.now(timezone.utc) - task.updated_at
+            > DISCOVERY_TASK_STALE_AFTER
+        ):
+            # Cloud Run can terminate a worker with SIGKILL after an OOM, so
+            # application-level exception handling never gets a chance to
+            # persist the terminal state. Dataset batches refresh updated_at;
+            # a silent interval beyond this bound therefore means the worker
+            # can no longer be trusted to be alive.
+            logger.error(
+                "stale_discovery_task_failed task_id=%s updated_at=%s",
+                task.task_id,
+                task.updated_at.isoformat(),
+            )
+            task.status = AnalysisTaskStatus.FAILED
+            task.updated_at = datetime.now(timezone.utc)
+            task.progress.current_stage = "failed"
+            task.progress.current_log = "The research worker stopped unexpectedly."
+            task.error = ServiceError(
+                source="system",
+                message=(
+                    "The research worker stopped without reporting a terminal "
+                    "result. This commonly indicates a platform resource limit."
+                ),
+            )
+            self._store.put(task)
+        return task
 
     def run(self, task_id: str, service: AnalysisService) -> AnalysisTask:
         """Execute one queued task and persist progress and terminal state."""
