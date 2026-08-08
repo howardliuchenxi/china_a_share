@@ -151,9 +151,12 @@ class ASharePlanValidator:
             raise PlanValidationError(
                 f"A query plan may contain at most {MAX_QUERIES_PER_ANALYSIS} calls."
             )
+        pipeline_fields = None
         if plan.result_pipeline:
-            self._validate_result_pipeline(plan)
+            pipeline_fields = self._validate_result_pipeline(plan)
             self._validate_semantic_constraints(plan)
+        if plan.answer_contract:
+            self._validate_answer_contract(plan, pipeline_fields)
         orphaned_fanout_templates = [
             query.operation
             for query in plan.queries
@@ -202,7 +205,7 @@ class ASharePlanValidator:
         return plan
 
     @staticmethod
-    def _validate_result_pipeline(plan: QueryPlan) -> None:
+    def _validate_result_pipeline(plan: QueryPlan) -> set[str]:
         """Validate pipeline field lineage before any provider call is issued."""
         pipeline = plan.result_pipeline
         source_query = next(
@@ -341,6 +344,56 @@ class ASharePlanValidator:
                     aggregation.output_field
                     for aggregation in step.aggregations
                 }
+        return available_fields
+
+    @staticmethod
+    def _validate_answer_contract(
+        plan: QueryPlan,
+        pipeline_fields: Optional[set[str]],
+    ) -> None:
+        """Require the executable result to contain every promised answer field."""
+        contract = plan.answer_contract
+        pipeline = plan.result_pipeline
+        if pipeline and contract.result_query_id == pipeline.output_query_id:
+            available_fields = pipeline_fields or set()
+            if (
+                contract.result_kind == "summary"
+                and pipeline.steps[-1].operation != "summarize"
+            ):
+                raise PlanValidationError(
+                    "The answer contract requires summary metrics, but the result "
+                    "pipeline does not end with summarize."
+                )
+        else:
+            result_query = next(
+                (
+                    query
+                    for query in plan.queries
+                    if query.query_id == contract.result_query_id
+                ),
+                None,
+            )
+            if result_query is None:
+                raise PlanValidationError(
+                    "Answer contract result_query_id does not match a planned result."
+                )
+            if contract.result_kind == "summary":
+                raise PlanValidationError(
+                    "Summary answer contracts must reference a summarized pipeline output."
+                )
+            available_fields = set(
+                TRANSFORM_RESULT_FIELDS.get(
+                    result_query.transform,
+                    set(result_query.fields),
+                )
+            )
+        required_fields = {output.field for output in contract.outputs}
+        missing_fields = required_fields.difference(available_fields)
+        if missing_fields:
+            raise PlanValidationError(
+                "Final result does not satisfy the answer contract; missing fields: "
+                + ", ".join(sorted(missing_fields))
+            )
 
     @staticmethod
     def _validate_semantic_constraints(plan: QueryPlan) -> None:
@@ -2575,6 +2628,28 @@ class AnalysisService:
     ) -> None:
         """Compile one validated native limit-up streak analysis deterministically."""
         horizon = resolve_future_horizon(prompt)
+        if (
+            horizon is None
+            and plan.answer_contract
+            and plan.result_pipeline
+            and plan.answer_contract.result_query_id
+            == plan.result_pipeline.output_query_id
+        ):
+            planned_outcome = next(
+                (
+                    step
+                    for step in plan.result_pipeline.steps
+                    if step.operation == "match_at_offset"
+                ),
+                None,
+            )
+            if planned_outcome is not None:
+                # The planner's typed pipeline is the source of truth for semantic
+                # phrasing that is intentionally outside deterministic language rules.
+                horizon = (
+                    planned_outcome.offset_value,
+                    planned_outcome.offset_unit,
+                )
         event_range = resolve_explicit_time_range(prompt)
         if plan.feasibility != "supported":
             if event_range is None:

@@ -665,6 +665,48 @@ class AnalysisIntent(BaseModel):
     ranking: AnalysisRanking = Field(description="Ranking sorting and count constraints.")
 
 
+class AnswerOutput(BaseModel):
+    """One user-requested field that must exist in the final answer result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(
+        pattern=OPERATION_NAME_PATTERN,
+        description="Exact final result field that satisfies one requested output.",
+    )
+    description: str = Field(
+        min_length=1,
+        description="Business meaning of the output, including its unit or condition.",
+    )
+
+
+class AnswerContract(BaseModel):
+    """Machine-verifiable shape of the result promised to the user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result_query_id: str = Field(
+        min_length=1,
+        description="Query or pipeline output identifier containing the final answer.",
+    )
+    result_kind: Literal["table", "summary"] = Field(
+        description="Whether the answer contains detail rows or aggregate metrics.",
+    )
+    outputs: List[AnswerOutput] = Field(
+        min_length=1,
+        max_length=20,
+        description="Complete set of fields explicitly requested by the user.",
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_outputs(self) -> "AnswerContract":
+        """Reject ambiguous contracts that promise one field more than once."""
+        output_fields = [output.field for output in self.outputs]
+        if len(output_fields) != len(set(output_fields)):
+            raise ValueError("answer contract output fields must be unique")
+        return self
+
+
 class QueryPlan(BaseModel):
     """Structured A-share retrieval plan produced from one user request."""
 
@@ -681,6 +723,10 @@ class QueryPlan(BaseModel):
     intent: Optional[AnalysisIntent] = Field(
         default=None,
         description="High-level intent when compiling deterministic execution paths.",
+    )
+    answer_contract: Optional[AnswerContract] = Field(
+        default=None,
+        description="Exact final result fields required to answer the user's request.",
     )
     feasibility: Literal["supported", "unsupported"] = Field(
         default="supported",

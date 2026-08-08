@@ -16,6 +16,7 @@ from china_a_share.application.workflow import (
     PlanValidationError,
 )
 from china_a_share.core.contracts import (
+    AnswerContract,
     AnalysisRequest,
     DataFilter,
     DataOperation,
@@ -1006,6 +1007,30 @@ def test_planner_retries_with_semantic_validation_feedback():
         }
     )
     valid_plan = make_daily_plan()
+    invalid_plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "invalid-ranking",
+            "result_kind": "table",
+            "outputs": [
+                {
+                    "field": "ts_code",
+                    "description": "A-share security code.",
+                }
+            ],
+        }
+    )
+    valid_plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [
+                {
+                    "field": "ts_code",
+                    "description": "A-share security code.",
+                }
+            ],
+        }
+    )
     session = SequenceFakeSession(
         [
             FakeResponse(
@@ -1045,6 +1070,54 @@ def test_planner_retries_with_semantic_validation_feedback():
     assert "sort references unavailable fields: missing_field" in (
         retry_messages[-1]["content"]
     )
+
+
+def test_planner_retries_when_answer_contract_is_omitted():
+    missing_contract = make_daily_plan()
+    valid_plan = make_daily_plan()
+    valid_plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [
+                {
+                    "field": "ts_code",
+                    "description": "A-share security code.",
+                }
+            ],
+        }
+    )
+    session = SequenceFakeSession(
+        [
+            FakeResponse(
+                {
+                    "choices": [
+                        {"message": {"content": missing_contract.model_dump_json()}}
+                    ]
+                }
+            ),
+            FakeResponse(
+                {
+                    "choices": [
+                        {"message": {"content": valid_plan.model_dump_json()}}
+                    ]
+                }
+            ),
+        ]
+    )
+
+    result = DeepSeekQueryPlanner(
+        "test-key",
+        session=session,
+    ).plan_validated(
+        AnalysisRequest(prompt="Return the requested fields."),
+        [DataOperation(name="daily", description="Daily prices.")],
+        ASharePlanValidator(FakeMarketDataProvider()).validate,
+    )
+
+    assert result == valid_plan
+    retry_messages = session.calls[1][1]["json"]["messages"]
+    assert "must include answer_contract" in retry_messages[-1]["content"]
 
 
 def test_vertex_planner_fallback_preserves_semantic_validation():
@@ -1351,10 +1424,22 @@ def test_workflow_preserves_planner_selected_limit_up_aggregation():
             ],
         }
     )
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "average-third-day-return",
+            "result_kind": "summary",
+            "outputs": [
+                {
+                    "field": "average_return",
+                    "description": "Mean return after the streak, expressed as a ratio.",
+                }
+            ],
+        }
+    )
 
     result = AnalysisService._normalize_plan_for_request(
         plan,
-        "过去一个月二连板第三日的平均收益",
+        "过去一个月连续涨停2天条件成立后的表现均值",
     )
 
     assert result.result_pipeline.output_query_id == "average-third-day-return"
@@ -1366,6 +1451,46 @@ def test_workflow_preserves_planner_selected_limit_up_aggregation():
     rolling = result.result_pipeline.steps[1]
     assert rolling.min_periods == 2
     assert rolling.require_consecutive is True
+
+
+def test_validator_rejects_a_missing_answer_contract_output():
+    plan = make_daily_plan()
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "market_direction",
+            "output_query_id": "market-summary",
+            "steps": [
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "row_count",
+                            "field": "change",
+                            "function": "count",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market-summary",
+            "result_kind": "summary",
+            "outputs": [
+                {
+                    "field": "average_change",
+                    "description": "Mean daily price change.",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="missing fields: average_change",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
 def test_workflow_compiles_market_period_return_at_security_grain():

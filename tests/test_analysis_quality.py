@@ -108,6 +108,28 @@ def event_study_plan():
                 "evidence": "limit_list_d and daily expose event dates and closing prices.",
             }
         ],
+        "answer_contract": {
+            "result_query_id": "limit_up_streak_outcome",
+            "result_kind": "summary",
+            "outputs": [
+                {
+                    "field": "event_count",
+                    "description": "Number of valid streak outcomes.",
+                },
+                {
+                    "field": "positive_event_ratio",
+                    "description": "Share of outcomes with a positive return.",
+                },
+                {
+                    "field": "negative_event_ratio",
+                    "description": "Share of outcomes with a negative return.",
+                },
+                {
+                    "field": "average_return_pct",
+                    "description": "Mean outcome return in percentage points.",
+                },
+            ],
+        },
         "queries": [
             {
                 "query_id": "market_direction",

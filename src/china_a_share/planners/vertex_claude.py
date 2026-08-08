@@ -71,9 +71,13 @@ class VertexClaudeQueryPlanner:
     ) -> QueryPlan:
         """Validate Claude output and give DeepSeek corrective retry feedback."""
         try:
-            return validator(
-                self._plan_with_claude(request, candidate_operations)
-            )
+            plan = self._plan_with_claude(request, candidate_operations)
+            if plan.feasibility == "supported" and plan.answer_contract is None:
+                raise ValueError(
+                    "A supported model-generated plan must include answer_contract "
+                    "with every user-requested final output field."
+                )
+            return validator(plan)
         except (PlannerError, ValueError):
             return self._fallback.plan_validated(
                 request,

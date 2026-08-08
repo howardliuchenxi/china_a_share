@@ -70,6 +70,14 @@ def build_query_plan_system_prompt(
         "Decompose the request into atomic requirements and provide catalog evidence "
         "for each requirement. Preserve every numeric value and comparison direction "
         "from the user request; do not replace them with fixed thresholds or counts. "
+        "For every supported plan, populate answer_contract with the exact query or "
+        "pipeline result that answers the user. Use result_kind=summary when the user "
+        "asks for counts, probabilities, averages, extrema, or other aggregate metrics, "
+        "and list every requested final output field separately. Use result_kind=table "
+        "for requested detail rows. The answer contract is exhaustive: never omit one "
+        "side of a requested comparison, one requested statistic, or its result field. "
+        "Each promised field must be produced by the executable query or pipeline; do "
+        "not describe an output that the plan does not calculate. "
         "Use result_pipeline for deterministic calculations instead of inventing "
         "specialized transforms. Pipelines may compose latest_by_group, derive, "
         "drop_missing, filter, sort, limit, quantile_filter, aggregate, rolling_mean, "
@@ -232,7 +240,17 @@ class DeepSeekQueryPlanner:
                 break
 
             self._finalize_plan(plan)
-            if validator is not None:
+            if (
+                validator is not None
+                and plan.feasibility == "supported"
+                and plan.answer_contract is None
+            ):
+                last_error = ValueError(
+                    "A supported model-generated plan must include answer_contract "
+                    "with every user-requested final output field."
+                )
+                feedback = str(last_error)
+            elif validator is not None:
                 try:
                     validator(plan)
                     return plan

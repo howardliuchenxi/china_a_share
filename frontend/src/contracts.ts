@@ -69,6 +69,22 @@ export interface RequirementCoverage {
   evidence: string;
 }
 
+export interface AnswerOutput {
+  /** Exact final result field satisfying one requested output. */
+  field: string;
+  /** Business meaning of the output, including its unit or condition. */
+  description: string;
+}
+
+export interface AnswerContract {
+  /** Query or pipeline output identifier containing the final answer. */
+  result_query_id: string;
+  /** Whether the answer contains detail rows or aggregate metrics. */
+  result_kind: "table" | "summary";
+  /** Complete set of fields explicitly requested by the user. */
+  outputs: AnswerOutput[];
+}
+
 export interface QueryPlan {
   /** Fixed market boundary enforced for every analysis request. */
   market: "A_SHARE";
@@ -78,6 +94,8 @@ export interface QueryPlan {
   feasibility: "supported" | "unsupported";
   /** Coverage evidence for each atomic user requirement. */
   requirements: RequirementCoverage[];
+  /** Machine-verifiable fields that the final answer must contain. */
+  answer_contract?: AnswerContract | null;
   /** Missing capabilities that prevent faithful execution. */
   limitations: string[];
   /** Complete alternative prompts that resolve material ambiguity. */
