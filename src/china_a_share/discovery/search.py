@@ -322,7 +322,21 @@ class RuleSearchEngine:
         factors: Sequence[str],
     ) -> pd.DataFrame:
         """Coerce requested factors and hide non-finite values from every rule."""
-        cleaned = frame.reset_index(drop=True).copy()
+        cleaned = frame.reset_index(drop=True)
+        requires_copy = any(
+            factor not in cleaned
+            or not pd.api.types.is_numeric_dtype(cleaned[factor])
+            or bool(
+                (
+                    cleaned[factor].notna()
+                    & ~cleaned[factor].map(math.isfinite)
+                ).any()
+            )
+            for factor in factors
+        )
+        if not requires_copy:
+            return cleaned
+        cleaned = cleaned.copy()
         for factor in factors:
             if factor not in cleaned:
                 # A factor may be available during training but absent from an

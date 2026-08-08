@@ -183,6 +183,13 @@ def test_research_dataset_requests_only_selected_daily_basic_factors():
     assert "pe_ttm" in dataset
     assert "circ_mv" not in dataset
     assert "pb" not in dataset
+    assert "adjusted_close" not in dataset
+    assert pd.api.types.is_integer_dtype(dataset["ts_code"])
+    assert pd.api.types.is_integer_dtype(dataset["trade_date"])
+    result = FactorBacktester.evaluate_rule(dataset, "pe_ttm >= 10")
+    assert result.event_examples[0].ts_code == "000001.SZ"
+    assert result.event_examples[0].trade_date == "20260105"
+    assert result.event_examples[0].future_trade_date == "20260106"
 
 
 def test_research_dataset_reports_progress_after_each_bounded_fetch_batch(

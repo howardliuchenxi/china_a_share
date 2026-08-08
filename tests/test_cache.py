@@ -71,6 +71,41 @@ class FakeStorageClient:
         return FakeBucket(self.objects)
 
 
+class FlakyDownloadBlob(FakeBlob):
+    def __init__(self, objects, name, failures):
+        super().__init__(objects, name)
+        self.failures = failures
+        self.download_attempts = 0
+
+    def download_as_bytes(self):
+        self.download_attempts += 1
+        if self.download_attempts <= self.failures:
+            raise ConnectionError("temporary cache transport failure")
+        return super().download_as_bytes()
+
+
+class FlakyDownloadStorageClient(FakeStorageClient):
+    def __init__(self, failures):
+        super().__init__()
+        self.failures = failures
+        self.blob = None
+
+    def bucket(self, name):
+        self.bucket_names.append(name)
+        client = self
+
+        class FlakyBucket:
+            def blob(self, object_name):
+                client.blob = FlakyDownloadBlob(
+                    client.objects,
+                    object_name,
+                    client.failures,
+                )
+                return client.blob
+
+        return FlakyBucket()
+
+
 def make_record(
     operation="daily",
     fetched_at=None,
@@ -167,6 +202,21 @@ def test_cloud_storage_store_returns_none_for_missing_object():
     )
 
     assert store.get("v3/tushare/daily/missing") is None
+
+
+def test_cloud_storage_store_retries_transient_download_failures(monkeypatch):
+    client = FlakyDownloadStorageClient(failures=2)
+    store = CloudStorageDataCacheStore("test-cache", storage_client=client)
+    record = make_record()
+    store.put("v3/tushare/daily/key", record)
+    sleeps = []
+    monkeypatch.setattr("china_a_share.cache.sleep", sleeps.append)
+
+    restored = store.get("v3/tushare/daily/key")
+
+    assert restored == record
+    assert client.blob.download_attempts == 3
+    assert sleeps == [0.5, 1.0]
 
 
 def test_layered_cache_promotes_valid_l2_record_into_l1():

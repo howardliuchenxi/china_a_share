@@ -80,7 +80,11 @@ class EvolutionLoop:
         original_training_sample_count = len(train)
         # Purge labels that settle inside the validation period so training
         # never learns from price outcomes belonging to the blind window.
-        train = train[train["future_trade_date"] < request.val_start].copy()
+        future_trade_dates = pd.to_numeric(
+            train["future_trade_date"],
+            errors="raise",
+        )
+        train = train[future_trade_dates < int(request.val_start)].copy()
         task.progress.training_samples_purged = (
             original_training_sample_count - len(train)
         )

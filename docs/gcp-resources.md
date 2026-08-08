@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-07-25**
+Last verified: **2026-08-08**
 
 ## Project boundary
 
@@ -89,12 +89,12 @@ protected from anonymous consumption.
 | Image | Immutable digest copied from the latest ready web-service revision during deployment |
 | Command | `python -m china_a_share.worker` |
 | Tasks and parallelism | 1 task; parallelism 1 |
-| CPU and memory | 1 vCPU, 1 GiB |
+| CPU and memory | 1 vCPU, 4 GiB |
 | Task timeout | 7,200 seconds |
 | Maximum retries | 1 |
 | Runtime identity | `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com` |
 | Invocation | No public endpoint; executions are started through the Cloud Run API |
-| Expected cost impact | Usage-based CPU and memory only while an analysis execution runs |
+| Expected cost impact | Usage-based CPU and 4 GiB memory only while an analysis execution runs; no idle job cost |
 
 The web service runtime identity has
 `roles/run.jobsExecutorWithOverrides` on this job only. This permits the
@@ -376,3 +376,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-07-24 | Deployed revision `china-a-share-lab-00026-jx2` through `make deploy`; recorded source `main@44ab319a33233b300df90992f338e0f7a18d129b`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-24 | Deployed revision `china-a-share-lab-00027-qft` through `make deploy`; recorded source `main@79f4c6efec959e20b81c2edc6279a73ee992afa1`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-25 | Created `feishu-bot-webhook` with automatic replication for successful deployment notifications and granted secret-level access only to the deployment automation identity; expected cost remains negligible. |
+| 2026-08-08 | Increased `china-a-share-analysis-worker` memory from 1 GiB to 4 GiB after a full-market multi-year discovery workload exceeded the previous limit; retained 1 vCPU, one task, two-hour timeout, one retry, the existing runtime identity, and usage-only billing with no idle job cost. |

@@ -8,7 +8,7 @@ import json
 import logging
 import re
 from threading import Lock, RLock
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Callable, Dict, Optional, Sequence, Tuple
 from contextvars import ContextVar
 
@@ -27,6 +27,8 @@ DEFAULT_L1_MAX_ENTRIES = 256
 DEFAULT_L1_MAX_BYTES = 128 * 1024 * 1024
 CACHE_LOCK_STRIPE_COUNT = 64
 CACHE_OBJECT_PREFIX = "cache"
+CACHE_L2_READ_MAX_ATTEMPTS = 3
+CACHE_L2_READ_RETRY_BASE_SECONDS = 0.5
 MILLISECONDS_PER_SECOND = 1_000
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 OPERATION_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -123,13 +125,22 @@ class CloudStorageDataCacheStore:
     def get(self, cache_key: str) -> Optional[DataCacheRecord]:
         """Download and validate one compressed cache record when present."""
         blob = self._bucket.blob(self._object_name(cache_key))
-        try:
-            compressed_payload = blob.download_as_bytes()
-        except NotFound:
-            return None
-        except Exception:
-            logger.exception("cache_l2_read_failed cache_key=%s", cache_key)
-            raise
+        for attempt in range(1, CACHE_L2_READ_MAX_ATTEMPTS + 1):
+            try:
+                compressed_payload = blob.download_as_bytes()
+                break
+            except NotFound:
+                return None
+            except Exception:
+                logger.exception(
+                    "cache_l2_read_failed cache_key=%s attempt=%s max_attempts=%s",
+                    cache_key,
+                    attempt,
+                    CACHE_L2_READ_MAX_ATTEMPTS,
+                )
+                if attempt == CACHE_L2_READ_MAX_ATTEMPTS:
+                    raise
+                sleep(CACHE_L2_READ_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
 
         try:
             payload = gzip.decompress(compressed_payload)

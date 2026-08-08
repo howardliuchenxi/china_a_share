@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import logging
 import math
+from numbers import Integral, Real
 import re
 import time
 from typing import Callable, List, Optional
@@ -24,6 +25,7 @@ from china_a_share.core.contracts import (
 DATA_FETCH_WORKERS = 20
 DATA_FETCH_BATCH_SIZE = DATA_FETCH_WORKERS
 SESSION_PRICE_FIELDS = frozenset({"open", "close", "pct_chg", "vol", "amount"})
+SECURITY_EXCHANGE_OFFSETS = {"SZ": 0, "SH": 1_000_000, "BJ": 2_000_000}
 CALENDAR_EXTENSION_MULTIPLIER = 3
 # A full-month floor covers Spring Festival and exceptional exchange closures
 # when even a one-session forward label can be more than ten calendar days away.
@@ -123,8 +125,13 @@ class FactorBacktester:
 
         panel = pd.concat(frames, ignore_index=True)
         panel = panel.sort_values(["ts_code", "trade_date"])
+        compact_dates = factor_fields is not None
         future_date_by_signal = {
-            trade_date: trade_dates[trade_date_index[trade_date] + forward_days]
+            (int(trade_date) if compact_dates else trade_date): (
+                int(trade_dates[trade_date_index[trade_date] + forward_days])
+                if compact_dates
+                else trade_dates[trade_date_index[trade_date] + forward_days]
+            )
             for trade_date in signal_dates
         }
         panel["future_trade_date"] = panel["trade_date"].map(
@@ -147,10 +154,31 @@ class FactorBacktester:
         panel["forward_return"] = (
             panel["future_adjusted_close"] / panel["adjusted_close"] - 1.0
         )
-        panel = self._add_historical_features(panel, trade_dates)
+        panel = self._add_historical_features(
+            panel,
+            [int(date) for date in trade_dates] if compact_dates else trade_dates,
+        )
         # Keep signals without a future price so every rule can disclose and
         # constrain outcome attrition instead of silently studying survivors.
-        dataset = panel[panel["trade_date"].between(start_date, end_date)]
+        dataset = panel[
+            panel["trade_date"].between(
+                int(start_date) if compact_dates else start_date,
+                int(end_date) if compact_dates else end_date,
+            )
+        ]
+        if factor_fields is not None:
+            result_fields = [
+                field
+                for field in (
+                    "ts_code",
+                    "trade_date",
+                    "future_trade_date",
+                    "forward_return",
+                    *factor_fields,
+                )
+                if field in dataset
+            ]
+            dataset = dataset.loc[:, list(dict.fromkeys(result_fields))].copy()
         return dataset.reset_index(drop=True)
 
     @staticmethod
@@ -275,7 +303,7 @@ class FactorBacktester:
         """Evaluate one expression against pre-aligned event-study observations."""
         if "forward_return" not in dataset:
             raise ValueError("Research dataset is missing forward_return.")
-        research_frame = dataset.reset_index(drop=True)
+        research_frame = dataset
         formula_tokens = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", formula))
         leaked_fields = sorted(formula_tokens & OUTCOME_RULE_FIELDS)
         if leaked_fields:
@@ -284,31 +312,44 @@ class FactorBacktester:
                 + ", ".join(leaked_fields)
             )
         try:
-            selected = research_frame.query(formula, engine="python")
+            selection = research_frame.eval(formula, engine="python").astype(bool)
         except Exception as exc:
             raise ValueError(f"Invalid discovery rule: {exc}") from exc
         feature_fields = sorted(
             formula_tokens
             & (set(research_frame.columns) - NON_FEATURE_RULE_FIELDS)
         )
-        baseline_frame = research_frame
+        baseline_mask = pd.Series(True, index=research_frame.index)
         for field in feature_fields:
-            numeric = pd.to_numeric(baseline_frame[field], errors="coerce")
-            baseline_frame = baseline_frame.loc[numeric.map(math.isfinite)]
-        matched_sample_count = len(selected)
-        eligible_sample_count = len(baseline_frame)
+            numeric = pd.to_numeric(research_frame[field], errors="coerce")
+            baseline_mask &= numeric.map(math.isfinite)
+        matched_sample_count = int(selection.sum())
+        eligible_sample_count = int(baseline_mask.sum())
         rule_support_rate = (
             matched_sample_count / eligible_sample_count
             if eligible_sample_count
             else 0.0
         )
-        evaluation_frame = selected.assign(
-            forward_return=pd.to_numeric(
-                selected["forward_return"], errors="coerce"
+        numeric_outcomes = pd.to_numeric(
+            research_frame["forward_return"],
+            errors="coerce",
+        )
+        finite_outcomes = numeric_outcomes.notna() & numeric_outcomes.map(
+            math.isfinite
+        )
+        observation_fields = ["trade_date", "forward_return"]
+        if "ts_code" in research_frame:
+            observation_fields.append("ts_code")
+        evaluation_fields = list(observation_fields)
+        if include_event_examples:
+            evaluation_fields.extend(
+                field
+                for field in ("future_trade_date", *feature_fields)
+                if field in research_frame and field not in evaluation_fields
             )
-        ).dropna(subset=["forward_return"])
-        evaluation_frame = evaluation_frame.loc[
-            evaluation_frame["forward_return"].map(math.isfinite)
+        evaluation_frame = research_frame.loc[
+            selection & finite_outcomes,
+            evaluation_fields,
         ]
         returns = evaluation_frame["forward_return"]
         security_count = (
@@ -343,13 +384,9 @@ class FactorBacktester:
             if len(returns)
             else 0.0
         )
-        baseline_evaluation_frame = baseline_frame.assign(
-            forward_return=pd.to_numeric(
-                baseline_frame["forward_return"], errors="coerce"
-            )
-        ).dropna(subset=["forward_return"])
-        baseline_evaluation_frame = baseline_evaluation_frame.loc[
-            baseline_evaluation_frame["forward_return"].map(math.isfinite)
+        baseline_evaluation_frame = research_frame.loc[
+            baseline_mask & finite_outcomes,
+            observation_fields,
         ]
         baseline = baseline_evaluation_frame["forward_return"]
         missing_outcome_count = matched_sample_count - len(returns)
@@ -393,7 +430,7 @@ class FactorBacktester:
             float((baseline > target_return).mean()) if len(baseline) else 0.0
         )
         lift_standard_error = FactorBacktester._clustered_lift_standard_error(
-            baseline_frame,
+            research_frame.loc[baseline_mask, observation_fields],
             evaluation_frame.index,
             target_return,
             dependence_lag_days,
@@ -516,7 +553,7 @@ class FactorBacktester:
         """Return a deterministic bounded sample of recent observable events."""
         if evaluation_frame.empty:
             return []
-        trade_dates = evaluation_frame["trade_date"].astype(str)
+        trade_dates = evaluation_frame["trade_date"]
         recent_parts = []
         remaining = EVENT_EXAMPLE_LIMIT
         # Most studies have many securities per date, so scan dates from newest
@@ -544,11 +581,17 @@ class FactorBacktester:
             examples.append(
                 DiscoveryEventExample(
                     trade_date=str(row.trade_date),
-                    ts_code=None if pd.isna(ts_code) else str(ts_code),
+                    ts_code=(
+                        None
+                        if pd.isna(ts_code)
+                        else FactorBacktester._display_ts_code(ts_code)
+                    ),
                     future_trade_date=(
                         None
                         if pd.isna(future_trade_date)
-                        else str(future_trade_date)
+                        else FactorBacktester._display_trade_date(
+                            future_trade_date
+                        )
                     ),
                     forward_return=float(row.forward_return),
                     factor_values=factor_values,
@@ -827,7 +870,15 @@ class FactorBacktester:
                     f"Invalid close or adjustment factor on {trade_date}."
                 )
             frame["adjusted_close"] = close * adjustment_factor
-            frame["trade_date"] = trade_date
+            if factor_fields is not None:
+                # Compact, reversible integer keys avoid retaining millions of
+                # duplicate Python strings during concat, sort, and merge.
+                frame["ts_code"] = frame["ts_code"].map(
+                    self._encode_a_share_code
+                )
+                frame["trade_date"] = int(trade_date)
+            else:
+                frame["trade_date"] = trade_date
             return frame
         except Exception:
             logger.exception(
@@ -849,6 +900,34 @@ class FactorBacktester:
             (exchange == "SH" and code.startswith("900"))
             or (exchange == "SZ" and code.startswith("200"))
         )
+
+    @staticmethod
+    def _encode_a_share_code(value: object) -> int:
+        """Encode one validated A-share code as a reversible integer key."""
+        code, _, exchange = str(value).partition(".")
+        return SECURITY_EXCHANGE_OFFSETS[exchange] + int(code)
+
+    @staticmethod
+    def _display_ts_code(value: object) -> str:
+        """Return the public exchange-qualified code for an internal key."""
+        if not isinstance(value, Integral):
+            return str(value)
+        encoded = int(value)
+        for exchange, offset in sorted(
+            SECURITY_EXCHANGE_OFFSETS.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        ):
+            if encoded >= offset:
+                return f"{encoded - offset:06d}.{exchange}"
+        raise ValueError(f"Invalid encoded A-share security key: {encoded}")
+
+    @staticmethod
+    def _display_trade_date(value: object) -> str:
+        """Return an eight-digit public date from a compact numeric value."""
+        if isinstance(value, Real) and math.isfinite(value):
+            return f"{int(value):08d}"
+        return str(value)
 
     @staticmethod
     def _validated_session_rows(
@@ -904,7 +983,7 @@ class FactorBacktester:
             # how many cross-sectional events happened on that date.
             return 0.0, 1.0, 0.0, selected_day_count
         probability = successes / observations
-        ordered_dates = pd.Index(sorted(signal_dates.astype(str).unique()))
+        ordered_dates = pd.Index(sorted(signal_dates.unique()))
         influence = (
             (clusters["sum"] - probability * clusters["count"])
             .reindex(ordered_dates, fill_value=0.0)
@@ -994,7 +1073,7 @@ class FactorBacktester:
     @staticmethod
     def _effective_cluster_count(cluster_labels: pd.Series) -> float:
         """Return the Kish count implied by unequal event weights per cluster."""
-        counts = cluster_labels.astype(str).value_counts().astype(float)
+        counts = cluster_labels.value_counts().astype(float)
         if counts.empty:
             return 0.0
         total = float(counts.sum())
@@ -1045,7 +1124,7 @@ class FactorBacktester:
         )
         # Retain zero-influence dates so HAC lags continue to represent actual
         # trading-session distance when a factor is unavailable for a full day.
-        ordered_dates = pd.Index(sorted(signal_dates.astype(str).unique()))
+        ordered_dates = pd.Index(sorted(signal_dates.unique()))
         cluster_influence = cluster_influence.reindex(
             ordered_dates,
             fill_value=0.0,

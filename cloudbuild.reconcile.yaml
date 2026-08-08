@@ -243,7 +243,7 @@ steps:
           --max-retries 1 \
           --task-timeout 2h \
           --cpu 1 \
-          --memory 1Gi \
+          --memory 4Gi \
           --service-account "${_RUNTIME_SERVICE_ACCOUNT}" \
           --set-env-vars "TUSHARE_CACHE_BUCKET=${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=${_REGION},ANALYSIS_JOB_NAME=${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA" \
           --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest" \

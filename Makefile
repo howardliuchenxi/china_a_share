@@ -94,7 +94,7 @@ deploy: check
 		--max-retries 1 \
 		--task-timeout "$(ANALYSIS_JOB_TIMEOUT)" \
 		--cpu 1 \
-		--memory 1Gi \
+		--memory 4Gi \
 		--service-account "$(RUNTIME_SERVICE_ACCOUNT)" \
 		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)" \
 		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest \
