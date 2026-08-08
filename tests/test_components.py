@@ -189,7 +189,7 @@ def test_validator_accepts_universe_constraint_enforced_before_ranking():
                 "operator": "eq",
                 "value": "Shanghai",
                 "query_id": "classified-universe",
-                "enforcement_step_index": 1,
+                "enforcement_step_index": 2,
             }
         ],
         queries=[
@@ -214,6 +214,7 @@ def test_validator_accepts_universe_constraint_enforced_before_ranking():
             "source_query_id": "valuation",
             "output_query_id": "ranked-valuation",
             "steps": [
+                {"operation": "drop_missing", "fields": ["pe"]},
                 {
                     "operation": "match_source",
                     "right_source_query_id": "classified-universe",
@@ -274,7 +275,7 @@ def test_validator_rejects_universe_constraint_enforced_after_ranking():
                 "operator": "eq",
                 "value": "Automotive",
                 "query_id": "classified-universe",
-                "enforcement_step_index": 2,
+                "enforcement_step_index": 3,
             }
         ],
         queries=[
@@ -303,6 +304,7 @@ def test_validator_rejects_universe_constraint_enforced_after_ranking():
             "source_query_id": "valuation",
             "output_query_id": "invalid-ranking",
             "steps": [
+                {"operation": "drop_missing", "fields": ["pe"]},
                 {"operation": "sort", "field": "pe", "direction": "desc"},
                 {
                     "operation": "match_source",
@@ -2033,6 +2035,133 @@ def test_workflow_compiles_generic_classified_metric_ranking(
     assert validated.result_pipeline.steps[-2].direction == direction
     assert validated.result_pipeline.steps[-1].count == limit
     assert validated.constraints[0].scope == "universe"
+
+
+def test_validator_rejects_typed_ranking_with_unbound_intent_predicate():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "rank_metric",
+            "universe": {
+                "filters": [
+                    {"field": "industry", "operator": "eq", "value": "Energy"}
+                ]
+            },
+            "metric": {
+                "type": "pb",
+                "as_of": "20260807",
+                "filters": [{"field": "pb", "operator": "gt", "value": 0}],
+            },
+            "ranking": {"direction": "asc", "limit": 8},
+        }
+    )
+    plan = AnalysisService._compile_intent(
+        QueryPlan(
+            interpretation="Rank positive valuation inside one industry.",
+            intent=intent,
+            requirements=[
+                {
+                    "requirement": "Apply every typed predicate.",
+                    "status": "covered",
+                    "implementation": "Compile predicates locally.",
+                    "evidence": "Typed intent contains both predicates.",
+                }
+            ],
+        )
+    )
+    plan.constraints.pop()
+
+    with pytest.raises(
+        PlanValidationError,
+        match="exact constraint coverage",
+    ):
+        ASharePlanValidator(
+            FakeMarketDataProvider(stock_frame=pd.DataFrame())
+        ).validate(plan)
+
+
+def test_validator_rejects_typed_ranking_with_wrong_snapshot_or_order():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "rank_metric",
+            "metric": {"type": "total_mv", "as_of": "20260807"},
+            "ranking": {"direction": "desc", "limit": 6},
+        }
+    )
+    base_plan = AnalysisService._compile_intent(
+        QueryPlan(
+            interpretation="Rank one snapshot metric.",
+            intent=intent,
+            requirements=[
+                {
+                    "requirement": "Use one declared snapshot.",
+                    "status": "covered",
+                    "implementation": "Compile the snapshot locally.",
+                    "evidence": "The intent declares its as-of date.",
+                }
+            ],
+        )
+    )
+    wrong_snapshot = base_plan.model_copy(deep=True)
+    wrong_snapshot.queries[0].params["trade_date"] = "20260806"
+
+    with pytest.raises(PlanValidationError, match="typed as-of date"):
+        ASharePlanValidator(
+            FakeMarketDataProvider(stock_frame=pd.DataFrame())
+        ).validate(wrong_snapshot)
+
+    wrong_order = base_plan.model_copy(deep=True)
+    wrong_order.result_pipeline.steps[-2:] = list(
+        reversed(wrong_order.result_pipeline.steps[-2:])
+    )
+
+    with pytest.raises(PlanValidationError, match="adjacent sort and limit"):
+        ASharePlanValidator(
+            FakeMarketDataProvider(stock_frame=pd.DataFrame())
+        ).validate(wrong_order)
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        (
+            [
+                {"ts_code": "A", "trade_date": "20260807", "pe": 20.0},
+                {"ts_code": "A", "trade_date": "20260807", "pe": 10.0},
+            ],
+            "duplicate security identifiers",
+        ),
+        (
+            [
+                {"ts_code": "A", "trade_date": "20260807", "pe": 20.0},
+                {"ts_code": "B", "trade_date": "20260806", "pe": 10.0},
+            ],
+            "mixes multiple trading snapshots",
+        ),
+    ],
+)
+def test_ranking_result_invariants_reject_invalid_security_grain(rows, message):
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=rows,
+        row_count=len(rows),
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "ranked",
+            "steps": [
+                {"operation": "drop_missing", "fields": ["pe"]},
+                {"operation": "sort", "field": "pe", "direction": "desc"},
+                {"operation": "limit", "count": 10},
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match=message):
+        ResultPipelineExecutor().execute(pipeline, source)
 
 
 def test_compiled_metric_ranking_excludes_nonmembers_before_limit():

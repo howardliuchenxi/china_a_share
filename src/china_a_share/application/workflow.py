@@ -178,7 +178,10 @@ class ASharePlanValidator:
         if plan.result_pipeline:
             self._validate_typed_ranking_boundary(plan)
             pipeline_fields = self._validate_result_pipeline(plan)
+            self._validate_intent_constraint_coverage(plan)
+            self._validate_constraint_lineage(plan)
             self._validate_semantic_constraints(plan)
+            self._validate_rank_metric_semantics(plan)
         if plan.answer_contract:
             self._validate_answer_contract(plan, pipeline_fields)
         orphaned_fanout_templates = [
@@ -226,8 +229,42 @@ class ASharePlanValidator:
                     raise PlanValidationError(
                         f"Aggregation field is not requested: {aggregation.field}"
                     )
-        self._validate_constraint_lineage(plan)
+        if not plan.result_pipeline:
+            self._validate_intent_constraint_coverage(plan)
+            self._validate_constraint_lineage(plan)
         return plan
+
+    @staticmethod
+    def _validate_intent_constraint_coverage(plan: QueryPlan) -> None:
+        """Prove every typed ranking predicate has one executable binding."""
+        intent = plan.intent
+        if intent is None or intent.analysis_type != "rank_metric":
+            return
+
+        def predicate_key(scope: str, predicate: Any) -> tuple[Any, ...]:
+            value = predicate.value
+            normalized_value = tuple(value) if isinstance(value, list) else value
+            return scope, predicate.field, predicate.operator, normalized_value
+
+        expected = [
+            predicate_key("universe", row_filter)
+            for row_filter in intent.universe.filters
+        ]
+        expected.extend(
+            predicate_key("result", row_filter)
+            for row_filter in intent.metric.filters
+        )
+        declared = [
+            predicate_key(constraint.scope, constraint)
+            for constraint in plan.constraints
+        ]
+        if sorted(expected, key=repr) != sorted(declared, key=repr):
+            raise PlanValidationError(
+                "Typed ranking predicates must have exact constraint coverage."
+            )
+        constraint_ids = [constraint.constraint_id for constraint in plan.constraints]
+        if len(constraint_ids) != len(set(constraint_ids)):
+            raise PlanValidationError("Constraint identifiers must be unique.")
 
     @staticmethod
     def _validate_typed_ranking_boundary(plan: QueryPlan) -> None:
@@ -793,6 +830,93 @@ class ASharePlanValidator:
                     "Semantic violation: deriving multiple prices (e.g. start/end close) from "
                     "the same source field of the same query result is prohibited without explicit joins."
                 )
+
+    @staticmethod
+    def _validate_rank_metric_semantics(plan: QueryPlan) -> None:
+        """Require typed metric rankings to preserve grain, time, and operator order."""
+        intent = plan.intent
+        pipeline = plan.result_pipeline
+        if intent is None or intent.analysis_type != "rank_metric" or pipeline is None:
+            return
+
+        metric_field = (
+            "period_return_pct"
+            if intent.metric.type == "period_return"
+            else SNAPSHOT_RANKING_METRICS.get(intent.metric.type)
+        )
+        if metric_field is None:
+            raise PlanValidationError("Typed ranking metric is not locally supported.")
+        source_query = next(
+            (
+                query
+                for query in plan.queries
+                if query.query_id == pipeline.source_query_id
+            ),
+            None,
+        )
+        if source_query is None or not {"ts_code", metric_field}.issubset(
+            TRANSFORM_RESULT_FIELDS.get(
+                source_query.transform,
+                set(source_query.fields),
+            )
+        ):
+            raise PlanValidationError(
+                "Typed ranking source must provide security code and ranking metric."
+            )
+        if intent.metric.type == "period_return":
+            if (
+                source_query.transform != "period_return_by_ts_code"
+                or source_query.params.get("start_date") != intent.metric.window.start
+                or source_query.params.get("end_date") != intent.metric.window.end
+            ):
+                raise PlanValidationError(
+                    "Period ranking source must match the typed metric window."
+                )
+        elif (
+            source_query.operation != "daily_basic"
+            or source_query.params.get("trade_date") != intent.metric.as_of
+        ):
+            raise PlanValidationError(
+                "Snapshot ranking source must match the typed as-of date."
+            )
+
+        sort_indexes = [
+            index
+            for index, step in enumerate(pipeline.steps)
+            if step.operation == "sort"
+        ]
+        limit_indexes = [
+            index
+            for index, step in enumerate(pipeline.steps)
+            if step.operation == "limit"
+        ]
+        if len(sort_indexes) != 1 or len(limit_indexes) != 1:
+            raise PlanValidationError(
+                "Typed ranking requires exactly one sort and one limit operation."
+            )
+        sort_index = sort_indexes[0]
+        limit_index = limit_indexes[0]
+        sort_step = pipeline.steps[sort_index]
+        limit_step = pipeline.steps[limit_index]
+        if (
+            sort_step.field != metric_field
+            or sort_step.direction != intent.ranking.direction
+            or limit_step.count != intent.ranking.limit
+        ):
+            raise PlanValidationError(
+                "Typed ranking sort and limit must exactly match the intent."
+            )
+        if limit_index != sort_index + 1 or limit_index != len(pipeline.steps) - 1:
+            raise PlanValidationError(
+                "Typed ranking must end with adjacent sort and limit operations."
+            )
+        if not any(
+            step.operation == "drop_missing" and metric_field in step.fields
+            for step in pipeline.steps[:sort_index]
+        ):
+            raise PlanValidationError(
+                "Typed ranking must remove missing metric values before sorting."
+            )
 
     def _validate_params(self, operation: str, params: Dict[str, Any]) -> None:
         """Reject parameters that escape the A-share market boundary."""

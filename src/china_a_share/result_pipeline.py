@@ -424,6 +424,35 @@ class ResultPipelineExecutor:
                     f"Result row count ({len(frame)}) exceeds requested limit ({limit_step.count})."
                 )
 
+        for step in pipeline.steps:
+            if step.operation != "filter" or step.field not in frame.columns:
+                continue
+            series = frame[step.field]
+            value: object = step.value
+            if isinstance(step.value, (int, float)):
+                series = pd.to_numeric(series, errors="coerce")
+                value = float(step.value)
+            if not COMPARISONS[step.comparison](series, value).fillna(False).all():
+                raise ValueError(
+                    f"Result invariant failed for filter field '{step.field}'."
+                )
+
+        has_ranking_boundary = any(
+            step.operation == "sort"
+            and index + 1 < len(pipeline.steps)
+            and pipeline.steps[index + 1].operation == "limit"
+            for index, step in enumerate(pipeline.steps)
+        )
+        if has_ranking_boundary and "ts_code" in frame.columns:
+            if frame["ts_code"].duplicated().any():
+                raise ValueError(
+                    "Ranking result contains duplicate security identifiers."
+                )
+        if has_ranking_boundary and "trade_date" in frame.columns:
+            dates = frame["trade_date"].dropna().unique()
+            if len(dates) > 1:
+                raise ValueError("Ranking result mixes multiple trading snapshots.")
+
         sort_indexes = [
             index
             for index, step in enumerate(pipeline.steps)
