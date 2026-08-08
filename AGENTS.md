@@ -31,6 +31,26 @@
   product, or an ambiguous situation where you need the user's preference.
 - After fixing, push and verify the fix works.
 
+## General-solution requirement
+
+- Treat every reported failure as evidence of a missing or incorrect general
+  contract, validation rule, planning rule, execution mechanism, or domain
+  model behavior. Fix the reusable mechanism at the narrowest appropriate
+  architectural boundary.
+- Never solve a failure by hard-coding the reported prompt, tracking ID, stock,
+  company, industry, metric, date, or returned value. Do not add enumerated
+  special cases that only disguise the same defect for nearby inputs.
+- Regression tests must express the invariant or input class that was broken,
+  not merely replay one reported example. Include a materially different case
+  when needed to prove the behavior generalizes.
+- Prefer schema constraints, semantic validation, deterministic compilation,
+  or reusable execution logic over prompt-only guidance when the invariant can
+  be enforced locally. Prompt changes may clarify intent but must not be the
+  sole correctness boundary for enforceable behavior.
+- If a genuinely exceptional upstream limitation makes a narrow special case
+  unavoidable, explain its scope, operational cost, and removal path in chat
+  and obtain explicit user approval before implementation.
+
 ## Local delivery workflow
 
 - After making changes, limit automated validation to fast, relevant code
