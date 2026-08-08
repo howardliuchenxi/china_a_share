@@ -31,6 +31,7 @@ from china_a_share.core.contracts import (
 from china_a_share.core.errors import PlannerError
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 from china_a_share.planners.vertex_claude import VertexClaudeQueryPlanner
+from china_a_share.result_pipeline import ResultPipelineExecutor
 from china_a_share.registry import TushareOperationCatalog
 from china_a_share.capabilities import build_capability_manifest
 from china_a_share.registry import (
@@ -1549,6 +1550,101 @@ def test_workflow_compiles_intent_and_aligns_answer_contract_result():
     assert result.result_pipeline.output_query_id == "period_return_output"
     assert result.answer_contract.result_query_id == "period_return_output"
     ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
+def test_workflow_compiles_limit_up_count_ranking_with_period_returns():
+    class LimitUpProvider(FakeMarketDataProvider):
+        def supports(self, operation):
+            return operation in {"daily", "limit_list_d"}
+
+    plan = make_daily_plan()
+    plan.queries = []
+    plan.result_pipeline = None
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "A\u80a12025\u5e74\u6da8\u505c\u6700\u591a\u7684\u516c\u53f8\u662ftop3\uff0c\u5e76\u628a\u5168\u5e74\u6da8\u5e45\u5217\u4e00\u4e0b",
+    )
+
+    assert [query.operation for query in result.queries] == [
+        "limit_list_d",
+        "daily",
+    ]
+    assert result.queries[0].params == {
+        "start_date": "20250101",
+        "end_date": "20251231",
+        "limit_type": "U",
+    }
+    assert result.queries[1].transform == "period_return_by_ts_code"
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "aggregate",
+        "sort",
+        "limit",
+        "join_fields",
+    ]
+    assert result.result_pipeline.steps[2].count == 3
+    assert result.answer_contract.result_query_id == (
+        result.result_pipeline.output_query_id
+    )
+    assert {output.field for output in result.answer_contract.outputs} == {
+        "ts_code",
+        "name",
+        "limit_up_count",
+        "period_return_pct",
+    }
+    ASharePlanValidator(LimitUpProvider()).validate(result)
+
+    event_rows = [
+        {"ts_code": "000001.SZ", "name": "Alpha", "trade_date": "20250102"},
+        {"ts_code": "000001.SZ", "name": "Alpha", "trade_date": "20250103"},
+        {"ts_code": "000002.SZ", "name": "Beta", "trade_date": "20250102"},
+        {"ts_code": "000002.SZ", "name": "Beta", "trade_date": "20250103"},
+        {"ts_code": "000002.SZ", "name": "Beta", "trade_date": "20250106"},
+        {"ts_code": "600001.SH", "name": "Gamma", "trade_date": "20250102"},
+        {"ts_code": "600002.SH", "name": "Delta", "trade_date": "20250102"},
+        {"ts_code": "600002.SH", "name": "Delta", "trade_date": "20250103"},
+        {"ts_code": "600002.SH", "name": "Delta", "trade_date": "20250106"},
+        {"ts_code": "600002.SH", "name": "Delta", "trade_date": "20250107"},
+    ]
+    event_result = QueryResult(
+        query_id="period_limit_up_events",
+        provider="tushare",
+        operation="limit_list_d",
+        status="success",
+        rows=event_rows,
+        row_count=len(event_rows),
+    )
+    return_result = QueryResult(
+        query_id="period_security_returns",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": "000001.SZ", "name": "Alpha", "period_return_pct": 12.5},
+            {"ts_code": "000002.SZ", "name": "Beta", "period_return_pct": -3.0},
+            {"ts_code": "600001.SH", "name": "Gamma", "period_return_pct": 8.0},
+            {"ts_code": "600002.SH", "name": "Delta", "period_return_pct": 25.0},
+        ],
+        row_count=4,
+    )
+
+    pipeline_result = ResultPipelineExecutor().execute(
+        result.result_pipeline,
+        event_result,
+        {return_result.query_id: return_result},
+    )
+
+    assert [row["ts_code"] for row in pipeline_result.rows] == [
+        "600002.SH",
+        "000002.SZ",
+        "000001.SZ",
+    ]
+    assert pipeline_result.rows[0] == {
+        "ts_code": "600002.SH",
+        "limit_up_count": 4,
+        "name": "Delta",
+        "period_return_pct": 25.0,
+    }
 
 
 def test_workflow_compiles_valuation_selection_before_period_return_join():

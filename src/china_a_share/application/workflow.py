@@ -12,6 +12,7 @@ import pandas as pd
 
 from china_a_share.cache import request_cache_metrics, request_cache_metrics_lock
 from china_a_share.core.contracts import (
+    AnswerContract,
     CalculationTraceStep,
     AnalysisRequest,
     AnalysisResponse,
@@ -1876,6 +1877,7 @@ class AnalysisService:
         AnalysisService._normalize_suspension_request(plan, prompt)
         AnalysisService._compile_margin_balance_ranking(plan, prompt)
         AnalysisService._compile_security_moneyflow_comparison(plan, prompt)
+        AnalysisService._compile_limit_up_count_return_ranking(plan, prompt)
 
         if plan.intent is not None and plan.intent.metric.type == "period_return":
             return_terms = (
@@ -2439,6 +2441,8 @@ class AnalysisService:
         prompt: str,
     ) -> None:
         """Compile a full-market period ranking at security-period grain."""
+        if "\u6da8\u505c" in prompt:
+            return
         ranking_terms = ("\u6700\u591a", "\u6700\u5927", "\u524d\u5341", "top")
         return_terms = ("\u4e0a\u6da8", "\u4e0b\u8dcc", "\u6da8\u5e45", "\u8dcc\u5e45")
         market_terms = ("A\u80a1", "\u5927A")
@@ -2486,6 +2490,142 @@ class AnalysisService:
                 ],
             }
         )
+
+    @staticmethod
+    def _compile_limit_up_count_return_ranking(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> None:
+        """Rank period limit-up counts and attach each selected security's return."""
+        normalized = prompt.lower()
+        if not (
+            "\u6da8\u505c" in prompt
+            and any(
+                term in normalized
+                for term in ("\u6700\u591a", "\u6700\u9ad8", "top", "\u524d")
+            )
+            and any(
+                term in prompt
+                for term in ("\u6da8\u5e45", "\u6da8\u8dcc\u5e45", "\u6536\u76ca\u7387")
+            )
+        ):
+            return
+
+        resolved_range = resolve_explicit_time_range(prompt)
+        if resolved_range is None:
+            year_match = re.search(r"(20\d{2})\u5e74", prompt)
+            if year_match is not None:
+                year = int(year_match.group(1))
+                resolved_range = (date(year, 1, 1), date(year, 12, 31))
+        if resolved_range is None:
+            dated_query = next(
+                (
+                    query
+                    for query in plan.queries
+                    if query.params.get("start_date")
+                    and query.params.get("end_date")
+                ),
+                None,
+            )
+            if dated_query is None:
+                return
+            start_date = dated_query.params["start_date"]
+            end_date = dated_query.params["end_date"]
+        else:
+            start_date = resolved_range[0].strftime("%Y%m%d")
+            end_date = resolved_range[1].strftime("%Y%m%d")
+
+        limit_match = re.search(r"(?:top|\u524d)\s*(\d+)", normalized)
+        result_limit = int(limit_match.group(1)) if limit_match else 10
+        event_query = DataQuery(
+            query_id="period_limit_up_events",
+            operation="limit_list_d",
+            params={
+                "start_date": start_date,
+                "end_date": end_date,
+                "limit_type": "U",
+            },
+            fields=["ts_code", "name", "trade_date"],
+            purpose="Retrieve native limit-up events for the requested ranking period.",
+        )
+        return_query = DataQuery(
+            query_id="period_security_returns",
+            operation="daily",
+            params={"start_date": start_date, "end_date": end_date},
+            fields=["ts_code", "trade_date", "close"],
+            purpose="Calculate each security's return over the same ranking period.",
+            transform="period_return_by_ts_code",
+        )
+        output_query_id = "limit_up_count_return_ranking"
+        plan.intent = None
+        plan.queries = [event_query, return_query]
+        plan.result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": event_query.query_id,
+                "output_query_id": output_query_id,
+                "steps": [
+                    {
+                        "operation": "aggregate",
+                        "group_by": ["ts_code"],
+                        "aggregations": [
+                            {
+                                "output_field": "limit_up_count",
+                                "field": "trade_date",
+                                "function": "count",
+                            }
+                        ],
+                    },
+                    {
+                        "operation": "sort",
+                        "field": "limit_up_count",
+                        "direction": "desc",
+                    },
+                    {"operation": "limit", "count": result_limit},
+                    {
+                        "operation": "join_fields",
+                        "right_source_query_id": return_query.query_id,
+                        "join_on": ["ts_code"],
+                        "fields": {
+                            "name": "name",
+                            "period_return_pct": "period_return_pct",
+                        },
+                        "cardinality": "many_to_one",
+                    },
+                ],
+            }
+        )
+        plan.answer_contract = AnswerContract.model_validate(
+            {
+                "result_query_id": output_query_id,
+                "result_kind": "table",
+                "outputs": [
+                    {
+                        "field": "ts_code",
+                        "description": "A-share security code.",
+                    },
+                    {
+                        "field": "name",
+                        "description": "A-share company name.",
+                    },
+                    {
+                        "field": "limit_up_count",
+                        "description": (
+                            "Number of native limit-up events in the requested period."
+                        ),
+                    },
+                    {
+                        "field": "period_return_pct",
+                        "description": (
+                            "Security return over the requested period, in percent."
+                        ),
+                    },
+                ],
+            }
+        )
+        plan.feasibility = "supported"
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
 
     @staticmethod
     def _compile_valuation_period_return(plan: QueryPlan, prompt: str) -> None:
