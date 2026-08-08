@@ -1844,6 +1844,10 @@ class AnalysisService:
             )
             plan.queries = [query]
             plan.result_pipeline = pipeline
+            if plan.answer_contract is not None:
+                # The local compiler owns the final result identifier, so keep the
+                # model-authored answer contract aligned with the executable output.
+                plan.answer_contract.result_query_id = pipeline.output_query_id
             plan.feasibility = "supported"
 
         return plan

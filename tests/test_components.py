@@ -17,6 +17,7 @@ from china_a_share.application.workflow import (
 )
 from china_a_share.core.contracts import (
     AnswerContract,
+    AnalysisIntent,
     AnalysisRequest,
     DataFilter,
     DataOperation,
@@ -1508,6 +1509,46 @@ def test_workflow_compiles_market_period_return_at_security_grain():
     assert result.queries[0].transform == "period_return_by_ts_code"
     assert result.result_pipeline.source_query_id == plan.queries[0].query_id
     assert result.result_pipeline.steps[0].field == "period_return_pct"
+
+
+def test_workflow_compiles_intent_and_aligns_answer_contract_result():
+    plan = make_daily_plan()
+    plan.queries = []
+    plan.result_pipeline = None
+    plan.intent = AnalysisIntent.model_validate(
+        {
+            "metric": {
+                "window": {"start": "20260601", "end": "20260630"},
+            },
+            "ranking": {"direction": "desc", "limit": 10},
+        }
+    )
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "model_proposed_period_ranking",
+            "result_kind": "table",
+            "outputs": [
+                {
+                    "field": "period_return_pct",
+                    "description": "Security return over the requested period.",
+                }
+            ],
+        }
+    )
+
+    provider = FakeMarketDataProvider()
+    service = AnalysisService(
+        Mock(),
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+
+    result = service._compile_intent(plan)
+
+    assert result.result_pipeline.output_query_id == "period_return_output"
+    assert result.answer_contract.result_query_id == "period_return_output"
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
 
 
 def test_workflow_compiles_valuation_selection_before_period_return_join():
