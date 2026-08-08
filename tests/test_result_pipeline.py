@@ -608,6 +608,207 @@ def test_pipeline_contract_rejects_unbounded_asof_and_invalid_clip():
         )
 
 
+def test_pipeline_applies_group_transform_and_normalization():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"sector": "Tech", "value": 10.0},
+            {"sector": "Tech", "value": 20.0},
+            {"sector": "Bank", "value": 5.0},
+        ],
+        row_count=3,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "normalized",
+            "steps": [
+                {
+                    "operation": "group_transform",
+                    "field": "value",
+                    "output_field": "sector_mean",
+                    "group_by": ["sector"],
+                    "transform_function": "mean",
+                },
+                {
+                    "operation": "normalize",
+                    "field": "value",
+                    "output_field": "sector_percentile",
+                    "group_by": ["sector"],
+                    "normalization": "percentile",
+                },
+                {
+                    "operation": "normalize",
+                    "field": "value",
+                    "output_field": "global_minmax",
+                    "normalization": "minmax",
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert [row["sector_mean"] for row in result.rows] == [15.0, 15.0, 5.0]
+    assert [row["sector_percentile"] for row in result.rows] == [0.5, 1.0, 1.0]
+    assert [row["global_minmax"] for row in result.rows] == pytest.approx(
+        [1 / 3, 1.0, 0.0]
+    )
+
+
+def test_pipeline_applies_weighted_mean_with_strict_weight_contract():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"sector": "A", "return": 0.1, "market_cap": 1.0},
+            {"sector": "A", "return": 0.2, "market_cap": 3.0},
+            {"sector": "B", "return": -0.1, "market_cap": 2.0},
+        ],
+        row_count=3,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "weighted",
+            "steps": [
+                {
+                    "operation": "weighted_mean",
+                    "field": "return",
+                    "weight_field": "market_cap",
+                    "output_field": "weighted_return",
+                    "group_by": ["sector"],
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows == [
+        {"sector": "A", "weighted_return": pytest.approx(0.175)},
+        {"sector": "B", "weighted_return": pytest.approx(-0.1)},
+    ]
+
+    invalid = source.model_copy(
+        update={
+            "rows": [{"sector": "A", "return": 0.1, "market_cap": -1.0}],
+            "row_count": 1,
+        }
+    )
+    with pytest.raises(ValueError, match="weights must be non-negative"):
+        ResultPipelineExecutor().execute(pipeline, invalid)
+
+    missing_weights = source.model_copy(
+        update={
+            "rows": [{"sector": "A", "return": 0.1, "market_cap": None}],
+            "row_count": 1,
+        }
+    )
+    with pytest.raises(ValueError, match="positive total weight per group"):
+        ResultPipelineExecutor().execute(pipeline, missing_weights)
+
+
+def test_pipeline_applies_advanced_rolling_statistics():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"code": "A", "date": 1, "left": 1.0, "right": 2.0},
+            {"code": "A", "date": 2, "left": 2.0, "right": 4.0},
+            {"code": "A", "date": 3, "left": 3.0, "right": 6.0},
+        ],
+        row_count=3,
+    )
+    common = {
+        "field": "left",
+        "group_by": ["code"],
+        "order_by": "date",
+        "window": 3,
+    }
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "rolling",
+            "steps": [
+                {
+                    "operation": "rolling_quantile",
+                    "output_field": "rolling_median",
+                    "quantile": 0.5,
+                    **common,
+                },
+                {
+                    "operation": "rolling_correlation",
+                    "right_field": "right",
+                    "output_field": "rolling_corr",
+                    **common,
+                },
+                {
+                    "operation": "rolling_covariance",
+                    "right_field": "right",
+                    "output_field": "rolling_cov",
+                    **common,
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows[-1]["rolling_median"] == 2.0
+    assert result.rows[-1]["rolling_corr"] == pytest.approx(1.0)
+    assert result.rows[-1]["rolling_cov"] == pytest.approx(2.0)
+
+
+def test_pipeline_resamples_grouped_calendar_periods():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"code": "A", "date": "20260102", "return": 0.1},
+            {"code": "A", "date": "20260120", "return": 0.2},
+            {"code": "A", "date": "20260202", "return": -0.1},
+        ],
+        row_count=3,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "monthly",
+            "steps": [
+                {
+                    "operation": "resample",
+                    "group_by": ["code"],
+                    "order_by": "date",
+                    "frequency": "month",
+                    "aggregations": [
+                        {
+                            "output_field": "mean_return",
+                            "field": "return",
+                            "function": "mean",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows == [
+        {"code": "A", "date": "20260131", "mean_return": pytest.approx(0.15)},
+        {"code": "A", "date": "20260228", "mean_return": pytest.approx(-0.1)},
+    ]
+
 def test_pipeline_contract_rejects_invalid_range_and_quantile_arguments():
     with pytest.raises(ValueError, match="lower_value cannot exceed"):
         ResultPipeline.model_validate(

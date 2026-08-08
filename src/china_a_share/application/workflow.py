@@ -518,7 +518,12 @@ class ASharePlanValidator:
             required_fields = set(input_fields + step.group_by + step.join_on)
             required_fields.update(
                 field
-                for field in (step.field, step.right_field, step.order_by)
+                for field in (
+                    step.field,
+                    step.right_field,
+                    step.weight_field,
+                    step.order_by,
+                )
                 if field
             )
             required_fields.update(
@@ -574,7 +579,14 @@ class ASharePlanValidator:
                         f"{step.operation} references unavailable right fields: "
                         + ", ".join(sorted(missing_right))
                     )
-            if step.operation in {
+            if step.operation == "weighted_mean":
+                if step.output_field in available_fields:
+                    raise PlanValidationError(
+                        "weighted_mean output field already exists: "
+                        f"{step.output_field}"
+                    )
+                available_fields = set(step.group_by + [step.output_field])
+            elif step.operation in {
                 "semi_join",
                 "anti_join",
                 "inner_join",
@@ -633,6 +645,9 @@ class ASharePlanValidator:
                 "rolling_min",
                 "rolling_max",
                 "rolling_std",
+                "rolling_quantile",
+                "rolling_correlation",
+                "rolling_covariance",
                 "shift",
                 "diff",
                 "pct_change",
@@ -641,6 +656,8 @@ class ASharePlanValidator:
                 "row_number",
                 "cumulative_sum",
                 "expanding_mean",
+                "group_transform",
+                "normalize",
                 "coalesce",
                 "fill_constant",
                 "clip",
@@ -682,6 +699,11 @@ class ASharePlanValidator:
                 available_fields.update(
                     aggregation.output_field
                     for aggregation in step.aggregations
+                )
+            elif step.operation == "resample":
+                available_fields = set(step.group_by + [step.order_by])
+                available_fields.update(
+                    aggregation.output_field for aggregation in step.aggregations
                 )
             elif step.operation == "summarize":
                 available_fields = {

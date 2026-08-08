@@ -361,8 +361,15 @@ class ResultPipelineStep(BaseModel):
         "rolling_min",
         "rolling_max",
         "rolling_std",
+        "rolling_quantile",
+        "rolling_correlation",
+        "rolling_covariance",
         "cumulative_sum",
         "expanding_mean",
+        "group_transform",
+        "normalize",
+        "weighted_mean",
+        "resample",
         "shift",
         "diff",
         "pct_change",
@@ -409,6 +416,11 @@ class ResultPipelineStep(BaseModel):
         default=None,
         pattern=OPERATION_NAME_PATTERN,
         description="Right-hand input field used by a field comparison.",
+    )
+    weight_field: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Non-negative weight column used by a weighted aggregation.",
     )
     right_source_query_id: Optional[str] = Field(
         default=None,
@@ -500,6 +512,20 @@ class ResultPipelineStep(BaseModel):
     rank_method: Literal["average", "min", "max", "first"] = Field(
         default="min",
         description="Tie policy used by a rank operation.",
+    )
+    transform_function: Optional[
+        Literal["count", "sum", "mean", "median", "min", "max", "std"]
+    ] = Field(
+        default=None,
+        description="Allowlisted aggregation broadcast to every row in a group.",
+    )
+    normalization: Optional[Literal["zscore", "minmax", "percentile"]] = Field(
+        default=None,
+        description="Allowlisted normalization method applied globally or by group.",
+    )
+    frequency: Optional[Literal["week", "month", "quarter", "year"]] = Field(
+        default=None,
+        description="Calendar frequency used to resample an ordered time series.",
     )
     count: Optional[int] = Field(
         default=None,
@@ -626,11 +652,53 @@ class ResultPipelineStep(BaseModel):
                 and self.order_by
                 and self.window
             ),
+            "rolling_quantile": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+                and self.quantile is not None
+            ),
+            "rolling_correlation": bool(
+                self.field
+                and self.right_field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+            ),
+            "rolling_covariance": bool(
+                self.field
+                and self.right_field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+            ),
             "cumulative_sum": bool(
                 self.field and self.output_field and self.group_by and self.order_by
             ),
             "expanding_mean": bool(
                 self.field and self.output_field and self.group_by and self.order_by
+            ),
+            "group_transform": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.transform_function
+            ),
+            "normalize": bool(
+                self.field and self.output_field and self.normalization
+            ),
+            "weighted_mean": bool(
+                self.field and self.weight_field and self.output_field and self.group_by
+            ),
+            "resample": bool(
+                self.group_by
+                and self.order_by
+                and self.frequency
+                and self.aggregations
             ),
             "shift": bool(
                 self.field
@@ -779,11 +847,24 @@ class ResultPipelineStep(BaseModel):
                 "rolling_min",
                 "rolling_max",
                 "rolling_std",
+                "rolling_quantile",
+                "rolling_correlation",
+                "rolling_covariance",
             }
             and self.min_periods is not None
             and self.min_periods > self.window
         ):
             raise ValueError("min_periods cannot exceed the rolling window")
+        if self.operation == "rolling_correlation" and self.field == self.right_field:
+            raise ValueError("rolling_correlation requires two different fields")
+        if self.operation == "rolling_covariance" and self.field == self.right_field:
+            raise ValueError("rolling_covariance requires two different fields")
+        if self.operation == "resample":
+            reserved_fields = set(self.group_by + [self.order_by])
+            if reserved_fields.intersection(
+                aggregation.output_field for aggregation in self.aggregations
+            ):
+                raise ValueError("resample outputs must not replace grouping or time fields")
         if (
             self.operation == "filter_range"
             and self.lower_value > self.upper_value

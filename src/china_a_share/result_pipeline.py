@@ -286,10 +286,21 @@ class ResultPipelineExecutor:
                 "rolling_min",
                 "rolling_max",
                 "rolling_std",
+                "rolling_quantile",
+                "rolling_correlation",
+                "rolling_covariance",
             } and step.output_field and step.field:
                 function = step.operation
-                formulas[step.output_field] = f"{function}({expression(step.field)}, {step.window})"
-                dependencies[step.output_field] = sources(step.field)
+                arguments = [expression(step.field)]
+                if step.right_field:
+                    arguments.append(expression(step.right_field))
+                arguments.append(str(step.window))
+                if step.operation == "rolling_quantile":
+                    arguments.append(str(step.quantile))
+                formulas[step.output_field] = f"{function}({', '.join(arguments)})"
+                dependencies[step.output_field] = sources(step.field) | (
+                    sources(step.right_field) if step.right_field else set()
+                )
             elif step.operation in {"shift", "diff", "pct_change"} and step.output_field and step.field:
                 formulas[step.output_field] = (
                     f"{step.operation}({expression(step.field)}, {step.periods})"
@@ -304,6 +315,28 @@ class ResultPipelineExecutor:
                     f"{step.operation}({expression(step.field)})"
                 )
                 dependencies[step.output_field] = sources(step.field)
+            elif (
+                step.operation in {"group_transform", "normalize"}
+                and step.output_field
+                and step.field
+            ):
+                function = step.transform_function or step.normalization
+                formulas[step.output_field] = (
+                    f"{step.operation}({expression(step.field)}, {function})"
+                )
+                dependencies[step.output_field] = sources(step.field)
+            elif (
+                step.operation == "weighted_mean"
+                and step.output_field
+                and step.field
+            ):
+                formulas[step.output_field] = (
+                    f"weighted_mean({expression(step.field)}, "
+                    f"{expression(step.weight_field)})"
+                )
+                dependencies[step.output_field] = sources(step.field) | sources(
+                    step.weight_field
+                )
             elif step.operation == "row_number" and step.output_field:
                 formulas[step.output_field] = "row_number()"
                 dependencies[step.output_field] = set(step.group_by + [step.order_by])
@@ -357,7 +390,7 @@ class ResultPipelineExecutor:
                 for source_field, output_field in step.fields.items():
                     formulas[output_field] = f"{step.right_source_query_id}.{source_field}"
                     dependencies[output_field] = {source_field}
-            elif step.operation in {"aggregate", "summarize"}:
+            elif step.operation in {"aggregate", "resample", "summarize"}:
                 for aggregation in step.aggregations:
                     formulas[aggregation.output_field] = (
                         f"{aggregation.function}("
@@ -457,7 +490,7 @@ class ResultPipelineExecutor:
         required_fields = set(fields_list + step.group_by + step.join_on)
         required_fields.update(
             field
-            for field in (step.field, step.right_field, step.order_by)
+            for field in (step.field, step.right_field, step.weight_field, step.order_by)
             if field
         )
         missing_fields = required_fields.difference(frame.columns)
@@ -576,24 +609,33 @@ class ResultPipelineExecutor:
             "rolling_min",
             "rolling_max",
             "rolling_std",
+            "rolling_quantile",
+            "rolling_correlation",
+            "rolling_covariance",
         }:
             ordered = frame.sort_values(
                 step.group_by + [step.order_by],
                 kind="mergesort",
             ).reset_index(drop=True)
             numeric = pd.to_numeric(ordered[step.field], errors="coerce")
-            rolling = (
-                numeric.groupby(
-                    [ordered[field] for field in step.group_by],
-                    sort=False,
-                    dropna=False,
-                )
-                .rolling(
+            group_keys = [ordered[field] for field in step.group_by]
+            rolling = numeric.groupby(group_keys, sort=False, dropna=False).rolling(
+                window=step.window,
+                min_periods=step.min_periods or step.window,
+            )
+            if step.operation == "rolling_quantile":
+                aggregated = rolling.quantile(step.quantile)
+            elif step.operation in {"rolling_correlation", "rolling_covariance"}:
+                right = pd.to_numeric(ordered[step.right_field], errors="coerce")
+                right_groups = right.groupby(group_keys, sort=False, dropna=False)
+                right_rolling = right_groups.rolling(
                     window=step.window,
                     min_periods=step.min_periods or step.window,
                 )
-            )
-            aggregated = getattr(rolling, step.operation.removeprefix("rolling_"))()
+                method = "corr" if step.operation == "rolling_correlation" else "cov"
+                aggregated = getattr(rolling, method)(right_rolling.obj)
+            else:
+                aggregated = getattr(rolling, step.operation.removeprefix("rolling_"))()
             aggregated = aggregated.reset_index(
                 level=list(range(len(step.group_by))),
                 drop=True,
@@ -618,6 +660,110 @@ class ResultPipelineExecutor:
                 )
             ordered[step.output_field] = aggregated
             return ordered.reset_index(drop=True)
+        if step.operation == "group_transform":
+            result = frame.copy()
+            numeric = pd.to_numeric(result[step.field], errors="coerce")
+            grouped = numeric.groupby(
+                [result[field] for field in step.group_by],
+                sort=False,
+                dropna=False,
+            )
+            result[step.output_field] = grouped.transform(step.transform_function)
+            return result
+        if step.operation == "normalize":
+            result = frame.copy()
+            numeric = pd.to_numeric(result[step.field], errors="coerce")
+            groups = (
+                numeric.groupby(
+                    [result[field] for field in step.group_by],
+                    sort=False,
+                    dropna=False,
+                )
+                if step.group_by
+                else None
+            )
+            if step.normalization == "percentile":
+                normalized = (
+                    groups.rank(method="average", pct=True)
+                    if groups is not None
+                    else numeric.rank(method="average", pct=True)
+                )
+            else:
+                center = (
+                    groups.transform("mean") if groups is not None else numeric.mean()
+                )
+                if step.normalization == "zscore":
+                    scale = (
+                        groups.transform("std") if groups is not None else numeric.std()
+                    )
+                    if isinstance(scale, pd.Series):
+                        normalized = (numeric - center) / scale.where(scale.ne(0))
+                    else:
+                        normalized = (
+                            (numeric - center) / scale
+                            if pd.notna(scale) and scale != 0
+                            else numeric.where(False)
+                        )
+                else:
+                    minimum = (
+                        groups.transform("min") if groups is not None else numeric.min()
+                    )
+                    maximum = (
+                        groups.transform("max") if groups is not None else numeric.max()
+                    )
+                    span = maximum - minimum
+                    if isinstance(span, pd.Series):
+                        normalized = (numeric - minimum) / span.where(span.ne(0))
+                    else:
+                        normalized = (
+                            (numeric - minimum) / span
+                            if pd.notna(span) and span != 0
+                            else numeric.where(False)
+                        )
+            result[step.output_field] = normalized
+            return result
+        if step.operation == "weighted_mean":
+            working = frame[step.group_by + [step.field, step.weight_field]].copy()
+            working[step.field] = pd.to_numeric(working[step.field], errors="coerce")
+            working[step.weight_field] = pd.to_numeric(
+                working[step.weight_field], errors="coerce"
+            )
+            valid = working[step.field].notna() & working[step.weight_field].notna()
+            if (working.loc[valid, step.weight_field] < 0).any():
+                raise ValueError("weighted_mean weights must be non-negative")
+            working["_valid_weight"] = working[step.weight_field].where(valid)
+            working["_weighted_value"] = (
+                working[step.field] * working["_valid_weight"]
+            )
+            grouped = working.groupby(step.group_by, dropna=False, sort=False)
+            numerator = grouped["_weighted_value"].sum(min_count=1)
+            denominator = grouped["_valid_weight"].sum(min_count=1)
+            if denominator.isna().any() or (denominator <= 0).any():
+                raise ValueError("weighted_mean requires positive total weight per group")
+            return (numerator / denominator).rename(step.output_field).reset_index()
+        if step.operation == "resample":
+            working = frame.copy()
+            working[step.order_by] = pd.to_datetime(
+                working[step.order_by], format="%Y%m%d", errors="raise"
+            )
+            rules = {
+                "week": pd.offsets.Week(weekday=6),
+                "month": pd.offsets.MonthEnd(),
+                "quarter": pd.offsets.QuarterEnd(),
+                "year": pd.offsets.YearEnd(),
+            }
+            named_aggregations = self._named_aggregations(step)
+            result = (
+                working.groupby(
+                    step.group_by
+                    + [pd.Grouper(key=step.order_by, freq=rules[step.frequency])],
+                    dropna=False,
+                )
+                .agg(**named_aggregations)
+                .reset_index()
+            )
+            result[step.order_by] = result[step.order_by].dt.strftime("%Y%m%d")
+            return result
         if step.operation in {"rank", "dense_rank"}:
             result = frame.copy()
             numeric = pd.to_numeric(result[step.field], errors="coerce")
