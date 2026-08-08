@@ -1267,6 +1267,66 @@ def test_rule_evaluation_clusters_uncertainty_by_trading_day():
     assert result.confidence_upper == 1.0
 
 
+def test_probability_uncertainty_detects_persistent_security_effects():
+    rows = []
+    for trade_date in (f"202601{index:02d}" for index in range(1, 21)):
+        rows.extend(
+            [
+                {
+                    "trade_date": trade_date,
+                    "ts_code": "000001.SZ",
+                    "factor": 1.0,
+                    "forward_return": 0.10,
+                },
+                {
+                    "trade_date": trade_date,
+                    "ts_code": "000002.SZ",
+                    "factor": 1.0,
+                    "forward_return": -0.10,
+                },
+            ]
+        )
+
+    result = FactorBacktester.evaluate_rule(
+        pd.DataFrame(rows),
+        "factor == 1",
+    )
+
+    assert result.win_rate == 0.5
+    assert result.cluster_standard_error == pytest.approx(0.5)
+    assert result.confidence_lower == 0.0
+    assert result.confidence_upper == 1.0
+
+
+def test_security_concentration_widens_boundary_probability_interval():
+    trade_dates = [f"202601{index:02d}" for index in range(1, 21)]
+    concentrated = pd.DataFrame(
+        {
+            "trade_date": trade_dates,
+            "ts_code": ["000001.SZ"] * 20,
+            "factor": [1.0] * 20,
+            "forward_return": [0.10] * 20,
+        }
+    )
+    diversified = concentrated.assign(
+        ts_code=[f"{index:06d}.SZ" for index in range(1, 21)]
+    )
+
+    concentrated_result = FactorBacktester.evaluate_rule(
+        concentrated,
+        "factor == 1",
+    )
+    diversified_result = FactorBacktester.evaluate_rule(
+        diversified,
+        "factor == 1",
+    )
+
+    assert (
+        concentrated_result.confidence_lower
+        < diversified_result.confidence_lower
+    )
+
+
 def test_rule_evaluation_does_not_claim_precision_from_one_trading_day():
     dataset = pd.DataFrame(
         {

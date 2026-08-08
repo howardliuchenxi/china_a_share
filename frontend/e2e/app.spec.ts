@@ -787,7 +787,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.locator(".research-config-grid")).toContainText("信号日复权收盘 → 第 20 个未来交易日复权收盘");
   await expect(page.locator(".research-config-grid")).toContainText("30 / 20 / 10");
   await expect(page.locator(".headline-metrics")).toContainText("60.0%");
-  await expect(page.locator(".headline-metrics")).toContainText("HAC、42.7 个有效日 score 与缺失标签的保守包络：49.0% – 70.0%");
+  await expect(page.locator(".headline-metrics")).toContainText("日期 HAC / 证券聚类、42.7 个有效日与 35.6 个有效证券 score、缺失标签的保守包络：49.0% – 70.0%");
   await expect(page.locator(".headline-metrics")).toContainText("可比基准命中率 51.0%");
   await expect(page.locator(".headline-metrics")).toContainText("含规则样本，N=407");
   await expect(page.locator(".headline-metrics")).toContainText("保守 95% 包络 2.0% – 16.0%");
@@ -839,7 +839,8 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(page.getByText(/最低标签覆盖门槛同时约束规则命中事件和完整的因子可比基准/)).toBeVisible();
   await expect(page.getByText(/验证判定会优先显示标签覆盖失败这一根因/)).toBeVisible();
   await expect(page.getByText(/证券门槛同样同时约束原始不同证券数和有效证券数/)).toBeVisible();
-  await expect(page.getByText(/相对提升标准误取日期 HAC 与证券聚类两者中较大值/)).toBeVisible();
+  await expect(page.getByText(/相对提升采用同样的双维度标准误/)).toBeVisible();
+  await expect(page.getByText(/命中率置信区间取日期 HAC 与证券聚类中较大的标准误/)).toBeVisible();
   await expect(topRuleCard).toContainText("日期 HAC 与证券聚类中较大的标准误");
   await expect(page.getByText(/FDR 分母包含所有进入盲测的冻结候选/)).toBeVisible();
   await expect(page.getByText(/验证期证据不足，也会保留原名次并明确显示失败原因/)).toBeVisible();

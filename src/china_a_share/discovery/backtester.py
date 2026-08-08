@@ -848,10 +848,10 @@ class FactorBacktester:
         dependence_lag_days: int,
         signal_dates: pd.Series,
     ) -> tuple[float, float, float, int]:
-        """Return a 95% date-clustered HAC interval for an observed probability."""
+        """Return a conservative date- and security-aware probability interval."""
+        observed = frame.assign(hit=frame["forward_return"] > target_return)
         clusters = (
-            frame.assign(hit=frame["forward_return"] > target_return)
-            .groupby("trade_date")["hit"]
+            observed.groupby("trade_date")["hit"]
             .agg(["sum", "count"])
         )
         selected_day_count = len(clusters)
@@ -868,11 +868,32 @@ class FactorBacktester:
             .reindex(ordered_dates, fill_value=0.0)
             / observations
         )
-        standard_error = FactorBacktester._hac_standard_error(
+        date_standard_error = FactorBacktester._hac_standard_error(
             influence,
             dependence_lag_days,
             effective_cluster_count=selected_day_count,
         )
+        security_standard_error = 0.0
+        if "ts_code" in observed:
+            security_influence = (
+                observed.assign(
+                    probability_influence=(observed["hit"] - probability)
+                    / observations
+                )
+                .groupby("ts_code")["probability_influence"]
+                .sum()
+            )
+            security_count = len(security_influence)
+            if security_count > 1:
+                security_variance = (
+                    security_count
+                    / (security_count - 1)
+                    * float((security_influence**2).sum())
+                )
+                security_standard_error = math.sqrt(
+                    max(0.0, security_variance)
+                )
+        standard_error = max(date_standard_error, security_standard_error)
         margin = 1.959963984540054 * standard_error
         hac_lower = max(0.0, probability - margin)
         hac_upper = min(1.0, probability + margin)
@@ -882,10 +903,24 @@ class FactorBacktester:
         effective_day_count = FactorBacktester._effective_cluster_count(
             frame["trade_date"]
         )
-        score_lower, score_upper = FactorBacktester._wilson_interval(
+        date_score_lower, date_score_upper = FactorBacktester._wilson_interval(
             probability * effective_day_count,
             effective_day_count,
         )
+        score_lower = date_score_lower
+        score_upper = date_score_upper
+        if "ts_code" in frame:
+            effective_security_count = FactorBacktester._effective_cluster_count(
+                frame["ts_code"]
+            )
+            security_score_lower, security_score_upper = (
+                FactorBacktester._wilson_interval(
+                    probability * effective_security_count,
+                    effective_security_count,
+                )
+            )
+            score_lower = min(score_lower, security_score_lower)
+            score_upper = max(score_upper, security_score_upper)
         return (
             min(hac_lower, score_lower),
             max(hac_upper, score_upper),
