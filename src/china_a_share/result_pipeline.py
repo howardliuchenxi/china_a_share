@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Mapping, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Set, Tuple
 
 import pandas as pd
 
@@ -36,7 +36,7 @@ class ResultPipelineExecutor:
         sources: Optional[Mapping[str, QueryResult]] = None,
     ) -> QueryResult:
         """Return one transformed result or fail fast on an invalid field contract."""
-        frame = pd.DataFrame(source.rows)
+        frame = self._result_frame(source)
         source_row_count = len(frame)
         source_results = dict(sources or {})
         source_results.setdefault(source.query_id, source)
@@ -128,6 +128,11 @@ class ResultPipelineExecutor:
         )
 
     @staticmethod
+    def _result_frame(result: QueryResult) -> pd.DataFrame:
+        """Preserve a declared field contract when a result contains no rows."""
+        return pd.DataFrame(result.rows, columns=result.columns or None)
+
+    @staticmethod
     def _steps_through_output(
         trace: list[CalculationTraceStep],
         output_field: str,
@@ -216,7 +221,41 @@ class ResultPipelineExecutor:
             "lt": "<",
         }
         for step in pipeline.steps:
-            if step.operation == "derive" and step.output_field and step.field:
+            if step.operation == "select_fields":
+                selected = set(step.fields)
+                formulas = {
+                    field: formula
+                    for field, formula in formulas.items()
+                    if field in selected
+                }
+                dependencies = {
+                    field: field_dependencies
+                    for field, field_dependencies in dependencies.items()
+                    if field in selected
+                }
+            elif step.operation == "rename_fields" and isinstance(step.fields, dict):
+                prior_formulas = dict(formulas)
+                prior_dependencies = dict(dependencies)
+                renamed_formulas = {
+                    output_field: prior_formulas.get(
+                        source_field,
+                        source_field,
+                    )
+                    for source_field, output_field in step.fields.items()
+                }
+                renamed_dependencies = {
+                    output_field: prior_dependencies.get(
+                        source_field,
+                        {source_field},
+                    )
+                    for source_field, output_field in step.fields.items()
+                }
+                for source_field in step.fields:
+                    formulas.pop(source_field, None)
+                    dependencies.pop(source_field, None)
+                formulas.update(renamed_formulas)
+                dependencies.update(renamed_dependencies)
+            elif step.operation == "derive" and step.output_field and step.field:
                 right = expression(step.right_field) if step.right_field else str(step.value)
                 left = expression(step.field)
                 if step.arithmetic_operator == "constant_minus":
@@ -236,12 +275,25 @@ class ResultPipelineExecutor:
                 dependencies[step.output_field] = sources(step.field) | (
                     sources(step.right_field) if step.right_field else set()
                 )
-            elif step.operation in {"rolling_mean", "rolling_sum"} and step.output_field and step.field:
-                function = "rolling_mean" if step.operation == "rolling_mean" else "rolling_sum"
+            elif step.operation in {
+                "rolling_mean",
+                "rolling_sum",
+                "rolling_min",
+                "rolling_max",
+                "rolling_std",
+            } and step.output_field and step.field:
+                function = step.operation
                 formulas[step.output_field] = f"{function}({expression(step.field)}, {step.window})"
                 dependencies[step.output_field] = sources(step.field)
-            elif step.operation == "shift" and step.output_field and step.field:
-                formulas[step.output_field] = f"shift({expression(step.field)}, {step.periods})"
+            elif step.operation in {"shift", "diff", "pct_change"} and step.output_field and step.field:
+                formulas[step.output_field] = (
+                    f"{step.operation}({expression(step.field)}, {step.periods})"
+                )
+                dependencies[step.output_field] = sources(step.field)
+            elif step.operation in {"rank", "dense_rank"} and step.output_field and step.field:
+                formulas[step.output_field] = (
+                    f"{step.operation}({expression(step.field)})"
+                )
                 dependencies[step.output_field] = sources(step.field)
             elif step.operation == "match_at_offset" and step.output_field and step.field:
                 formulas[step.output_field] = (
@@ -262,7 +314,7 @@ class ResultPipelineExecutor:
                     f"{', '.join(step.join_on)})"
                 )
                 dependencies[step.output_field] = set(step.join_on)
-            elif step.operation == "join_fields" and isinstance(step.fields, dict):
+            elif step.operation in {"join_fields", "inner_join"} and isinstance(step.fields, dict):
                 for source_field, output_field in step.fields.items():
                     formulas[output_field] = f"{step.right_source_query_id}.{source_field}"
                     dependencies[output_field] = {source_field}
@@ -270,7 +322,8 @@ class ResultPipelineExecutor:
                 for aggregation in step.aggregations:
                     formulas[aggregation.output_field] = (
                         f"{aggregation.function}("
-                        f"{expression(aggregation.field)})"
+                        f"{expression(aggregation.field)}"
+                        f"{', ' + str(aggregation.quantile) if aggregation.quantile is not None else ''})"
                     )
                     dependencies[aggregation.output_field] = sources(
                         aggregation.field
@@ -352,7 +405,15 @@ class ResultPipelineExecutor:
         sources: Mapping[str, QueryResult],
     ) -> pd.DataFrame:
         """Execute one validated relational operation."""
-        fields_list = [] if step.operation == "join_fields" else (list(step.fields.keys()) if isinstance(step.fields, dict) else list(step.fields))
+        fields_list = (
+            []
+            if step.operation in {"join_fields", "inner_join", "union_all"}
+            else (
+                list(step.fields.keys())
+                if isinstance(step.fields, dict)
+                else list(step.fields)
+            )
+        )
         required_fields = set(fields_list + step.group_by + step.join_on)
         required_fields.update(
             field
@@ -377,6 +438,15 @@ class ResultPipelineExecutor:
                 .drop_duplicates(step.group_by, keep="last" if ascending else "first")
                 .reset_index(drop=True)
             )
+        if step.operation == "select_fields":
+            return frame.loc[:, list(step.fields)].copy().reset_index(drop=True)
+        if step.operation == "rename_fields":
+            return frame.rename(columns=step.fields).reset_index(drop=True)
+        if step.operation == "distinct":
+            return frame.drop_duplicates(
+                subset=list(step.fields),
+                keep=step.keep,
+            ).reset_index(drop=True)
         if step.operation == "derive":
             numeric = pd.to_numeric(frame[step.field], errors="coerce")
             operand = (
@@ -412,6 +482,32 @@ class ResultPipelineExecutor:
             return frame.loc[COMPARISONS[step.comparison](series, value)].reset_index(
                 drop=True
             )
+        if step.operation == "filter_set":
+            series = frame[step.field]
+            values: list[Any] = list(step.values)
+            if values and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in values
+            ):
+                series = pd.to_numeric(series, errors="coerce")
+                values = [float(value) for value in values]
+            mask = series.isin(values)
+            return frame.loc[~mask if step.negate else mask].reset_index(drop=True)
+        if step.operation == "filter_range":
+            numeric = pd.to_numeric(frame[step.field], errors="coerce")
+            mask = numeric.between(step.lower_value, step.upper_value, inclusive="both")
+            return frame.loc[~mask if step.negate else mask].reset_index(drop=True)
+        if step.operation == "filter_null":
+            mask = frame[step.field].isna()
+            return frame.loc[~mask if step.negate else mask].reset_index(drop=True)
+        if step.operation == "having":
+            series = frame[step.field]
+            value: object = step.value
+            if isinstance(step.value, (int, float)):
+                series = pd.to_numeric(series, errors="coerce")
+                value = float(step.value)
+            mask = COMPARISONS[step.comparison](series, value)
+            return frame.loc[mask.fillna(False)].reset_index(drop=True)
         if step.operation == "sort":
             return frame.sort_values(
                 step.field,
@@ -428,19 +524,19 @@ class ResultPipelineExecutor:
                 COMPARISONS[step.comparison](numeric, threshold)
             ].reset_index(drop=True)
         if step.operation == "aggregate":
-            named_aggregations = {
-                aggregation.output_field: pd.NamedAgg(
-                    column=aggregation.field,
-                    aggfunc=aggregation.function,
-                )
-                for aggregation in step.aggregations
-            }
+            named_aggregations = self._named_aggregations(step)
             return (
                 frame.groupby(step.group_by, dropna=False)
                 .agg(**named_aggregations)
                 .reset_index()
             )
-        if step.operation in {"rolling_mean", "rolling_sum"}:
+        if step.operation in {
+            "rolling_mean",
+            "rolling_sum",
+            "rolling_min",
+            "rolling_max",
+            "rolling_std",
+        }:
             ordered = frame.sort_values(
                 step.group_by + [step.order_by],
                 kind="mergesort",
@@ -457,11 +553,7 @@ class ResultPipelineExecutor:
                     min_periods=step.min_periods or step.window,
                 )
             )
-            aggregated = (
-                rolling.mean()
-                if step.operation == "rolling_mean"
-                else rolling.sum()
-            )
+            aggregated = getattr(rolling, step.operation.removeprefix("rolling_"))()
             aggregated = aggregated.reset_index(
                 level=list(range(len(step.group_by))),
                 drop=True,
@@ -486,6 +578,35 @@ class ResultPipelineExecutor:
                 )
             ordered[step.output_field] = aggregated
             return ordered.reset_index(drop=True)
+        if step.operation in {"rank", "dense_rank"}:
+            result = frame.copy()
+            numeric = pd.to_numeric(result[step.field], errors="coerce")
+            method = "dense" if step.operation == "dense_rank" else step.rank_method
+            if step.group_by:
+                result[step.output_field] = numeric.groupby(
+                    [result[field] for field in step.group_by],
+                    sort=False,
+                    dropna=False,
+                ).rank(method=method, ascending=step.direction == "asc")
+            else:
+                result[step.output_field] = numeric.rank(
+                    method=method,
+                    ascending=step.direction == "asc",
+                )
+            return result
+        if step.operation == "top_k_by_group":
+            return (
+                frame.sort_values(
+                    step.group_by + [step.field],
+                    ascending=[True] * len(step.group_by)
+                    + [step.direction == "asc"],
+                    kind="mergesort",
+                    na_position="last",
+                )
+                .groupby(step.group_by, sort=False, dropna=False)
+                .head(step.count)
+                .reset_index(drop=True)
+            )
         if step.operation in {"match_source", "exists_in_source"}:
             right_source = sources.get(step.right_source_query_id)
             if right_source is None:
@@ -498,7 +619,7 @@ class ResultPipelineExecutor:
                     f"{step.operation} query did not succeed: "
                     f"{step.right_source_query_id}"
                 )
-            right = pd.DataFrame(right_source.rows)
+            right = self._result_frame(right_source)
             missing_right = set(step.join_on).difference(right.columns)
             if missing_right:
                 raise ValueError(
@@ -520,6 +641,68 @@ class ResultPipelineExecutor:
             )
             matched[step.output_field] = matched[step.output_field].notna()
             return matched
+        if step.operation in {"semi_join", "anti_join"}:
+            right_source = sources.get(step.right_source_query_id)
+            if right_source is None or right_source.status != QueryStatus.SUCCESS:
+                raise ValueError(f"{step.operation} right source is unavailable")
+            right = self._result_frame(right_source)
+            missing_right = set(step.join_on).difference(right.columns)
+            if missing_right:
+                raise ValueError(
+                    f"{step.operation} right fields are missing: "
+                    + ", ".join(sorted(missing_right))
+                )
+            keys = right[step.join_on].drop_duplicates()
+            matched = frame.merge(
+                keys.assign(_source_member=True),
+                on=step.join_on,
+                how="left",
+                sort=False,
+                validate="many_to_one",
+            )
+            mask = matched.pop("_source_member").notna()
+            if step.operation == "anti_join":
+                mask = ~mask
+            return matched.loc[mask].reset_index(drop=True)
+        if step.operation == "inner_join":
+            right_source = sources.get(step.right_source_query_id)
+            if right_source is None or right_source.status != QueryStatus.SUCCESS:
+                raise ValueError("inner_join right source is unavailable")
+            right = self._result_frame(right_source)
+            fields_map = step.fields if isinstance(step.fields, dict) else {}
+            missing_right = set(step.join_on).union(fields_map).difference(right.columns)
+            if missing_right:
+                raise ValueError(
+                    "inner_join right fields are missing: "
+                    + ", ".join(sorted(missing_right))
+                )
+            right_subset = right[list(step.join_on) + list(fields_map)].rename(
+                columns=fields_map
+            )
+            collisions = set(fields_map.values()).intersection(frame.columns)
+            if collisions:
+                raise ValueError(
+                    "inner_join output fields already exist: "
+                    + ", ".join(sorted(collisions))
+                )
+            return frame.merge(
+                right_subset,
+                on=step.join_on,
+                how="inner",
+                sort=False,
+                validate=step.cardinality,
+            ).reset_index(drop=True)
+        if step.operation == "union_all":
+            right_source = sources.get(step.right_source_query_id)
+            if right_source is None or right_source.status != QueryStatus.SUCCESS:
+                raise ValueError("union_all right source is unavailable")
+            right = self._result_frame(right_source)
+            if set(right.columns) != set(frame.columns):
+                raise ValueError("union_all requires identical field contracts")
+            return pd.concat(
+                [frame, right.reindex(columns=frame.columns)],
+                ignore_index=True,
+            )
         if step.operation == "join_fields":
             right_source = sources.get(step.right_source_query_id)
             if right_source is None:
@@ -530,7 +713,7 @@ class ResultPipelineExecutor:
                 raise ValueError(
                     f"join_fields query did not succeed: {step.right_source_query_id}"
                 )
-            right = pd.DataFrame(right_source.rows)
+            right = self._result_frame(right_source)
             for key in step.join_on:
                 if key not in frame.columns:
                     raise ValueError(f"join_fields left key field is missing: {key}")
@@ -562,7 +745,7 @@ class ResultPipelineExecutor:
                 sort=False,
             )
             return matched
-        if step.operation == "shift":
+        if step.operation in {"shift", "diff", "pct_change"}:
             ordered = frame.sort_values(
                 step.group_by + [step.order_by],
                 kind="mergesort",
@@ -572,7 +755,22 @@ class ResultPipelineExecutor:
                 sort=False,
                 dropna=False,
             )
-            shifted = grouped[step.field].shift(step.periods)
+            if step.operation == "shift":
+                shifted = grouped[step.field].shift(step.periods)
+            elif step.operation == "diff":
+                numeric = pd.to_numeric(ordered[step.field], errors="coerce")
+                shifted = numeric.groupby(
+                    [ordered[field] for field in step.group_by],
+                    sort=False,
+                    dropna=False,
+                ).diff(step.periods)
+            else:
+                numeric = pd.to_numeric(ordered[step.field], errors="coerce")
+                shifted = numeric.groupby(
+                    [ordered[field] for field in step.group_by],
+                    sort=False,
+                    dropna=False,
+                ).pct_change(periods=step.periods, fill_method=None)
             if step.require_consecutive:
                 order_values = sorted(ordered[step.order_by].dropna().unique())
                 order_ranks = ordered[step.order_by].map(
@@ -667,14 +865,52 @@ class ResultPipelineExecutor:
             return result
         if step.operation == "summarize":
             row = {
-                aggregation.output_field: getattr(
-                    pd.to_numeric(
-                        frame[aggregation.field],
-                        errors="coerce",
-                    ),
+                aggregation.output_field: self._aggregate_series(
+                    frame[aggregation.field],
                     aggregation.function,
-                )()
+                    aggregation.quantile,
+                )
                 for aggregation in step.aggregations
             }
             return pd.DataFrame([row])
         raise ValueError(f"Unsupported result pipeline operation: {step.operation}")
+
+    @classmethod
+    def _named_aggregations(
+        cls,
+        step: ResultPipelineStep,
+    ) -> Dict[str, pd.NamedAgg]:
+        """Return pandas named aggregations for the validated aggregate contract."""
+        return {
+            aggregation.output_field: pd.NamedAgg(
+                column=aggregation.field,
+                aggfunc=(
+                    lambda series, item=aggregation: cls._aggregate_series(
+                        series,
+                        item.function,
+                        item.quantile,
+                    )
+                ),
+            )
+            for aggregation in step.aggregations
+        }
+
+    @staticmethod
+    def _aggregate_series(
+        series: pd.Series,
+        function: str,
+        quantile: Optional[float],
+    ) -> Any:
+        """Apply one allowlisted aggregation with explicit null semantics."""
+        if function == "count_distinct":
+            return int(series.nunique(dropna=True))
+        if function == "quantile":
+            return pd.to_numeric(series, errors="coerce").quantile(quantile)
+        if function in {"sum", "mean", "median", "min", "max", "std"}:
+            return getattr(pd.to_numeric(series, errors="coerce"), function)()
+        if function in {"first", "last"}:
+            non_null = series.dropna()
+            if non_null.empty:
+                return None
+            return non_null.iloc[0 if function == "first" else -1]
+        return getattr(series, function)()

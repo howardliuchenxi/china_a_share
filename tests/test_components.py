@@ -2427,6 +2427,93 @@ def test_validator_rejects_model_authored_snapshot_metric_ranking():
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
+def test_validator_tracks_fields_across_inner_join_union_and_projection():
+    plan = QueryPlan(
+        interpretation="Combine validated tabular sources.",
+        requirements=[
+            {
+                "requirement": "Join and append compatible result rows.",
+                "status": "covered",
+                "implementation": "Use validated relational operators.",
+                "evidence": "Every source declares an exact field contract.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="left",
+                operation="daily",
+                params={"trade_date": "20260807"},
+                fields=["ts_code", "close"],
+                purpose="Retrieve the primary rows.",
+            ),
+            DataQuery(
+                query_id="labels",
+                operation="daily_basic",
+                params={"trade_date": "20260807"},
+                fields=["ts_code", "pe"],
+                purpose="Retrieve one joined field.",
+            ),
+            DataQuery(
+                query_id="appended",
+                operation="daily",
+                params={"trade_date": "20260806"},
+                fields=["ts_code", "close", "valuation"],
+                purpose="Retrieve schema-compatible appended rows.",
+            ),
+        ],
+        result_pipeline={
+            "source_query_id": "left",
+            "output_query_id": "combined",
+            "steps": [
+                {
+                    "operation": "inner_join",
+                    "right_source_query_id": "labels",
+                    "join_on": ["ts_code"],
+                    "fields": {"pe": "valuation"},
+                    "cardinality": "many_to_one",
+                },
+                {
+                    "operation": "union_all",
+                    "right_source_query_id": "appended",
+                },
+                {"operation": "distinct", "fields": ["ts_code"]},
+                {
+                    "operation": "select_fields",
+                    "fields": ["ts_code", "valuation"],
+                },
+            ],
+        },
+    )
+
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    assert validated.result_pipeline.output_query_id == "combined"
+
+
+def test_validator_rejects_having_without_aggregate():
+    plan = make_daily_plan()
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "market_direction",
+            "output_query_id": "invalid-having",
+            "steps": [
+                {
+                    "operation": "having",
+                    "field": "change",
+                    "comparison": "gt",
+                    "value": 0,
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="having requires an earlier aggregate",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
 def test_composed_result_compiler_supports_multiple_metrics():
     plan = make_daily_plan()
     valuation_query = DataQuery(

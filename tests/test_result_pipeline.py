@@ -21,6 +21,374 @@ def source_result():
     )
 
 
+def test_pipeline_applies_projection_rename_distinct_and_predicate_operators():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"code": "A", "score": 10.0, "sector": "Tech", "note": None},
+            {"code": "A", "score": 10.0, "sector": "Tech", "note": None},
+            {"code": "B", "score": 20.0, "sector": "Bank", "note": "ok"},
+            {"code": "C", "score": 30.0, "sector": "Tech", "note": "ok"},
+        ],
+        row_count=4,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "filtered",
+            "steps": [
+                {"operation": "distinct", "fields": ["code"]},
+                {
+                    "operation": "filter_set",
+                    "field": "sector",
+                    "values": ["Tech"],
+                },
+                {
+                    "operation": "filter_range",
+                    "field": "score",
+                    "lower_value": 5,
+                    "upper_value": 25,
+                },
+                {"operation": "filter_null", "field": "note"},
+                {"operation": "rename_fields", "fields": {"code": "ts_code"}},
+                {
+                    "operation": "select_fields",
+                    "fields": ["ts_code", "score"],
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows == [{"ts_code": "A", "score": 10.0}]
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected_codes"),
+    [
+        ("semi_join", ["B", "C"]),
+        ("anti_join", ["A"]),
+    ],
+)
+def test_pipeline_applies_key_set_joins(operation, expected_codes):
+    source = QueryResult(
+        query_id="left",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[{"code": code, "value": index} for index, code in enumerate("ABC")],
+        row_count=3,
+    )
+    right = QueryResult(
+        query_id="right",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[{"code": "B"}, {"code": "C"}, {"code": "C"}],
+        row_count=3,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "left",
+            "output_query_id": "joined",
+            "steps": [
+                {
+                    "operation": operation,
+                    "right_source_query_id": "right",
+                    "join_on": ["code"],
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(
+        pipeline,
+        source,
+        {"right": right},
+    )
+
+    assert [row["code"] for row in result.rows] == expected_codes
+
+
+def test_pipeline_applies_inner_join_and_union_all():
+    left = QueryResult(
+        query_id="left",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[{"code": "A", "value": 1}, {"code": "B", "value": 2}],
+        row_count=2,
+    )
+    enrichment = QueryResult(
+        query_id="enrichment",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[{"code": "B", "label": "selected"}],
+        row_count=1,
+    )
+    appended = QueryResult(
+        query_id="appended",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[{"code": "C", "value": 3, "tag": "new"}],
+        row_count=1,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "left",
+            "output_query_id": "combined",
+            "steps": [
+                {
+                    "operation": "inner_join",
+                    "right_source_query_id": "enrichment",
+                    "join_on": ["code"],
+                    "fields": {"label": "tag"},
+                    "cardinality": "many_to_one",
+                },
+                {
+                    "operation": "union_all",
+                    "right_source_query_id": "appended",
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(
+        pipeline,
+        left,
+        {"enrichment": enrichment, "appended": appended},
+    )
+
+    assert result.rows == [
+        {"code": "B", "value": 2, "tag": "selected"},
+        {"code": "C", "value": 3, "tag": "new"},
+    ]
+
+
+def test_pipeline_applies_extended_aggregations_and_having():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"sector": "A", "code": "X", "value": 1.0},
+            {"sector": "A", "code": "X", "value": 3.0},
+            {"sector": "A", "code": "Y", "value": 5.0},
+            {"sector": "B", "code": "Z", "value": 2.0},
+        ],
+        row_count=4,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "aggregated",
+            "steps": [
+                {
+                    "operation": "aggregate",
+                    "group_by": ["sector"],
+                    "aggregations": [
+                        {
+                            "output_field": "security_count",
+                            "field": "code",
+                            "function": "count_distinct",
+                        },
+                        {
+                            "output_field": "median_value",
+                            "field": "value",
+                            "function": "median",
+                        },
+                        {
+                            "output_field": "upper_quartile",
+                            "field": "value",
+                            "function": "quantile",
+                            "quantile": 0.75,
+                        },
+                        {
+                            "output_field": "first_value",
+                            "field": "value",
+                            "function": "first",
+                        },
+                        {
+                            "output_field": "last_value",
+                            "field": "value",
+                            "function": "last",
+                        },
+                    ],
+                },
+                {
+                    "operation": "having",
+                    "field": "security_count",
+                    "comparison": "ge",
+                    "value": 2,
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows == [
+        {
+            "sector": "A",
+            "security_count": 2,
+            "median_value": 3.0,
+            "upper_quartile": 4.0,
+            "first_value": 1.0,
+            "last_value": 5.0,
+        }
+    ]
+
+
+def test_pipeline_applies_group_ranking_and_top_k():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"sector": "A", "code": "X", "value": 10.0},
+            {"sector": "A", "code": "Y", "value": 10.0},
+            {"sector": "A", "code": "Z", "value": 5.0},
+            {"sector": "B", "code": "Q", "value": 7.0},
+            {"sector": "B", "code": "R", "value": 3.0},
+        ],
+        row_count=5,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "ranked",
+            "steps": [
+                {
+                    "operation": "rank",
+                    "field": "value",
+                    "output_field": "rank_value",
+                    "group_by": ["sector"],
+                    "direction": "desc",
+                    "rank_method": "min",
+                },
+                {
+                    "operation": "dense_rank",
+                    "field": "value",
+                    "output_field": "dense_rank_value",
+                    "group_by": ["sector"],
+                    "direction": "desc",
+                },
+                {
+                    "operation": "top_k_by_group",
+                    "field": "value",
+                    "group_by": ["sector"],
+                    "direction": "desc",
+                    "count": 2,
+                },
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert [(row["sector"], row["code"]) for row in result.rows] == [
+        ("A", "X"),
+        ("A", "Y"),
+        ("B", "Q"),
+        ("B", "R"),
+    ]
+    assert [row["rank_value"] for row in result.rows[:2]] == [1.0, 1.0]
+    assert [row["dense_rank_value"] for row in result.rows[:2]] == [1.0, 1.0]
+
+
+def test_pipeline_applies_differences_growth_and_rolling_statistics():
+    source = QueryResult(
+        query_id="source",
+        provider="test",
+        operation="source",
+        status="success",
+        rows=[
+            {"code": "A", "date": "20260101", "value": 10.0},
+            {"code": "A", "date": "20260102", "value": 12.0},
+            {"code": "A", "date": "20260103", "value": 18.0},
+        ],
+        row_count=3,
+    )
+    steps = [
+        {
+            "operation": operation,
+            "field": "value",
+            "output_field": output_field,
+            "group_by": ["code"],
+            "order_by": "date",
+            **arguments,
+        }
+        for operation, output_field, arguments in [
+            ("diff", "value_diff", {"periods": 1}),
+            ("pct_change", "value_growth", {"periods": 1}),
+            ("rolling_min", "rolling_minimum", {"window": 2}),
+            ("rolling_max", "rolling_maximum", {"window": 2}),
+            ("rolling_std", "rolling_deviation", {"window": 2}),
+        ]
+    ]
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "source",
+            "output_query_id": "windowed",
+            "steps": steps,
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.rows[-1]["value_diff"] == 6.0
+    assert result.rows[-1]["value_growth"] == 0.5
+    assert result.rows[-1]["rolling_minimum"] == 12.0
+    assert result.rows[-1]["rolling_maximum"] == 18.0
+    assert result.rows[-1]["rolling_deviation"] == pytest.approx(4.242640687)
+
+
+def test_pipeline_contract_rejects_invalid_range_and_quantile_arguments():
+    with pytest.raises(ValueError, match="lower_value cannot exceed"):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "source",
+                "output_query_id": "invalid",
+                "steps": [
+                    {
+                        "operation": "filter_range",
+                        "field": "value",
+                        "lower_value": 2,
+                        "upper_value": 1,
+                    }
+                ],
+            }
+        )
+
+    with pytest.raises(ValueError, match="requires exactly one quantile"):
+        ResultPipeline.model_validate(
+            {
+                "source_query_id": "source",
+                "output_query_id": "invalid",
+                "steps": [
+                    {
+                        "operation": "summarize",
+                        "aggregations": [
+                            {
+                                "output_field": "invalid_quantile",
+                                "field": "value",
+                                "function": "quantile",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+
 def test_result_pipeline_selects_latest_derives_sorts_and_limits():
     pipeline = ResultPipeline.model_validate(
         {

@@ -306,9 +306,34 @@ class ResultAggregation(BaseModel):
         pattern=OPERATION_NAME_PATTERN,
         description="Existing input column aggregated within each group.",
     )
-    function: Literal["count", "sum", "mean", "min", "max"] = Field(
+    function: Literal[
+        "count",
+        "count_distinct",
+        "sum",
+        "mean",
+        "median",
+        "min",
+        "max",
+        "std",
+        "quantile",
+        "first",
+        "last",
+    ] = Field(
         description="Allowlisted deterministic aggregation function.",
     )
+    quantile: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Required percentile fraction for a quantile aggregation.",
+    )
+
+    @model_validator(mode="after")
+    def validate_function_arguments(self) -> "ResultAggregation":
+        """Require quantile parameters only for quantile aggregation."""
+        if (self.function == "quantile") != (self.quantile is not None):
+            raise ValueError("quantile aggregation requires exactly one quantile")
+        return self
 
 
 class ResultPipelineStep(BaseModel):
@@ -318,20 +343,39 @@ class ResultPipelineStep(BaseModel):
 
     operation: Literal[
         "latest_by_group",
+        "select_fields",
+        "rename_fields",
+        "distinct",
         "derive",
         "drop_missing",
         "filter",
+        "filter_set",
+        "filter_range",
+        "filter_null",
         "sort",
         "limit",
         "quantile_filter",
         "aggregate",
         "rolling_mean",
         "rolling_sum",
+        "rolling_min",
+        "rolling_max",
+        "rolling_std",
         "shift",
+        "diff",
+        "pct_change",
+        "rank",
+        "dense_rank",
+        "top_k_by_group",
         "match_at_offset",
         "match_source",
         "exists_in_source",
+        "semi_join",
+        "anti_join",
+        "inner_join",
+        "union_all",
         "join_fields",
+        "having",
         "compare_fields",
         "compare_scalar",
         "summarize",
@@ -400,6 +444,31 @@ class ResultPipelineStep(BaseModel):
         default=None,
         description="Bounded scalar used by arithmetic or row filtering.",
     )
+    values: List[Union[int, float, str]] = Field(
+        default_factory=list,
+        max_length=1_000,
+        description="Bounded scalar set used by membership filtering.",
+    )
+    lower_value: Optional[Union[int, float]] = Field(
+        default=None,
+        description="Inclusive lower bound used by range filtering.",
+    )
+    upper_value: Optional[Union[int, float]] = Field(
+        default=None,
+        description="Inclusive upper bound used by range filtering.",
+    )
+    negate: bool = Field(
+        default=False,
+        description="Whether a set, range, or null predicate is logically negated.",
+    )
+    keep: Literal["first", "last"] = Field(
+        default="first",
+        description="Stable duplicate retained by a distinct operation.",
+    )
+    rank_method: Literal["average", "min", "max", "first"] = Field(
+        default="min",
+        description="Tie policy used by a rank operation.",
+    )
     count: Optional[int] = Field(
         default=None,
         ge=1,
@@ -459,6 +528,9 @@ class ResultPipelineStep(BaseModel):
         """Require the arguments needed by the selected allowlisted operation."""
         required = {
             "latest_by_group": bool(self.group_by and self.order_by),
+            "select_fields": bool(isinstance(self.fields, list) and self.fields),
+            "rename_fields": bool(isinstance(self.fields, dict) and self.fields),
+            "distinct": bool(isinstance(self.fields, list) and self.fields),
             "derive": bool(
                 self.field
                 and self.output_field
@@ -472,6 +544,13 @@ class ResultPipelineStep(BaseModel):
             "filter": bool(
                 self.field and self.comparison and self.value is not None
             ),
+            "filter_set": bool(self.field and self.values),
+            "filter_range": bool(
+                self.field
+                and self.lower_value is not None
+                and self.upper_value is not None
+            ),
+            "filter_null": bool(self.field),
             "sort": bool(self.field),
             "limit": self.count is not None,
             "quantile_filter": bool(
@@ -494,6 +573,27 @@ class ResultPipelineStep(BaseModel):
                 and self.order_by
                 and self.window
             ),
+            "rolling_min": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+            ),
+            "rolling_max": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+            ),
+            "rolling_std": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.window
+            ),
             "shift": bool(
                 self.field
                 and self.output_field
@@ -501,6 +601,23 @@ class ResultPipelineStep(BaseModel):
                 and self.order_by
                 and self.periods
             ),
+            "diff": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.periods
+            ),
+            "pct_change": bool(
+                self.field
+                and self.output_field
+                and self.group_by
+                and self.order_by
+                and self.periods
+            ),
+            "rank": bool(self.field and self.output_field),
+            "dense_rank": bool(self.field and self.output_field),
+            "top_k_by_group": bool(self.field and self.group_by and self.count),
             "match_at_offset": bool(
                 self.field
                 and self.output_field
@@ -520,11 +637,23 @@ class ResultPipelineStep(BaseModel):
                 and self.join_on
                 and self.output_field
             ),
+            "semi_join": bool(self.right_source_query_id and self.join_on),
+            "anti_join": bool(self.right_source_query_id and self.join_on),
+            "inner_join": bool(
+                self.right_source_query_id
+                and self.join_on
+                and isinstance(self.fields, dict)
+                and self.cardinality
+            ),
+            "union_all": bool(self.right_source_query_id),
             "join_fields": bool(
                 self.right_source_query_id
                 and self.join_on
                 and self.fields
                 and self.cardinality
+            ),
+            "having": bool(
+                self.field and self.comparison and self.value is not None
             ),
             "compare_fields": bool(
                 self.field
@@ -574,11 +703,33 @@ class ResultPipelineStep(BaseModel):
                 "match_at_offset value and matched-date output fields must differ"
             )
         if (
-            self.operation in {"rolling_mean", "rolling_sum"}
+            self.operation
+            in {
+                "rolling_mean",
+                "rolling_sum",
+                "rolling_min",
+                "rolling_max",
+                "rolling_std",
+            }
             and self.min_periods is not None
             and self.min_periods > self.window
         ):
             raise ValueError("min_periods cannot exceed the rolling window")
+        if (
+            self.operation == "filter_range"
+            and self.lower_value > self.upper_value
+        ):
+            raise ValueError("filter_range lower_value cannot exceed upper_value")
+        if (
+            self.operation == "rename_fields"
+            and len(set(self.fields.values())) != len(self.fields)
+        ):
+            raise ValueError("rename_fields outputs must be unique")
+        aggregation_outputs = [
+            aggregation.output_field for aggregation in self.aggregations
+        ]
+        if len(aggregation_outputs) != len(set(aggregation_outputs)):
+            raise ValueError("aggregation output fields must be unique")
         return self
 
 

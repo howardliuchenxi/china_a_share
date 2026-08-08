@@ -501,10 +501,17 @@ class ASharePlanValidator:
                 set(source_query.fields),
             )
         )
-        for step in pipeline.steps:
+        for step_index, step in enumerate(pipeline.steps):
+            if step.operation == "having" and not any(
+                prior.operation == "aggregate"
+                for prior in pipeline.steps[:step_index]
+            ):
+                raise PlanValidationError(
+                    "having requires an earlier aggregate operation."
+                )
             input_fields = (
                 []
-                if step.operation == "join_fields"
+                if step.operation in {"join_fields", "inner_join", "union_all"}
                 else list(step.fields)
             )
             required_fields = set(input_fields + step.group_by + step.join_on)
@@ -522,12 +529,16 @@ class ASharePlanValidator:
                     f"{step.operation} references unavailable fields: "
                     + ", ".join(sorted(missing_fields))
                 )
-            if step.operation in {"match_source", "exists_in_source"}:
-                if step.output_field in available_fields:
-                    raise PlanValidationError(
-                        f"{step.operation} output field already exists: "
-                        f"{step.output_field}"
-                    )
+            right_source_operations = {
+                "match_source",
+                "exists_in_source",
+                "semi_join",
+                "anti_join",
+                "inner_join",
+                "join_fields",
+                "union_all",
+            }
+            if step.operation in right_source_operations:
                 right_query = next(
                     (
                         query
@@ -547,40 +558,33 @@ class ASharePlanValidator:
                         set(right_query.fields),
                     )
                 )
+            if step.operation in {"match_source", "exists_in_source"}:
+                if step.output_field in available_fields:
+                    raise PlanValidationError(
+                        f"{step.operation} output field already exists: "
+                        f"{step.output_field}"
+                    )
                 missing_right = set(step.join_on).difference(right_fields)
                 if missing_right:
                     raise PlanValidationError(
                         f"{step.operation} references unavailable right fields: "
                         + ", ".join(sorted(missing_right))
                     )
-            if step.operation == "join_fields":
-                right_query = next(
-                    (
-                        query
-                        for query in plan.queries
-                        if query.query_id == step.right_source_query_id
-                    ),
-                    None,
-                )
-                if right_query is None:
-                    raise PlanValidationError(
-                        "join_fields right_source_query_id does not match "
-                        "a planned query."
-                    )
-                right_fields = set(
-                    TRANSFORM_RESULT_FIELDS.get(
-                        right_query.transform,
-                        set(right_query.fields),
-                    )
-                )
+            if step.operation in {
+                "semi_join",
+                "anti_join",
+                "inner_join",
+                "join_fields",
+            }:
                 missing_right = set(step.join_on).difference(right_fields)
                 if missing_right:
                     raise PlanValidationError(
-                        "join_fields references unavailable right keys: "
+                        f"{step.operation} references unavailable right keys: "
                         + ", ".join(sorted(missing_right))
                     )
+            if step.operation in {"join_fields", "inner_join"}:
                 fields_map = step.fields if isinstance(step.fields, dict) else {}
-                if not fields_map:
+                if step.operation == "join_fields" and not fields_map:
                     raise PlanValidationError(
                         "join_fields operation requires a non-empty dictionary mapping in fields."
                     )
@@ -594,20 +598,54 @@ class ASharePlanValidator:
                             f"join_fields output field already exists: {out_col}"
                         )
                     available_fields.add(out_col)
+            if step.operation == "union_all" and right_fields != available_fields:
+                raise PlanValidationError(
+                    "union_all requires identical left and right field contracts."
+                )
             if step.operation in {
                 "derive",
                 "rolling_mean",
                 "rolling_sum",
+                "rolling_min",
+                "rolling_max",
+                "rolling_std",
                 "shift",
+                "diff",
+                "pct_change",
+                "rank",
+                "dense_rank",
                 "match_at_offset",
                 "match_source",
                 "exists_in_source",
                 "compare_fields",
                 "compare_scalar",
             }:
+                if step.output_field in available_fields:
+                    raise PlanValidationError(
+                        f"{step.operation} output field already exists: "
+                        f"{step.output_field}"
+                    )
                 available_fields.add(step.output_field)
                 if step.operation == "match_at_offset":
+                    if step.matched_date_output_field in available_fields:
+                        raise PlanValidationError(
+                            "match_at_offset matched-date output field already exists: "
+                            f"{step.matched_date_output_field}"
+                        )
                     available_fields.add(step.matched_date_output_field)
+            elif step.operation == "select_fields":
+                available_fields = set(step.fields)
+            elif step.operation == "rename_fields":
+                fields_map = step.fields
+                renamed_fields = set(fields_map.values())
+                untouched_fields = available_fields.difference(fields_map)
+                collisions = renamed_fields.intersection(untouched_fields)
+                if collisions:
+                    raise PlanValidationError(
+                        "rename_fields collides with existing fields: "
+                        + ", ".join(sorted(collisions))
+                    )
+                available_fields = untouched_fields | renamed_fields
             elif step.operation == "aggregate":
                 available_fields = set(step.group_by)
                 available_fields.update(
