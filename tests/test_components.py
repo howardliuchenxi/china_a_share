@@ -1451,6 +1451,49 @@ def test_deepseek_raw_normalization_preserves_event_intent_null_legacy_fields():
     assert raw_plan["intent"]["analysis_type"] == "event_outcome_probability"
 
 
+def test_planner_prefers_execution_graph_over_duplicate_legacy_queries():
+    raw_plan = {
+        "queries": [
+            {
+                "query_id": "legacy-universe",
+                "operation": "stock_basic",
+                "params": {"list_status": "L"},
+                "fields": ["ts_code"],
+                "purpose": "Duplicate legacy universe query.",
+            }
+        ],
+        "result_pipeline": {
+            "source_query_id": "legacy-universe",
+            "output_query_id": "legacy-result",
+            "steps": [{"operation": "limit", "count": 10}],
+        },
+        "intent": {"analysis_type": "rank_metric"},
+        "execution_plan": {
+            "result_node_id": "universe",
+            "nodes": [
+                {
+                    "node_id": "universe",
+                    "kind": "query",
+                    "query": {
+                        "query_id": "universe-query",
+                        "operation": "stock_basic",
+                        "params": {"list_status": "L"},
+                        "fields": ["ts_code"],
+                        "purpose": "Retrieve the listed A-share universe.",
+                    },
+                }
+            ],
+        },
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    assert raw_plan["queries"] == []
+    assert raw_plan["result_pipeline"] is None
+    assert raw_plan["intent"] is None
+    assert raw_plan["execution_plan"]["result_node_id"] == "universe"
+
+
 def test_compiled_event_intent_executes_direction_probabilities():
     intent = AnalysisIntent.model_validate(
         {

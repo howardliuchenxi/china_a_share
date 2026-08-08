@@ -511,6 +511,13 @@ class DeepSeekQueryPlanner:
             raw_plan["result_pipeline"] = None
             raw_plan["execution_plan"] = None
             raw_plan["answer_contract"] = None
+        elif isinstance(raw_plan.get("execution_plan"), dict):
+            # An execution graph embeds every provider query and compute operation it
+            # owns. Model-generated top-level copies are redundant legacy syntax and
+            # would otherwise make an unambiguous plan fail contract validation.
+            raw_plan["queries"] = []
+            raw_plan["result_pipeline"] = None
+            raw_plan["intent"] = None
         pipeline = raw_plan.get("result_pipeline")
         steps = pipeline.get("steps") if isinstance(pipeline, dict) else None
         if isinstance(steps, list):
