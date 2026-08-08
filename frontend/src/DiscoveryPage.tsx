@@ -273,6 +273,7 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
     setIsSubmitting(true);
     setSubmitError("");
     setPollError("");
+    setTaskId(null);
     setTaskStatus(null);
     try {
       const payload: DiscoveryTaskRequest = {

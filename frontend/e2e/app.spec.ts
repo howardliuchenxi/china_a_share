@@ -938,6 +938,54 @@ test("discovery page stops polling when a task no longer exists", async ({ page 
   expect(statusPollCount).toBe(1);
 });
 
+test("discovery page cancels stale polling before a replacement task is accepted", async ({ page }) => {
+  let submissionCount = 0;
+  await page.route("**/api/discovery/tasks", async route => {
+    submissionCount += 1;
+    if (submissionCount === 2) {
+      await new Promise(resolve => setTimeout(resolve, 2300));
+    }
+    const taskId = submissionCount === 1
+      ? "stale-discovery-task"
+      : "replacement-discovery-task";
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        task_id: taskId,
+        status: "queued",
+        status_url: `/api/discovery/tasks/${taskId}`,
+      }),
+    });
+  });
+  let stalePollCount = 0;
+  await page.route("**/api/discovery/tasks/stale-discovery-task", route => {
+    stalePollCount += 1;
+    void route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Temporarily unavailable" }),
+    });
+  });
+  await page.route("**/api/discovery/tasks/replacement-discovery-task", route => {
+    void route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Discovery task was not found." }),
+    });
+  });
+
+  await page.goto("/analysis");
+  await page.getByRole("tab", { name: "策略挖掘" }).click();
+  await page.getByRole("button", { name: "开始反向搜索" }).click();
+  await expect(page.getByRole("alert")).toHaveText("研究任务状态暂时不可用，系统正在自动重试。");
+
+  await page.getByRole("button", { name: "开始反向搜索" }).click();
+  await expect(page.getByRole("button", { name: "正在提交…" })).toBeDisabled();
+  await expect(page.getByRole("alert")).toHaveText("研究任务不存在或已过期，请重新提交。");
+  expect(stalePollCount).toBe(1);
+});
+
 test("discovery page explains a failed search while preserving technical details", async ({ page }) => {
   const technicalMessage = "No rule produced positive outcome-attrition-robust training lift while meeting the sample, raw/effective trading-day breadth, raw/effective security breadth, and selected/comparable-baseline outcome-coverage requirements. Review factor coverage or relax only the failing evidence thresholds.";
   await page.route("**/api/discovery/tasks", route => {
