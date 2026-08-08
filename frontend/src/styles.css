@@ -1380,6 +1380,9 @@ table tbody tr:hover { background-color: #f1f3ee; }
   background: #fff0ed;
   color: #8b3025;
 }
+.discovery-error p { margin: 0; }
+.discovery-error details { margin-top: 0.45rem; }
+.discovery-error code { overflow-wrap: anywhere; }
 .research-progress-grid,
 .headline-metrics {
   display: grid;

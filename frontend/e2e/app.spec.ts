@@ -938,6 +938,73 @@ test("discovery page stops polling when a task no longer exists", async ({ page 
   expect(statusPollCount).toBe(1);
 });
 
+test("discovery page explains a failed search while preserving technical details", async ({ page }) => {
+  const technicalMessage = "No rule produced positive outcome-attrition-robust training lift while meeting the sample, raw/effective trading-day breadth, raw/effective security breadth, and selected/comparable-baseline outcome-coverage requirements. Review factor coverage or relax only the failing evidence thresholds.";
+  await page.route("**/api/discovery/tasks", route => {
+    void route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        task_id: "failed-discovery-task",
+        status: "queued",
+        status_url: "/api/discovery/tasks/failed-discovery-task",
+      }),
+    });
+  });
+  await page.route("**/api/discovery/tasks/failed-discovery-task", route => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        task_id: "failed-discovery-task",
+        status: "failed",
+        research_config: {
+          target_pool: "A_SHARE",
+          train_start: "20240101",
+          train_end: "20251231",
+          val_start: "20260101",
+          val_end: "20260630",
+          factors: ["pe_ttm"],
+          forward_days: 20,
+          target_return_pct: 0,
+          minimum_samples: 30,
+          minimum_trading_days: 20,
+          minimum_securities: 10,
+          minimum_outcome_coverage_pct: 95,
+          max_conditions: 2,
+        },
+        progress: {
+          current_stage: "failed",
+          current_log: "规律搜索失败。",
+          current_generation: 1,
+          total_generations: 1,
+          candidates_evaluated: 10,
+          formulas_tested: 0,
+          training_sample_count: 120,
+          validation_sample_count: 60,
+          training_samples_purged: 4,
+          training_factor_coverage: { pe_ttm: 0.80 },
+          validation_factor_coverage: { pe_ttm: 0.75 },
+          leaderboard: [],
+        },
+        error: { source: "system", message: technicalMessage },
+      }),
+    });
+  });
+
+  await page.goto("/analysis");
+  await page.getByRole("tab", { name: "策略挖掘" }).click();
+  await page.getByRole("button", { name: "开始反向搜索" }).click();
+
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("训练窗口内没有规律同时通过正向提升");
+  await expect(alert).toContainText("请先检查上方因子可用率与样本规模");
+  await expect(page.getByText("因子可用率（训练 / 验证）", { exact: true })).toBeVisible();
+  await expect(alert.getByText(technicalMessage)).not.toBeVisible();
+  await alert.getByText("查看技术详情").click();
+  await expect(alert.getByText(technicalMessage)).toBeVisible();
+});
+
 test("discovery page normalizes factors restored from the URL", async ({ page }) => {
   await page.goto("/analysis?page=discovery&dp_factors=pe_ttm,retired_factor,pe_ttm,pb");
 

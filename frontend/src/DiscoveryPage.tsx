@@ -67,6 +67,16 @@ function validationReason(hypothesis: FactorHypothesis) {
   }
 }
 
+function discoveryFailureGuidance(message: string) {
+  if (message.startsWith("No rule produced positive outcome-attrition-robust training lift")) {
+    return "训练窗口内没有规律同时通过正向提升、缺失标签最坏情形、样本、日期、证券和标签覆盖门槛。请先检查上方因子可用率与样本规模，再考虑扩大训练窗口或只放宽实际失败的证据门槛。";
+  }
+  if (message === "Forward return window extends beyond available sessions.") {
+    return "研究结束日期之后还没有足够的真实交易日来结算未来收益。请把训练或验证结束日期前移，系统不会缩短收益周期或填充尚未发生的价格。";
+  }
+  return "规律研究任务失败。请展开技术详情核对数据源或计算错误后再重试。";
+}
+
 function significanceWasTested(hypothesis: FactorHypothesis) {
   return !untestedValidationReasons.has(hypothesis.validation_reason);
 }
@@ -420,7 +430,10 @@ export function DiscoveryPage({ onApplyFormula }: DiscoveryPageProps) {
         </>}
         <p className="live-log">{taskStatus.progress.current_log || "等待任务开始…"}</p>
         {taskStatus.progress.training_samples_purged > 0 && <p className="research-caveat">已清除 {taskStatus.progress.training_samples_purged.toLocaleString()} 条未来结算日进入验证窗口的训练样本，防止标签泄漏。</p>}
-        {taskStatus.error && <p className="discovery-error">{taskStatus.error.message}</p>}
+        {taskStatus.error && <div className="discovery-error" role="alert">
+          <p>{discoveryFailureGuidance(taskStatus.error.message)}</p>
+          <details><summary>查看技术详情</summary><code>{taskStatus.error.message}</code></details>
+        </div>}
       </section>}
 
       {topTrainingRule && <section className="results-panel discovery-summary-panel">
