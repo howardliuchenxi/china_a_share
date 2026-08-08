@@ -95,6 +95,14 @@ def build_query_plan_system_prompt(
         "by setting fanout_input_field and fanout_param; use this when an intermediate "
         "candidate set must drive per-security provider calls. Dependencies must be "
         "acyclic, and result_node_id must identify the final answer. "
+        "For an event study that asks for up or down probabilities after consecutive "
+        "limit-up sessions, output only a high-level intent with "
+        "analysis_type=event_outcome_probability. Populate event_window, "
+        "event_type=limit_up, consecutive_sessions, observation_offset, "
+        "observation_unit, outcomes, and aggregation=probability. Do not generate "
+        "queries, result_pipeline, execution_plan, or answer_contract for this intent; "
+        "the trusted local compiler owns provider selection, field binding, outcome "
+        "window expansion, and final result fields. "
         "Use result_pipeline for deterministic calculations instead of inventing "
         "specialized transforms. Pipelines may compose latest_by_group, derive, "
         "drop_missing, filter, sort, limit, quantile_filter, aggregate, rolling_mean, "
@@ -261,6 +269,7 @@ class DeepSeekQueryPlanner:
                 validator is not None
                 and plan.feasibility == "supported"
                 and plan.answer_contract is None
+                and plan.intent is None
             ):
                 last_error = ValueError(
                     "A supported model-generated plan must include answer_contract "
@@ -448,6 +457,26 @@ class DeepSeekQueryPlanner:
         """Repair unambiguous model syntax before contract validation."""
         if not isinstance(raw_plan, dict):
             return
+        for list_field in (
+            "requirements",
+            "limitations",
+            "clarification_options",
+            "queries",
+        ):
+            if raw_plan.get(list_field) is None:
+                raw_plan[list_field] = []
+        semantic_intent = raw_plan.get("intent")
+        if (
+            isinstance(semantic_intent, dict)
+            and semantic_intent.get("analysis_type")
+            == "event_outcome_probability"
+        ):
+            # Once the model selects a supported semantic IR, the trusted compiler
+            # exclusively owns all provider reads, field bindings, and result IDs.
+            raw_plan["queries"] = []
+            raw_plan["result_pipeline"] = None
+            raw_plan["execution_plan"] = None
+            raw_plan["answer_contract"] = None
         pipeline = raw_plan.get("result_pipeline")
         steps = pipeline.get("steps") if isinstance(pipeline, dict) else None
         if isinstance(steps, list):
@@ -675,9 +704,9 @@ class DeepSeekQueryPlanner:
         if not isinstance(queries, list):
             return
         intent = raw_plan.get("intent")
-        metric = intent.get("metric", {}) if isinstance(intent, dict) else {}
+        metric = (intent.get("metric") or {}) if isinstance(intent, dict) else {}
         window = metric.get("window", {}) if isinstance(metric, dict) else {}
-        ranking = intent.get("ranking", {}) if isinstance(intent, dict) else {}
+        ranking = (intent.get("ranking") or {}) if isinstance(intent, dict) else {}
         if (
             raw_plan.get("feasibility") == "supported"
             and not queries

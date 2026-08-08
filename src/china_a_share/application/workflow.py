@@ -2150,12 +2150,92 @@ class AnalysisService:
             row_count=len(safe_frame),
         )
 
-    def _compile_intent(self, plan: QueryPlan) -> QueryPlan:
+    @staticmethod
+    def _compile_intent(plan: QueryPlan) -> QueryPlan:
         """Compile one high-level AnalysisIntent into deterministic queries and result pipelines."""
         if not plan.intent:
             return plan
 
         intent = plan.intent
+        if intent.analysis_type == "event_outcome_probability":
+            event_start = datetime.strptime(
+                intent.event_window.start,
+                "%Y%m%d",
+            ).date()
+            event_end = datetime.strptime(
+                intent.event_window.end,
+                "%Y%m%d",
+            ).date()
+            if intent.observation_unit == "trading_session":
+                price_end = event_end + timedelta(
+                    days=(
+                        intent.observation_offset
+                        * TRADING_SESSION_HORIZON_MULTIPLIER
+                        + TRADING_SESSION_HORIZON_BUFFER_DAYS
+                    )
+                )
+            else:
+                price_end = add_calendar_offset(
+                    event_end,
+                    intent.observation_offset,
+                    intent.observation_unit,
+                )
+            price_query = DataQuery(
+                query_id="event_prices",
+                operation="daily",
+                params={
+                    "start_date": event_start.strftime("%Y%m%d"),
+                    "end_date": price_end.strftime("%Y%m%d"),
+                },
+                fields=["ts_code", "trade_date", "close"],
+                purpose="Retrieve the dense market sequence for event outcomes.",
+            )
+            event_query = DataQuery(
+                query_id="event_membership",
+                operation="limit_list_d",
+                params={
+                    "start_date": event_start.strftime("%Y%m%d"),
+                    "end_date": event_end.strftime("%Y%m%d"),
+                    "limit_type": "U",
+                },
+                fields=["ts_code", "trade_date"],
+                purpose="Retrieve native limit-up membership for the event window.",
+            )
+            pipeline = AnalysisService._build_event_outcome_probability_pipeline(
+                price_query.query_id,
+                event_query.query_id,
+                intent.consecutive_sessions,
+                intent.observation_offset,
+                intent.observation_unit,
+            )
+            output_descriptions = {
+                "up": "Probability that the observed post-event session closes higher.",
+                "down": "Probability that the observed post-event session closes lower.",
+            }
+            output_fields = {
+                "up": "positive_event_ratio",
+                "down": "negative_event_ratio",
+            }
+            plan.queries = [price_query, event_query]
+            plan.result_pipeline = pipeline
+            plan.execution_plan = None
+            plan.answer_contract = AnswerContract.model_validate(
+                {
+                    "result_query_id": pipeline.output_query_id,
+                    "result_kind": "summary",
+                    "outputs": [
+                        {
+                            "field": output_fields[outcome],
+                            "description": output_descriptions[outcome],
+                        }
+                        for outcome in intent.outcomes
+                    ],
+                }
+            )
+            plan.feasibility = "supported"
+            plan.limitations = []
+            return plan
+
         if intent.analysis_type == "rank_metric" and intent.metric.type == "period_return":
             query = DataQuery(
                 query_id="period_return_query",
@@ -2184,13 +2264,124 @@ class AnalysisService:
             )
             plan.queries = [query]
             plan.result_pipeline = pipeline
-            if plan.answer_contract is not None:
-                # The local compiler owns the final result identifier, so keep the
-                # model-authored answer contract aligned with the executable output.
-                plan.answer_contract.result_query_id = pipeline.output_query_id
+            plan.answer_contract = AnswerContract.model_validate(
+                {
+                    "result_query_id": pipeline.output_query_id,
+                    "result_kind": "table",
+                    "outputs": [
+                        {
+                            "field": "ts_code",
+                            "description": "A-share security code.",
+                        },
+                        {
+                            "field": "period_return_pct",
+                            "description": "Price return over the requested period in percent.",
+                        },
+                    ],
+                }
+            )
             plan.feasibility = "supported"
 
         return plan
+
+    @staticmethod
+    def _build_event_outcome_probability_pipeline(
+        price_query_id: str,
+        event_query_id: str,
+        consecutive_sessions: int,
+        observation_offset: int,
+        observation_unit: str,
+    ) -> ResultPipeline:
+        """Compile semantic sequence and outcome operators into one typed pipeline."""
+        return ResultPipeline.model_validate(
+            {
+                "source_query_id": price_query_id,
+                "output_query_id": "event_outcome_probability",
+                "steps": [
+                    {
+                        "operation": "match_source",
+                        "right_source_query_id": event_query_id,
+                        "join_on": ["ts_code", "trade_date"],
+                        "output_field": "is_event",
+                    },
+                    {
+                        "operation": "rolling_sum",
+                        "field": "is_event",
+                        "output_field": "event_streak_count",
+                        "group_by": ["ts_code"],
+                        "order_by": "trade_date",
+                        "window": consecutive_sessions,
+                        "min_periods": consecutive_sessions,
+                        "require_consecutive": True,
+                    },
+                    {
+                        "operation": "match_at_offset",
+                        "field": "close",
+                        "output_field": "future_close",
+                        "matched_date_output_field": "future_trade_date",
+                        "group_by": ["ts_code"],
+                        "order_by": "trade_date",
+                        "offset_value": observation_offset,
+                        "offset_unit": observation_unit,
+                    },
+                    {
+                        "operation": "filter",
+                        "field": "event_streak_count",
+                        "comparison": "eq",
+                        "value": consecutive_sessions,
+                    },
+                    {"operation": "drop_missing", "fields": ["future_close"]},
+                    {
+                        "operation": "derive",
+                        "field": "future_close",
+                        "right_field": "close",
+                        "output_field": "outcome_ratio",
+                        "arithmetic_operator": "divide",
+                    },
+                    {
+                        "operation": "derive",
+                        "field": "outcome_ratio",
+                        "output_field": "outcome_return",
+                        "arithmetic_operator": "subtract",
+                        "value": 1,
+                    },
+                    {
+                        "operation": "compare_scalar",
+                        "field": "outcome_return",
+                        "output_field": "outcome_is_positive",
+                        "comparison": "gt",
+                        "value": 0,
+                    },
+                    {
+                        "operation": "compare_scalar",
+                        "field": "outcome_return",
+                        "output_field": "outcome_is_negative",
+                        "comparison": "lt",
+                        "value": 0,
+                    },
+                    {
+                        "operation": "summarize",
+                        "aggregations": [
+                            {
+                                "output_field": "event_count",
+                                "field": "outcome_return",
+                                "function": "count",
+                            },
+                            {
+                                "output_field": "positive_event_ratio",
+                                "field": "outcome_is_positive",
+                                "function": "mean",
+                            },
+                            {
+                                "output_field": "negative_event_ratio",
+                                "field": "outcome_is_negative",
+                                "function": "mean",
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
 
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
@@ -2198,6 +2389,13 @@ class AnalysisService:
         if plan.execution_plan is not None:
             # The planner owns DAG business semantics; local code only validates and
             # executes the declared nodes without applying prompt-specific compilers.
+            return plan
+        if (
+            plan.intent is not None
+            and plan.intent.analysis_type == "event_outcome_probability"
+        ):
+            # The semantic compiler owns this executable plan. Legacy prompt
+            # normalizers must not reinterpret or replace its typed operators.
             return plan
         if "\u5206\u7ea2\u603b\u989d" in prompt and "\u4e0d\u63a5\u53d7\u6bcf\u80a1" in prompt:
             plan.feasibility = "unsupported"
@@ -2222,7 +2420,11 @@ class AnalysisService:
         AnalysisService._compile_security_moneyflow_comparison(plan, prompt)
         AnalysisService._compile_limit_up_count_return_ranking(plan, prompt)
 
-        if plan.intent is not None and plan.intent.metric.type == "period_return":
+        if (
+            plan.intent is not None
+            and plan.intent.analysis_type == "rank_metric"
+            and plan.intent.metric.type == "period_return"
+        ):
             return_terms = (
                 "\u6da8\u5e45",
                 "\u8dcc\u5e45",
@@ -3858,6 +4060,8 @@ class AnalysisService:
         safe_snapshot = safe_snapshot_date.strftime("%Y%m%d")
         if (
             plan.intent is not None
+            and plan.intent.analysis_type == "rank_metric"
+            and plan.intent.metric is not None
             and plan.intent.metric.window is not None
             and plan.intent.metric.window.end > completed
         ):

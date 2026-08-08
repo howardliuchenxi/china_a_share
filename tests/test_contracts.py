@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from china_a_share.core.contracts import (
     AnalysisImage,
+    AnalysisIntent,
     AnalysisRequest,
     AnalysisResponse,
     AnalysisStatus,
@@ -16,6 +17,41 @@ from china_a_share.core.contracts import (
     QueryStatus,
     ServiceError,
 )
+
+
+def test_event_outcome_probability_intent_requires_only_semantic_inputs():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "event_outcome_probability",
+            "event_window": {"start": "20260101", "end": "20260601"},
+            "event_type": "limit_up",
+            "consecutive_sessions": 2,
+            "observation_offset": 1,
+            "observation_unit": "trading_session",
+            "outcomes": ["up", "down"],
+            "aggregation": "probability",
+        }
+    )
+
+    assert intent.metric is None
+    assert intent.outcomes == ["up", "down"]
+
+
+def test_event_outcome_probability_intent_rejects_missing_observation():
+    with pytest.raises(
+        ValidationError,
+        match="event_outcome_probability requires",
+    ):
+        AnalysisIntent.model_validate(
+            {
+                "analysis_type": "event_outcome_probability",
+                "event_window": {"start": "20260101", "end": "20260601"},
+                "event_type": "limit_up",
+                "consecutive_sessions": 2,
+                "outcomes": ["up"],
+                "aggregation": "probability",
+            }
+        )
 
 
 def test_execution_node_accepts_optional_planner_purpose():

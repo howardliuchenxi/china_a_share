@@ -1318,6 +1318,149 @@ def test_workflow_compiles_limit_up_streak_pipeline_from_request_semantics():
     )
 
 
+def test_workflow_compiles_event_intent_without_model_authored_queries_or_fields():
+    plan = QueryPlan(
+        interpretation="Measure third-session direction after two limit-up sessions.",
+        intent=AnalysisIntent.model_validate(
+            {
+                "analysis_type": "event_outcome_probability",
+                "event_window": {"start": "20260101", "end": "20260601"},
+                "event_type": "limit_up",
+                "consecutive_sessions": 2,
+                "observation_offset": 1,
+                "observation_unit": "trading_session",
+                "outcomes": ["up", "down"],
+                "aggregation": "probability",
+            }
+        ),
+    )
+
+    result = AnalysisService._compile_intent(plan)
+
+    assert [query.operation for query in result.queries] == [
+        "daily",
+        "limit_list_d",
+    ]
+    assert result.queries[0].fields == ["ts_code", "trade_date", "close"]
+    assert result.queries[1].params == {
+        "start_date": "20260101",
+        "end_date": "20260601",
+        "limit_type": "U",
+    }
+    offset = next(
+        step
+        for step in result.result_pipeline.steps
+        if step.operation == "match_at_offset"
+    )
+    assert offset.field == "close"
+    assert offset.order_by == "trade_date"
+    assert offset.offset_value == 1
+    assert result.answer_contract.result_query_id == "event_outcome_probability"
+    assert [
+        output.field for output in result.answer_contract.outputs
+    ] == ["positive_event_ratio", "negative_event_ratio"]
+
+
+def test_deepseek_raw_normalization_preserves_event_intent_null_legacy_fields():
+    raw_plan = {
+        "interpretation": "Measure post-event direction probabilities.",
+        "feasibility": "supported",
+        "queries": [{"operation": "daily"}],
+        "result_pipeline": {
+            "steps": [
+                {
+                    "operation": "match_at_offset",
+                    "field": "trade_date",
+                    "order_by": "trade_date",
+                }
+            ]
+        },
+        "execution_plan": {"nodes": []},
+        "answer_contract": {"result_query_id": "model-owned"},
+        "clarification_options": None,
+        "intent": {
+            "analysis_type": "event_outcome_probability",
+            "metric": None,
+            "ranking": None,
+            "event_window": {"start": "20260101", "end": "20260601"},
+            "event_type": "limit_up",
+            "consecutive_sessions": 2,
+            "observation_offset": 1,
+            "observation_unit": "trading_session",
+            "outcomes": ["up", "down"],
+            "aggregation": "probability",
+        },
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    assert raw_plan["queries"] == []
+    assert raw_plan["result_pipeline"] is None
+    assert raw_plan["execution_plan"] is None
+    assert raw_plan["answer_contract"] is None
+    assert raw_plan["clarification_options"] == []
+    assert raw_plan["intent"]["analysis_type"] == "event_outcome_probability"
+
+
+def test_compiled_event_intent_executes_direction_probabilities():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "event_outcome_probability",
+            "event_window": {"start": "20260101", "end": "20260103"},
+            "event_type": "limit_up",
+            "consecutive_sessions": 2,
+            "observation_offset": 1,
+            "observation_unit": "trading_session",
+            "outcomes": ["up", "down"],
+            "aggregation": "probability",
+        }
+    )
+    plan = AnalysisService._compile_intent(
+        QueryPlan(interpretation="Compile an event study.", intent=intent)
+    )
+    prices = QueryResult(
+        query_id="event_prices",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        rows=[
+            {"ts_code": code, "trade_date": trade_date, "close": close}
+            for code, values in {
+                "A": [("20260101", 10.0), ("20260102", 11.0), ("20260103", 12.0)],
+                "B": [("20260101", 10.0), ("20260102", 11.0), ("20260103", 9.0)],
+            }.items()
+            for trade_date, close in values
+        ],
+        row_count=6,
+    )
+    events = QueryResult(
+        query_id="event_membership",
+        provider="tushare",
+        operation="limit_list_d",
+        status="success",
+        rows=[
+            {"ts_code": code, "trade_date": trade_date}
+            for code in ("A", "B")
+            for trade_date in ("20260101", "20260102")
+        ],
+        row_count=4,
+    )
+
+    result = ResultPipelineExecutor().execute(
+        plan.result_pipeline,
+        prices,
+        {"event_membership": events},
+    )
+
+    assert result.rows == [
+        {
+            "event_count": 2,
+            "positive_event_ratio": 0.5,
+            "negative_event_ratio": 0.5,
+        }
+    ]
+
+
 def test_workflow_compiles_separated_ordinal_outcome_with_both_probabilities():
     plan = make_daily_plan()
     plan.queries[0].fields = ["ts_code", "trade_date", "close"]

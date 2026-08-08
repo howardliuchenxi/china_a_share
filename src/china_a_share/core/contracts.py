@@ -653,7 +653,7 @@ class AnalysisIntent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    analysis_type: Literal["rank_metric"] = Field(
+    analysis_type: Literal["rank_metric", "event_outcome_probability"] = Field(
         default="rank_metric",
         description="Categorized analysis intent type.",
     )
@@ -661,8 +661,91 @@ class AnalysisIntent(BaseModel):
         default_factory=AnalysisUniverse,
         description="Universe boundaries.",
     )
-    metric: AnalysisMetric = Field(description="Target calculation metric.")
-    ranking: AnalysisRanking = Field(description="Ranking sorting and count constraints.")
+    metric: Optional[AnalysisMetric] = Field(
+        default=None,
+        description="Target calculation metric for metric-ranking analysis.",
+    )
+    ranking: Optional[AnalysisRanking] = Field(
+        default=None,
+        description="Sorting and count constraints for metric-ranking analysis.",
+    )
+    event_window: Optional[DateWindow] = Field(
+        default=None,
+        description="Inclusive interval in which qualifying events must end.",
+    )
+    event_type: Optional[Literal["limit_up"]] = Field(
+        default=None,
+        description="Provider-neutral market event evaluated by an event study.",
+    )
+    consecutive_sessions: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="Required number of consecutive trading sessions for the event.",
+    )
+    observation_offset: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=60,
+        description="Positive offset from the final event session to the outcome.",
+    )
+    observation_unit: Optional[
+        Literal["trading_session", "day", "week", "month", "year"]
+    ] = Field(
+        default=None,
+        description="Time unit used to locate the post-event outcome.",
+    )
+    outcomes: List[Literal["up", "down"]] = Field(
+        default_factory=list,
+        max_length=2,
+        description="Requested directional outcomes whose probabilities are returned.",
+    )
+    aggregation: Optional[Literal["probability"]] = Field(
+        default=None,
+        description="Aggregate statistic calculated over qualifying event outcomes.",
+    )
+
+    @model_validator(mode="after")
+    def validate_intent_shape(self) -> "AnalysisIntent":
+        """Require exactly the semantic inputs needed by the selected analysis type."""
+        if self.analysis_type == "rank_metric":
+            if self.metric is None or self.ranking is None:
+                raise ValueError("rank_metric requires metric and ranking")
+            if any(
+                value is not None
+                for value in (
+                    self.event_window,
+                    self.event_type,
+                    self.consecutive_sessions,
+                    self.observation_offset,
+                    self.observation_unit,
+                    self.aggregation,
+                )
+            ) or self.outcomes:
+                raise ValueError("rank_metric cannot declare event-study inputs")
+            return self
+        if self.metric is not None or self.ranking is not None:
+            raise ValueError(
+                "event_outcome_probability cannot declare metric-ranking inputs"
+            )
+        if not all(
+            value is not None
+            for value in (
+                self.event_window,
+                self.event_type,
+                self.consecutive_sessions,
+                self.observation_offset,
+                self.observation_unit,
+                self.aggregation,
+            )
+        ) or not self.outcomes:
+            raise ValueError(
+                "event_outcome_probability requires a window, event, sequence, "
+                "observation, outcomes, and aggregation"
+            )
+        if len(self.outcomes) != len(set(self.outcomes)):
+            raise ValueError("event outcomes must be unique")
+        return self
 
 
 class AnswerOutput(BaseModel):
@@ -847,9 +930,11 @@ class QueryPlan(BaseModel):
     def validate_feasibility(self) -> "QueryPlan":
         """Reject executable unsupported plans and empty supported plans."""
         if self.feasibility == "supported" and not (
-            self.queries or self.execution_plan
+            self.queries or self.execution_plan or self.intent
         ):
-            raise ValueError("supported plans must contain queries or an execution plan")
+            raise ValueError(
+                "supported plans must contain queries, an execution plan, or intent"
+            )
         if self.feasibility == "unsupported":
             if self.queries or self.execution_plan:
                 raise ValueError(
