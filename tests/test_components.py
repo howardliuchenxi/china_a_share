@@ -161,6 +161,18 @@ def test_catalog_and_validator_accept_stock_operation_plan():
 def test_validator_accepts_universe_constraint_enforced_before_ranking():
     plan = QueryPlan(
         interpretation="Rank valuation inside one classified security universe.",
+        intent=AnalysisIntent.model_validate(
+            {
+                "analysis_type": "rank_metric",
+                "universe": {
+                    "filters": [
+                        {"field": "area", "operator": "eq", "value": "Shanghai"}
+                    ]
+                },
+                "metric": {"type": "pe", "as_of": "20260717"},
+                "ranking": {"direction": "desc", "limit": 10},
+            }
+        ),
         requirements=[
             {
                 "requirement": "Restrict securities by area before ranking.",
@@ -175,7 +187,7 @@ def test_validator_accepts_universe_constraint_enforced_before_ranking():
                 "scope": "universe",
                 "field": "area",
                 "operator": "eq",
-                "value": "上海",
+                "value": "Shanghai",
                 "query_id": "classified-universe",
                 "enforcement_step_index": 1,
             }
@@ -193,7 +205,9 @@ def test_validator_accepts_universe_constraint_enforced_before_ranking():
                 operation="stock_basic",
                 fields=["ts_code", "area"],
                 purpose="Build the requested classified universe.",
-                filters=[{"field": "area", "operator": "eq", "value": "上海"}],
+                filters=[
+                    {"field": "area", "operator": "eq", "value": "Shanghai"}
+                ],
             ),
         ],
         result_pipeline={
@@ -228,6 +242,22 @@ def test_validator_accepts_universe_constraint_enforced_before_ranking():
 def test_validator_rejects_universe_constraint_enforced_after_ranking():
     plan = QueryPlan(
         interpretation="Reject late universe enforcement.",
+        intent=AnalysisIntent.model_validate(
+            {
+                "analysis_type": "rank_metric",
+                "universe": {
+                    "filters": [
+                        {
+                            "field": "industry",
+                            "operator": "eq",
+                            "value": "Automotive",
+                        }
+                    ]
+                },
+                "metric": {"type": "pe", "as_of": "20260717"},
+                "ranking": {"direction": "desc", "limit": 10},
+            }
+        ),
         requirements=[
             {
                 "requirement": "Restrict securities by industry before ranking.",
@@ -242,7 +272,7 @@ def test_validator_rejects_universe_constraint_enforced_after_ranking():
                 "scope": "universe",
                 "field": "industry",
                 "operator": "eq",
-                "value": "汽车",
+                "value": "Automotive",
                 "query_id": "classified-universe",
                 "enforcement_step_index": 2,
             }
@@ -261,7 +291,11 @@ def test_validator_rejects_universe_constraint_enforced_after_ranking():
                 fields=["ts_code", "industry"],
                 purpose="Build the requested classified universe.",
                 filters=[
-                    {"field": "industry", "operator": "eq", "value": "汽车"}
+                    {
+                        "field": "industry",
+                        "operator": "eq",
+                        "value": "Automotive",
+                    }
                 ],
             ),
         ],
@@ -1592,7 +1626,7 @@ def test_deepseek_raw_normalization_preserves_event_intent_null_legacy_fields():
     assert raw_plan["intent"]["analysis_type"] == "event_outcome_probability"
 
 
-def test_planner_prefers_execution_graph_over_duplicate_legacy_queries():
+def test_planner_prefers_typed_ranking_intent_over_model_authored_execution_graph():
     raw_plan = {
         "queries": [
             {
@@ -1608,7 +1642,11 @@ def test_planner_prefers_execution_graph_over_duplicate_legacy_queries():
             "output_query_id": "legacy-result",
             "steps": [{"operation": "limit", "count": 10}],
         },
-        "intent": {"analysis_type": "rank_metric"},
+        "intent": {
+            "analysis_type": "rank_metric",
+            "metric": {"type": "pe", "as_of": "20260807"},
+            "ranking": {"direction": "desc", "limit": 10},
+        },
         "execution_plan": {
             "result_node_id": "universe",
             "nodes": [
@@ -1631,8 +1669,8 @@ def test_planner_prefers_execution_graph_over_duplicate_legacy_queries():
 
     assert raw_plan["queries"] == []
     assert raw_plan["result_pipeline"] is None
-    assert raw_plan["intent"] is None
-    assert raw_plan["execution_plan"]["result_node_id"] == "universe"
+    assert raw_plan["intent"]["metric"]["type"] == "pe"
+    assert raw_plan["execution_plan"] is None
 
 
 def test_compiled_event_intent_executes_direction_probabilities():
@@ -1930,6 +1968,184 @@ def test_workflow_compiles_intent_and_aligns_answer_contract_result():
     ASharePlanValidator(FakeMarketDataProvider()).validate(result)
 
 
+@pytest.mark.parametrize(
+    ("universe_field", "universe_value", "metric", "direction", "limit"),
+    [
+        ("industry", "Automotive", "pe", "desc", 10),
+        ("area", "Shanghai", "total_mv", "asc", 7),
+    ],
+)
+def test_workflow_compiles_generic_classified_metric_ranking(
+    universe_field,
+    universe_value,
+    metric,
+    direction,
+    limit,
+):
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "rank_metric",
+            "universe": {
+                "filters": [
+                    {
+                        "field": universe_field,
+                        "operator": "eq",
+                        "value": universe_value,
+                    }
+                ]
+            },
+            "metric": {"type": metric, "as_of": "20260807"},
+            "ranking": {"direction": direction, "limit": limit},
+        }
+    )
+    plan = QueryPlan(
+        interpretation="Rank one metric inside a classified universe.",
+        intent=intent,
+        requirements=[
+            {
+                "requirement": "Apply the universe before ranking.",
+                "status": "covered",
+                "implementation": "Compile the typed ranking intent locally.",
+                "evidence": "The intent declares the universe, metric, and ranking.",
+            }
+        ],
+    )
+
+    compiled = AnalysisService._compile_intent(plan)
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(compiled)
+
+    assert [query.operation for query in validated.queries] == [
+        "daily_basic",
+        "stock_basic",
+    ]
+    assert validated.queries[0].fields == ["ts_code", "trade_date", metric]
+    assert validated.queries[1].filters[0].field == universe_field
+    assert [step.operation for step in validated.result_pipeline.steps] == [
+        "drop_missing",
+        "match_source",
+        "filter",
+        "sort",
+        "limit",
+    ]
+    assert validated.result_pipeline.steps[-2].field == metric
+    assert validated.result_pipeline.steps[-2].direction == direction
+    assert validated.result_pipeline.steps[-1].count == limit
+    assert validated.constraints[0].scope == "universe"
+
+
+def test_compiled_metric_ranking_excludes_nonmembers_before_limit():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "rank_metric",
+            "universe": {
+                "filters": [
+                    {
+                        "field": "market",
+                        "operator": "eq",
+                        "value": "Growth",
+                    }
+                ]
+            },
+            "metric": {"type": "pb", "as_of": "20260807"},
+            "ranking": {"direction": "desc", "limit": 2},
+        }
+    )
+    plan = AnalysisService._compile_intent(
+        QueryPlan(
+            interpretation="Rank valuation inside one market segment.",
+            intent=intent,
+        )
+    )
+    metric_result = QueryResult(
+        query_id="ranking_metric_snapshot",
+        provider="tushare",
+        operation="daily_basic",
+        status="success",
+        rows=[
+            {"ts_code": "A", "trade_date": "20260807", "pb": 100.0},
+            {"ts_code": "B", "trade_date": "20260807", "pb": 30.0},
+            {"ts_code": "C", "trade_date": "20260807", "pb": 20.0},
+            {"ts_code": "D", "trade_date": "20260807", "pb": 10.0},
+        ],
+        row_count=4,
+    )
+    universe_result = QueryResult(
+        query_id="ranking_security_universe",
+        provider="tushare",
+        operation="stock_basic",
+        status="success",
+        rows=[
+            {"ts_code": "B", "market": "Growth"},
+            {"ts_code": "D", "market": "Growth"},
+        ],
+        row_count=2,
+    )
+
+    result = ResultPipelineExecutor().execute(
+        plan.result_pipeline,
+        metric_result,
+        {universe_result.query_id: universe_result},
+    )
+
+    assert [row["ts_code"] for row in result.rows] == ["B", "D"]
+
+
+def test_workflow_applies_classified_universe_to_period_return_ranking():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "rank_metric",
+            "universe": {
+                "filters": [
+                    {
+                        "field": "exchange",
+                        "operator": "eq",
+                        "value": "SSE",
+                    }
+                ]
+            },
+            "metric": {
+                "type": "period_return",
+                "window": {"start": "20260701", "end": "20260731"},
+            },
+            "ranking": {"direction": "desc", "limit": 5},
+        }
+    )
+    compiled = AnalysisService._compile_intent(
+        QueryPlan(
+            interpretation="Rank interval returns inside one exchange.",
+            intent=intent,
+            requirements=[
+                {
+                    "requirement": "Restrict the exchange before ranking returns.",
+                    "status": "covered",
+                    "implementation": "Compile typed universe membership locally.",
+                    "evidence": "The intent declares an exchange predicate.",
+                }
+            ],
+        )
+    )
+
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(compiled)
+
+    assert [query.operation for query in validated.queries] == [
+        "daily",
+        "stock_basic",
+    ]
+    assert [step.operation for step in validated.result_pipeline.steps] == [
+        "drop_missing",
+        "match_source",
+        "filter",
+        "sort",
+        "limit",
+    ]
+    assert validated.result_pipeline.steps[-2].field == "period_return_pct"
+    assert validated.constraints[0].field == "exchange"
+
+
 def test_workflow_compiles_limit_up_count_ranking_with_period_returns():
     class LimitUpProvider(FakeMarketDataProvider):
         def supports(self, operation):
@@ -2171,7 +2387,7 @@ def test_composed_result_supports_filter_join_filter_and_second_join():
     assert validated.answer_contract.result_query_id == "filtered-multi-stage-result"
 
 
-def test_validator_allows_join_before_selection_when_enrichment_is_ranked():
+def test_validator_rejects_model_authored_snapshot_metric_ranking():
     plan = make_daily_plan()
     plan.queries.append(
         DataQuery(
@@ -2204,9 +2420,11 @@ def test_validator_allows_join_before_selection_when_enrichment_is_ranked():
         }
     )
 
-    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
-
-    assert validated.result_pipeline.output_query_id == "joined-metric-ranking"
+    with pytest.raises(
+        PlanValidationError,
+        match="must use rank_metric intent",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
 def test_composed_result_compiler_supports_multiple_metrics():

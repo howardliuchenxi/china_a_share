@@ -20,6 +20,7 @@ from china_a_share.core.contracts import (
     DecisionTraceStep,
     ExecutionNode,
     QueryPlan,
+    QueryConstraint,
     QueryResult,
     QueryStatus,
     ServiceError,
@@ -69,6 +70,18 @@ SCREENSHOT_EVIDENCE_START = "<untrusted_screenshot_evidence>"
 SCREENSHOT_EVIDENCE_END = "</untrusted_screenshot_evidence>"
 STOCK_NAME_OPERATION = "stock_basic"
 STOCK_METADATA_FIELDS = ("ts_code", "name", "industry")
+SNAPSHOT_RANKING_METRICS = {
+    "pe": "pe",
+    "pe_ttm": "pe_ttm",
+    "pb": "pb",
+    "total_mv": "total_mv",
+    "circ_mv": "circ_mv",
+    "turnover_rate": "turnover_rate",
+    "turnover_rate_f": "turnover_rate_f",
+    "volume_ratio": "volume_ratio",
+    "dv_ratio": "dv_ratio",
+    "dv_ttm": "dv_ttm",
+}
 QUARTER_END_PATTERN = re.compile(r"^\d{4}(0331|0630|0930|1231)$")
 DATE_VALUE_PATTERN = re.compile(r"^\d{8}$")
 DATE_PARAM_NAMES = {
@@ -163,6 +176,7 @@ class ASharePlanValidator:
             return plan
         pipeline_fields = None
         if plan.result_pipeline:
+            self._validate_typed_ranking_boundary(plan)
             pipeline_fields = self._validate_result_pipeline(plan)
             self._validate_semantic_constraints(plan)
         if plan.answer_contract:
@@ -214,6 +228,28 @@ class ASharePlanValidator:
                     )
         self._validate_constraint_lineage(plan)
         return plan
+
+    @staticmethod
+    def _validate_typed_ranking_boundary(plan: QueryPlan) -> None:
+        """Reject snapshot rankings that bypass the deterministic intent compiler."""
+        pipeline = plan.result_pipeline
+        ranking_fields = {
+            step.field
+            for step in pipeline.steps
+            if step.operation == "sort" and step.field in SNAPSHOT_RANKING_METRICS
+        }
+        has_limit = any(step.operation == "limit" for step in pipeline.steps)
+        if not ranking_fields or not has_limit:
+            return
+        if (
+            plan.intent is None
+            or plan.intent.analysis_type != "rank_metric"
+            or plan.intent.metric.type not in ranking_fields
+        ):
+            raise PlanValidationError(
+                "Supported snapshot metric rankings must use rank_metric intent so "
+                "the trusted local compiler owns constraint ordering and execution."
+            )
 
     @staticmethod
     def _validate_constraint_lineage(plan: QueryPlan) -> None:
@@ -2313,6 +2349,7 @@ class AnalysisService:
                 "down": "negative_event_ratio",
             }
             plan.queries = [price_query, event_query]
+            plan.constraints = []
             plan.result_pipeline = pipeline
             plan.execution_plan = None
             plan.answer_contract = AnswerContract.model_validate(
@@ -2333,7 +2370,7 @@ class AnalysisService:
             return plan
 
         if intent.analysis_type == "rank_metric" and intent.metric.type == "period_return":
-            query = DataQuery(
+            metric_query = DataQuery(
                 query_id="period_return_query",
                 operation="daily",
                 params={
@@ -2344,40 +2381,152 @@ class AnalysisService:
                 purpose="Retrieve boundary close prices to calculate period returns.",
                 transform="period_return_by_ts_code",
             )
-            sort_step = ResultPipelineStep(
-                operation="sort",
-                field="period_return_pct",
-                direction=intent.ranking.direction,
-            )
-            limit_step = ResultPipelineStep(
-                operation="limit",
-                count=intent.ranking.limit,
-            )
-            pipeline = ResultPipeline(
-                source_query_id="period_return_query",
+            return AnalysisService._compile_rank_metric_plan(
+                plan,
+                metric_query,
+                metric_field="period_return_pct",
                 output_query_id="period_return_output",
-                steps=[sort_step, limit_step],
             )
-            plan.queries = [query]
-            plan.result_pipeline = pipeline
-            plan.answer_contract = AnswerContract.model_validate(
-                {
-                    "result_query_id": pipeline.output_query_id,
-                    "result_kind": "table",
-                    "outputs": [
-                        {
-                            "field": "ts_code",
-                            "description": "A-share security code.",
-                        },
-                        {
-                            "field": "period_return_pct",
-                            "description": "Price return over the requested period in percent.",
-                        },
-                    ],
-                }
-            )
-            plan.feasibility = "supported"
 
+        if (
+            intent.analysis_type == "rank_metric"
+            and intent.metric.type in SNAPSHOT_RANKING_METRICS
+        ):
+            metric_field = SNAPSHOT_RANKING_METRICS[intent.metric.type]
+            metric_query = DataQuery(
+                query_id="ranking_metric_snapshot",
+                operation="daily_basic",
+                params={"trade_date": intent.metric.as_of},
+                fields=["ts_code", "trade_date", metric_field],
+                purpose="Retrieve the authoritative metric snapshot for ranking.",
+                filters=[
+                    row_filter.model_copy(deep=True)
+                    for row_filter in intent.metric.filters
+                ],
+            )
+            return AnalysisService._compile_rank_metric_plan(
+                plan,
+                metric_query,
+                metric_field=metric_field,
+                output_query_id="ranked_metric_output",
+            )
+
+        return plan
+
+    @staticmethod
+    def _compile_rank_metric_plan(
+        plan: QueryPlan,
+        metric_query: DataQuery,
+        *,
+        metric_field: str,
+        output_query_id: str,
+    ) -> QueryPlan:
+        """Compile one typed metric ranking with optional universe membership."""
+        intent = plan.intent
+        queries = [metric_query]
+        steps = [ResultPipelineStep(operation="drop_missing", fields=[metric_field])]
+        constraints = [
+            QueryConstraint(
+                constraint_id=f"metric_filter_{index}",
+                scope="result",
+                field=row_filter.field,
+                operator=row_filter.operator,
+                value=row_filter.value,
+                query_id=metric_query.query_id,
+            )
+            for index, row_filter in enumerate(metric_query.filters)
+        ]
+        if intent.universe.filters:
+            universe_query = DataQuery(
+                query_id="ranking_security_universe",
+                operation="stock_basic",
+                params={"list_status": "L"},
+                fields=list(
+                    dict.fromkeys(
+                        [
+                            "ts_code",
+                            "name",
+                            "industry",
+                            *(
+                                row_filter.field
+                                for row_filter in intent.universe.filters
+                            ),
+                        ]
+                    )
+                ),
+                purpose="Build the security universe requested by the user.",
+                filters=[
+                    row_filter.model_copy(deep=True)
+                    for row_filter in intent.universe.filters
+                ],
+            )
+            queries.append(universe_query)
+            steps.extend(
+                [
+                    ResultPipelineStep(
+                        operation="match_source",
+                        right_source_query_id=universe_query.query_id,
+                        join_on=["ts_code"],
+                        output_field="in_requested_universe",
+                    ),
+                    ResultPipelineStep(
+                        operation="filter",
+                        field="in_requested_universe",
+                        comparison="eq",
+                        value=1,
+                    ),
+                ]
+            )
+            enforcement_step_index = len(steps) - 1
+            constraints.extend(
+                QueryConstraint(
+                    constraint_id=f"universe_filter_{index}",
+                    scope="universe",
+                    field=row_filter.field,
+                    operator=row_filter.operator,
+                    value=row_filter.value,
+                    query_id=universe_query.query_id,
+                    enforcement_step_index=enforcement_step_index,
+                )
+                for index, row_filter in enumerate(intent.universe.filters)
+            )
+        steps.extend(
+            [
+                ResultPipelineStep(
+                    operation="sort",
+                    field=metric_field,
+                    direction=intent.ranking.direction,
+                ),
+                ResultPipelineStep(operation="limit", count=intent.ranking.limit),
+            ]
+        )
+        pipeline = ResultPipeline(
+            source_query_id=metric_query.query_id,
+            output_query_id=output_query_id,
+            steps=steps,
+        )
+        plan.queries = queries
+        plan.constraints = constraints
+        plan.result_pipeline = pipeline
+        plan.execution_plan = None
+        plan.answer_contract = AnswerContract.model_validate(
+            {
+                "result_query_id": pipeline.output_query_id,
+                "result_kind": "table",
+                "outputs": [
+                    {
+                        "field": "ts_code",
+                        "description": "A-share security code.",
+                    },
+                    {
+                        "field": metric_field,
+                        "description": "Requested security ranking metric.",
+                    },
+                ],
+            }
+        )
+        plan.feasibility = "supported"
+        plan.limitations = []
         return plan
 
     @staticmethod
@@ -2488,7 +2637,8 @@ class AnalysisService:
             return plan
         if (
             plan.intent is not None
-            and plan.intent.analysis_type == "event_outcome_probability"
+            and plan.intent.analysis_type
+            in {"event_outcome_probability", "rank_metric"}
         ):
             # The semantic compiler owns this executable plan. Legacy prompt
             # normalizers must not reinterpret or replace its typed operators.

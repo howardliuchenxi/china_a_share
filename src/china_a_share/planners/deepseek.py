@@ -171,7 +171,15 @@ def build_query_plan_system_prompt(
         "the request is already unambiguous. Apply this rule generically to every metric "
         "and analysis type, including any proposed proxy, approximation, or material "
         "default; never rely on metric-specific clarification templates. "
-        "If the request asks for ranking, listing, or finding stocks by their return, gains, losses, performance, or price change over a specified month, quarter, year, or explicit date range (e.g. 'A股4月跌幅最大的公司是top10', 'A股4月跌得最多的前十只股票', '4月涨幅最大的前10只股票', '2026-04整月回报最低的十家公司'), you MUST output a high-level intent block matching the AnalysisIntent schema. In this case, do NOT generate detailed queries or a result pipeline yourself; simply document the requirements in requirement_coverage and populate the high-level intent block. The local engine will automatically compile it into deterministic, safe queries and pipeline steps. Ensure start and end inside metric.window are YYYYMMDD format. The ranking direction must be 'asc' for drops, losses, lowest returns, and 'desc' for gains, increases, highest returns.\n\n"
+        "For every request that ranks or selects top securities by a supported "
+        "AnalysisMetric, output only a high-level intent block matching the "
+        "AnalysisIntent schema; do not generate queries, a result pipeline, an "
+        "execution plan, or an answer contract. Put industry, area, market, exchange, "
+        "list_status, name, and ts_code security-master predicates in universe.filters. "
+        "Put thresholds on the ranked metric in metric.filters. Use metric.window for "
+        "period_return and metric.as_of for point-in-time metrics. Preserve the exact "
+        "ranking direction and limit. The trusted local compiler owns provider "
+        "selection, joins, constraint ordering, and result fields.\n\n"
         "Registered analysis capabilities are executable local code, not raw "
         "provider fields. When a request matches one, treat its variable parameters "
         "as inputs and do not reject it merely because the derived result is absent "
@@ -513,14 +521,11 @@ class DeepSeekQueryPlanner:
             if raw_plan.get(list_field) is None:
                 raw_plan[list_field] = []
         semantic_intent = raw_plan.get("intent")
-        if (
-            isinstance(semantic_intent, dict)
-            and semantic_intent.get("analysis_type")
-            == "event_outcome_probability"
-        ):
+        if isinstance(semantic_intent, dict):
             # Once the model selects a supported semantic IR, the trusted compiler
             # exclusively owns all provider reads, field bindings, and result IDs.
             raw_plan["queries"] = []
+            raw_plan["constraints"] = []
             raw_plan["result_pipeline"] = None
             raw_plan["execution_plan"] = None
             raw_plan["answer_contract"] = None

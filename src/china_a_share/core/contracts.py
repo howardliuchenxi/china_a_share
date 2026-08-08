@@ -51,6 +51,15 @@ DISCOVERY_FACTOR_FIELDS = {
     "vol",
     "volume_ratio",
 } | DISCOVERY_SEQUENCE_FACTOR_FIELDS
+ANALYSIS_UNIVERSE_FILTER_FIELDS = {
+    "area",
+    "exchange",
+    "industry",
+    "list_status",
+    "market",
+    "name",
+    "ts_code",
+}
 
 
 class AnalysisStatus(str, Enum):
@@ -602,6 +611,27 @@ class AnalysisUniverse(BaseModel):
         default="A_SHARE",
         description="Target market universe.",
     )
+    filters: List[DataFilter] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Security-master predicates that define which securities may enter "
+            "the analysis."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_filter_fields(self) -> "AnalysisUniverse":
+        """Restrict universe predicates to documented security-master fields."""
+        invalid_fields = {
+            row_filter.field for row_filter in self.filters
+        }.difference(ANALYSIS_UNIVERSE_FILTER_FIELDS)
+        if invalid_fields:
+            raise ValueError(
+                "unsupported universe filter fields: "
+                + ", ".join(sorted(invalid_fields))
+            )
+        return self
 
 
 class DateWindow(BaseModel):
@@ -624,11 +654,48 @@ class AnalysisMetric(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["period_return"] = Field(
+    type: Literal[
+        "period_return",
+        "pe",
+        "pe_ttm",
+        "pb",
+        "total_mv",
+        "circ_mv",
+        "turnover_rate",
+        "turnover_rate_f",
+        "volume_ratio",
+        "dv_ratio",
+        "dv_ttm",
+    ] = Field(
         default="period_return",
         description="Derived analysis metric type.",
     )
-    window: DateWindow = Field(description="Target date range window for metric calculation.")
+    window: Optional[DateWindow] = Field(
+        default=None,
+        description="Target date range required by interval-derived metrics.",
+    )
+    as_of: Optional[str] = Field(
+        default=None,
+        pattern=r"^\d{8}$",
+        description="Trading snapshot date required by point-in-time metrics.",
+    )
+    filters: List[DataFilter] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Optional predicates applied to the selected metric before ranking.",
+    )
+
+    @model_validator(mode="after")
+    def validate_metric_inputs(self) -> "AnalysisMetric":
+        """Require the temporal input and filter field owned by each metric type."""
+        if self.type == "period_return":
+            if self.window is None or self.as_of is not None:
+                raise ValueError("period_return requires window and prohibits as_of")
+        elif self.as_of is None or self.window is not None:
+            raise ValueError("snapshot metrics require as_of and prohibit window")
+        if any(row_filter.field != self.type for row_filter in self.filters):
+            raise ValueError("metric filters must target the selected metric type")
+        return self
 
 
 class AnalysisRanking(BaseModel):
