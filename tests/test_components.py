@@ -1671,6 +1671,12 @@ def test_workflow_compiles_valuation_selection_before_period_return_join():
     assert join_step.operation == "join_fields"
     assert join_step.join_on == ["ts_code"]
     assert join_step.cardinality == "many_to_one"
+    assert result.answer_contract.result_query_id == "valuation_period_return"
+    assert {output.field for output in result.answer_contract.outputs} == {
+        "ts_code",
+        "pe",
+        "period_return_pct",
+    }
 
 
 def test_workflow_uses_daily_volume_and_joins_same_day_turnover():
@@ -1693,10 +1699,159 @@ def test_workflow_uses_daily_volume_and_joins_same_day_turnover():
     )
 
     assert result.result_pipeline.source_query_id == "daily-volume"
-    join_step, sort_step, _ = result.result_pipeline.steps
+    sort_step, limit_step, join_step = result.result_pipeline.steps
+    assert sort_step.field == "vol"
+    assert limit_step.operation == "limit"
     assert join_step.join_on == ["ts_code", "trade_date"]
     assert join_step.cardinality == "one_to_one"
-    assert sort_step.field == "vol"
+    assert result.answer_contract.result_query_id == "volume_turnover_ranking"
+    assert {output.field for output in result.answer_contract.outputs} == {
+        "ts_code",
+        "trade_date",
+        "vol",
+        "turnover_rate",
+    }
+
+
+def test_validator_rejects_enrichment_before_candidate_selection():
+    plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="enrichment",
+            operation="daily_basic",
+            params={"trade_date": "20260806"},
+            fields=["ts_code", "turnover_rate"],
+            purpose="Retrieve an enrichment metric.",
+        )
+    )
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "ranked-enrichment",
+            "steps": [
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": "enrichment",
+                    "join_on": ["ts_code"],
+                    "fields": {"turnover_rate": "turnover_rate"},
+                    "cardinality": "many_to_one",
+                },
+                {"operation": "sort", "field": "change", "direction": "desc"},
+                {"operation": "limit", "count": 10},
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="Candidate enrichment must be joined after the ranked limit",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_validator_allows_join_before_selection_when_enrichment_is_ranked():
+    plan = make_daily_plan()
+    plan.queries.append(
+        DataQuery(
+            query_id="ranking-metric",
+            operation="daily_basic",
+            params={"trade_date": "20260806"},
+            fields=["ts_code", "turnover_rate"],
+            purpose="Retrieve the metric that defines the ranking.",
+        )
+    )
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "joined-metric-ranking",
+            "steps": [
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": "ranking-metric",
+                    "join_on": ["ts_code"],
+                    "fields": {"turnover_rate": "turnover_rate"},
+                    "cardinality": "many_to_one",
+                },
+                {
+                    "operation": "sort",
+                    "field": "turnover_rate",
+                    "direction": "desc",
+                },
+                {"operation": "limit", "count": 10},
+            ],
+        }
+    )
+
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    assert validated.result_pipeline.output_query_id == "joined-metric-ranking"
+
+
+def test_ranked_enrichment_compiler_supports_multiple_metrics():
+    plan = make_daily_plan()
+    valuation_query = DataQuery(
+        query_id="valuation-metric",
+        operation="daily_basic",
+        params={"trade_date": "20260806"},
+        fields=["ts_code", "pe"],
+        purpose="Retrieve valuation enrichment.",
+    )
+    turnover_query = DataQuery(
+        query_id="turnover-metric",
+        operation="daily_basic",
+        params={"trade_date": "20260806"},
+        fields=["ts_code", "turnover_rate"],
+        purpose="Retrieve turnover enrichment.",
+    )
+    plan.queries.extend((valuation_query, turnover_query))
+
+    AnalysisService._compile_ranked_enrichment(
+        plan,
+        source_query=plan.queries[0],
+        output_query_id="multi-metric-ranking",
+        ranking_steps=[
+            {"operation": "sort", "field": "change", "direction": "desc"},
+            {"operation": "limit", "count": 5},
+        ],
+        enrichment_steps=[
+            {
+                "operation": "join_fields",
+                "right_source_query_id": valuation_query.query_id,
+                "join_on": ["ts_code"],
+                "fields": {"pe": "pe"},
+                "cardinality": "many_to_one",
+            },
+            {
+                "operation": "join_fields",
+                "right_source_query_id": turnover_query.query_id,
+                "join_on": ["ts_code"],
+                "fields": {"turnover_rate": "turnover_rate"},
+                "cardinality": "many_to_one",
+            },
+        ],
+        output_descriptions={
+            "ts_code": "A-share security code.",
+            "change": "Price change used for ranking.",
+            "pe": "Price-to-earnings ratio.",
+            "turnover_rate": "Turnover rate in percent.",
+        },
+    )
+
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    assert [step.operation for step in validated.result_pipeline.steps] == [
+        "sort",
+        "limit",
+        "join_fields",
+        "join_fields",
+    ]
+    assert validated.answer_contract.result_query_id == "multi-metric-ranking"
+    assert {output.field for output in validated.answer_contract.outputs} == {
+        "ts_code",
+        "change",
+        "pe",
+        "turnover_rate",
+    }
 
 
 def test_workflow_resolves_security_code_adjacent_to_chinese_text():
