@@ -625,6 +625,55 @@ def test_planner_retries_one_contract_invalid_response():
     assert "invalid JSON at line 1, column 20" in retry_messages[-1]["content"]
 
 
+def test_planner_final_retry_can_return_contextual_clarification_options():
+    invalid_plan = make_daily_plan()
+    clarification_plan = QueryPlan(
+        interpretation="The requested metric has multiple material definitions.",
+        feasibility="unsupported",
+        requirements=[
+            {
+                "requirement": "Choose one precise metric definition.",
+                "status": "unsupported",
+                "evidence": "The original wording does not identify one definition.",
+            }
+        ],
+        limitations=["A material metric definition is unresolved."],
+        clarification_options=[
+            "Rank the full market by the latest disclosed metric A.",
+            "Rank the full market by the latest disclosed metric B.",
+        ],
+    )
+    session = SequenceFakeSession(
+        [
+            FakeResponse(
+                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
+            ),
+            FakeResponse(
+                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
+            ),
+            FakeResponse(
+                {
+                    "choices": [
+                        {"message": {"content": clarification_plan.model_dump_json()}}
+                    ]
+                }
+            ),
+        ]
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+        AnalysisRequest(prompt="Rank one ambiguous metric."),
+        [DataOperation(name="daily", description="Daily prices.")],
+        lambda plan: plan,
+    )
+
+    assert result.feasibility == "unsupported"
+    assert len(result.clarification_options) == 2
+    final_feedback = session.calls[2][1]["json"]["messages"][-1]["content"]
+    assert "two or three contextual clarification_options" in final_feedback
+    assert "Do not expose the validator error as the answer" in final_feedback
+
+
 def test_planner_normalizes_null_pipeline_collections_to_defaults():
     plan = make_daily_plan().model_dump(mode="json")
     plan["result_pipeline"] = {
@@ -2499,7 +2548,7 @@ def test_planner_accepts_fixed_non_top10_float_retail_proxy():
     assert result.queries[0].transform == "cr10_float_trend"
     assert len(result.limitations) == 1
     assert "non_top10_float_ratio" in result.limitations[0]
-    assert len(result.clarification_options) == 2
+    assert result.clarification_options == []
 
 
 def test_planner_removes_redundant_join_key_identity_mapping():

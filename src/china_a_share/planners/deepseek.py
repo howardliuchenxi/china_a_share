@@ -35,16 +35,6 @@ RETAIL_PROXY_DISCLOSURE = (
     "It includes retail holders and institutions outside the disclosed top ten "
     "and is not a verified individual-investor ownership percentage."
 )
-RETAIL_PROXY_CLARIFICATION_OPTIONS = [
-    (
-        "\u6309\u975e\u524d\u5341\u5927\u6d41\u901a\u80a1\u4e1c\u6301\u80a1\u5360\u6bd4\u4f5c\u4e3a\u6563\u6237\u6bd4\u4f8b\u4ee3\u7406\uff0c"
-        "\u67e5\u8be2\u5168A\u80a1\u6700\u65b0\u62ab\u9732\u6570\u636eTop10\u3002"
-    ),
-    (
-        "\u6309\u6700\u65b0\u62ab\u9732\u7684\u80a1\u4e1c\u6237\u6570\u4ece\u9ad8\u5230\u4f4e\u6392\u5e8f\uff0c"
-        "\u67e5\u8be2\u5168A\u80a1\u80a1\u4e1c\u6237\u6570Top10\u3002"
-    ),
-]
 
 
 def build_query_plan_system_prompt(
@@ -165,7 +155,9 @@ def build_query_plan_system_prompt(
         "clarification_options in the user's language. Each option must be a complete, "
         "directly executable prompt, must make the differing choices explicit, and must "
         "stay within documented capabilities. Do not return clarification_options when "
-        "the request is already unambiguous. "
+        "the request is already unambiguous. Apply this rule generically to every metric "
+        "and analysis type, including any proposed proxy, approximation, or material "
+        "default; never rely on metric-specific clarification templates. "
         "If the request asks for ranking, listing, or finding stocks by their return, gains, losses, performance, or price change over a specified month, quarter, year, or explicit date range (e.g. 'A股4月跌幅最大的公司是top10', 'A股4月跌得最多的前十只股票', '4月涨幅最大的前10只股票', '2026-04整月回报最低的十家公司'), you MUST output a high-level intent block matching the AnalysisIntent schema. In this case, do NOT generate detailed queries or a result pipeline yourself; simply document the requirements in requirement_coverage and populate the high-level intent block. The local engine will automatically compile it into deterministic, safe queries and pipeline steps. Ensure start and end inside metric.window are YYYYMMDD format. The ranking direction must be 'asc' for drops, losses, lowest returns, and 'desc' for gains, increases, highest returns.\n\n"
         "Registered analysis capabilities are executable local code, not raw "
         "provider fields. When a request matches one, treat its variable parameters "
@@ -242,6 +234,14 @@ class DeepSeekQueryPlanner:
                 {"role": "user", "content": request.prompt},
             ]
             if feedback:
+                final_attempt_guidance = (
+                    " If a faithful executable plan still cannot pass validation, "
+                    "return an unsupported plan with no queries, a concrete limitation, "
+                    "and two or three contextual clarification_options that the user can "
+                    "submit directly. Do not expose the validator error as the answer."
+                    if attempt + 1 == DEEPSEEK_MAX_ATTEMPTS
+                    else ""
+                )
                 messages.append(
                     {
                         "role": "system",
@@ -249,7 +249,7 @@ class DeepSeekQueryPlanner:
                             "The previous query plan was rejected by the trusted "
                             "local validator. Return a complete corrected plan and "
                             "do not repeat this error:\n"
-                            f"{feedback}"
+                            f"{feedback}{final_attempt_guidance}"
                         ),
                     }
                 )
@@ -347,10 +347,6 @@ class DeepSeekQueryPlanner:
         )
         if uses_retail_proxy and RETAIL_PROXY_DISCLOSURE not in plan.limitations:
             plan.limitations.append(RETAIL_PROXY_DISCLOSURE)
-        if uses_retail_proxy and not plan.clarification_options:
-            plan.clarification_options.extend(
-                RETAIL_PROXY_CLARIFICATION_OPTIONS
-            )
 
     @staticmethod
     def _normalize_join_field_mappings(plan: QueryPlan) -> None:

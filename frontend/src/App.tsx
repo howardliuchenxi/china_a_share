@@ -467,18 +467,15 @@ function PlanDisclosure({
   const limitations = response.plan?.limitations ?? [];
   const clarificationOptions = response.plan?.clarification_options ?? [];
   if (
-    response.plan?.feasibility !== "supported"
-    || (
-      limitations.length === 0
-      && clarificationOptions.length === 0
-    )
+    !response.plan
+    || (limitations.length === 0 && clarificationOptions.length === 0)
   ) {
     return null;
   }
   return (
     <aside className="disclosure-card" role="note">
       <strong>{"\u53e3\u5f84\u8bf4\u660e"}</strong>
-      {limitations.length > 0 && (
+      {response.plan.feasibility === "supported" && limitations.length > 0 && (
         <ul>
           {limitations.map((item) => (
             <li key={item}>{formatPlanDisclosure(item)}</li>
