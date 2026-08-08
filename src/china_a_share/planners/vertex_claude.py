@@ -1,6 +1,7 @@
 """Vertex AI Claude implementation of the provider-neutral query-planner port."""
 
 import json
+import logging
 from time import sleep
 from typing import Any, Callable, Optional, Sequence
 
@@ -16,6 +17,7 @@ from china_a_share.planners.deepseek import (
     DeepSeekQueryPlanner,
     build_query_plan_system_prompt,
 )
+from china_a_share.observability import ANALYSIS_REQUEST_ID, log_event
 
 
 VERTEX_PROJECT = "china-a-share-lab"
@@ -30,6 +32,9 @@ VERTEX_TIMEOUT_SECONDS = 60
 VERTEX_MAX_OUTPUT_TOKENS = 4_000
 VERTEX_MAX_ATTEMPTS = 2
 VERTEX_RETRY_DELAY_SECONDS = 1
+
+
+logger = logging.getLogger(__name__)
 
 
 class VertexClaudeQueryPlanner:
@@ -59,8 +64,17 @@ class VertexClaudeQueryPlanner:
         """Build a query plan using Vertex AI Claude, falling back to DeepSeek."""
         try:
             return self._plan_with_claude(request, candidate_operations)
-        except PlannerError:
-            # Fall back to DeepSeek on any planner error
+        except PlannerError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "planner_fallback",
+                request_id=ANALYSIS_REQUEST_ID.get(),
+                from_provider="vertex",
+                from_model=VERTEX_MODEL,
+                to_provider="deepseek",
+                reason=str(exc),
+            )
             return self._fallback.plan(request, candidate_operations)
 
     def plan_validated(
@@ -78,7 +92,17 @@ class VertexClaudeQueryPlanner:
                     "with every user-requested final output field."
                 )
             return validator(plan)
-        except (PlannerError, ValueError):
+        except (PlannerError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "planner_fallback",
+                request_id=ANALYSIS_REQUEST_ID.get(),
+                from_provider="vertex",
+                from_model=VERTEX_MODEL,
+                to_provider="deepseek",
+                reason=str(exc),
+            )
             return self._fallback.plan_validated(
                 request,
                 candidate_operations,
@@ -128,6 +152,16 @@ class VertexClaudeQueryPlanner:
 
         last_exception = None
         for attempt in range(VERTEX_MAX_ATTEMPTS):
+            log_event(
+                logger,
+                logging.INFO,
+                "planner_model_attempt",
+                request_id=ANALYSIS_REQUEST_ID.get(),
+                provider="vertex",
+                model=VERTEX_MODEL,
+                attempt=attempt + 1,
+                fallback=False,
+            )
             try:
                 response = http_requests.post(
                     VERTEX_API_URL,
@@ -157,6 +191,16 @@ class VertexClaudeQueryPlanner:
                         source=self.name,
                         message="Vertex AI returned an empty response.",
                     )
+
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "planner_raw_output",
+                    request_id=ANALYSIS_REQUEST_ID.get(),
+                    provider="vertex",
+                    model=VERTEX_MODEL,
+                    content=content,
+                )
 
                 # Delegate normalization to the DeepSeek planner
                 plan = self._fallback.normalize_and_validate_plan(content)

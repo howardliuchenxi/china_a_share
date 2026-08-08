@@ -2,10 +2,15 @@
 
 import json
 import logging
+from contextvars import ContextVar
 from typing import Dict
 
 
 STRUCTURED_FIELDS_ATTRIBUTE = "structured_fields"
+ANALYSIS_REQUEST_ID: ContextVar[str] = ContextVar(
+    "analysis_request_id",
+    default="",
+)
 
 
 class StructuredLogFormatter(logging.Formatter):

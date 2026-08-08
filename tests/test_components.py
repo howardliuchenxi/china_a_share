@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from datetime import date, datetime
 from unittest.mock import Mock
@@ -1302,7 +1303,7 @@ def test_planner_retries_with_semantic_validation_feedback():
     )
 
 
-def test_planner_retries_when_answer_contract_is_omitted():
+def test_planner_retries_when_answer_contract_is_omitted(caplog):
     missing_contract = make_daily_plan()
     valid_plan = make_daily_plan()
     valid_plan.answer_contract = AnswerContract.model_validate(
@@ -1336,21 +1337,32 @@ def test_planner_retries_when_answer_contract_is_omitted():
         ]
     )
 
-    result = DeepSeekQueryPlanner(
-        "test-key",
-        session=session,
-    ).plan_validated(
-        AnalysisRequest(prompt="Return the requested fields."),
-        [DataOperation(name="daily", description="Daily prices.")],
-        ASharePlanValidator(FakeMarketDataProvider()).validate,
-    )
+    with caplog.at_level(logging.INFO):
+        result = DeepSeekQueryPlanner(
+            "test-key",
+            session=session,
+        ).plan_validated(
+            AnalysisRequest(prompt="Return the requested fields."),
+            [DataOperation(name="daily", description="Daily prices.")],
+            ASharePlanValidator(FakeMarketDataProvider()).validate,
+        )
 
     assert result == valid_plan
     retry_messages = session.calls[1][1]["json"]["messages"]
     assert "must include answer_contract" in retry_messages[-1]["content"]
+    events = [
+        getattr(record, "structured_fields", {})
+        for record in caplog.records
+    ]
+    assert sum(event.get("event") == "planner_raw_output" for event in events) == 2
+    assert any(
+        event.get("event") == "planner_intent_normalized"
+        and event.get("model") == "deepseek-v4-flash"
+        for event in events
+    )
 
 
-def test_vertex_planner_fallback_preserves_semantic_validation():
+def test_vertex_planner_fallback_preserves_semantic_validation(caplog):
     invalid_plan = make_daily_plan()
     valid_plan = make_daily_plan()
     planner = VertexClaudeQueryPlanner("test-key")
@@ -1361,7 +1373,8 @@ def test_vertex_planner_fallback_preserves_semantic_validation():
     request = AnalysisRequest(prompt="Count stocks.")
     operations = [DataOperation(name="daily", description="Daily prices.")]
 
-    result = planner.plan_validated(request, operations, validator)
+    with caplog.at_level(logging.WARNING):
+        result = planner.plan_validated(request, operations, validator)
 
     assert result is valid_plan
     planner._fallback.plan_validated.assert_called_once_with(
@@ -1369,6 +1382,14 @@ def test_vertex_planner_fallback_preserves_semantic_validation():
         operations,
         validator,
     )
+    fallback_event = next(
+        getattr(record, "structured_fields", {})
+        for record in caplog.records
+        if getattr(record, "structured_fields", {}).get("event")
+        == "planner_fallback"
+    )
+    assert fallback_event["from_model"] == "claude-3-5-sonnet-v2@20241022"
+    assert fallback_event["to_provider"] == "deepseek"
 
 
 def test_planner_accepts_limit_up_query_with_native_limit_type():
@@ -2077,6 +2098,87 @@ def test_validator_rejects_typed_ranking_with_unbound_intent_predicate():
         ASharePlanValidator(
             FakeMarketDataProvider(stock_frame=pd.DataFrame())
         ).validate(plan)
+
+
+@pytest.mark.parametrize(
+    ("prompt", "intent_payload"),
+    [
+        (
+            "A股汽车行业市盈率前十的公司",
+            {
+                "analysis_type": "rank_metric",
+                "universe": {
+                    "filters": [
+                        {"field": "industry", "operator": "eq", "value": "汽车"}
+                    ]
+                },
+                "metric": {"type": "pe", "as_of": "20260807"},
+                "ranking": {"direction": "desc", "limit": 10},
+            },
+        ),
+        (
+            "在能源行业中找市净率最低的7家公司",
+            {
+                "analysis_type": "rank_metric",
+                "universe": {
+                    "filters": [
+                        {"field": "industry", "operator": "eq", "value": "能源"}
+                    ]
+                },
+                "metric": {"type": "pb", "as_of": "20260807"},
+                "ranking": {"direction": "asc", "limit": 7},
+            },
+        ),
+    ],
+)
+def test_prompt_intent_reconciliation_accepts_matching_atomic_facts(
+    prompt,
+    intent_payload,
+):
+    plan = QueryPlan(
+        interpretation="Rank the requested metric.",
+        intent=AnalysisIntent.model_validate(intent_payload),
+    )
+
+    reconciled = ASharePlanValidator.validate_prompt_intent_coverage(prompt, plan)
+
+    assert reconciled is plan
+
+
+@pytest.mark.parametrize(
+    ("intent_update", "message"),
+    [
+        ({"universe": {"filters": []}}, "omitted explicit industry"),
+        ({"metric": {"type": "pb", "as_of": "20260807"}}, "prompt metric"),
+        ({"ranking": {"direction": "desc", "limit": 9}}, "ranking limit"),
+        ({"ranking": {"direction": "asc", "limit": 10}}, "ranking direction"),
+    ],
+)
+def test_prompt_intent_reconciliation_rejects_dropped_atomic_facts(
+    intent_update,
+    message,
+):
+    payload = {
+        "analysis_type": "rank_metric",
+        "universe": {
+            "filters": [
+                {"field": "industry", "operator": "eq", "value": "汽车"}
+            ]
+        },
+        "metric": {"type": "pe", "as_of": "20260807"},
+        "ranking": {"direction": "desc", "limit": 10},
+    }
+    payload.update(intent_update)
+    plan = QueryPlan(
+        interpretation="Rank the requested metric.",
+        intent=AnalysisIntent.model_validate(payload),
+    )
+
+    with pytest.raises(PlanValidationError, match=message):
+        ASharePlanValidator.validate_prompt_intent_coverage(
+            "A股汽车行业市盈率前十的公司",
+            plan,
+        )
 
 
 def test_validator_rejects_typed_ranking_with_wrong_snapshot_or_order():

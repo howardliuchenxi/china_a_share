@@ -3,6 +3,7 @@
 import calendar
 from datetime import datetime, timedelta
 import json
+import logging
 import re
 from time import sleep
 from typing import Any, Callable, Optional, Sequence
@@ -21,6 +22,7 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.core.errors import PlannerError
 from china_a_share.capabilities import build_capability_guidance
+from china_a_share.observability import ANALYSIS_REQUEST_ID, log_event
 
 
 DEEPSEEK_PLANNER_NAME = "deepseek"
@@ -35,6 +37,9 @@ RETAIL_PROXY_DISCLOSURE = (
     "It includes retail holders and institutions outside the disclosed top ten "
     "and is not a verified individual-investor ownership percentage."
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def build_query_plan_system_prompt(
@@ -291,10 +296,32 @@ class DeepSeekQueryPlanner:
                 "max_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
                 "stream": False,
             }
+            log_event(
+                logger,
+                logging.INFO,
+                "planner_model_attempt",
+                request_id=ANALYSIS_REQUEST_ID.get(),
+                provider="deepseek",
+                model=DEEPSEEK_MODEL,
+                attempt=attempt + 1,
+            )
             try:
                 response = self._request_once(request_payload)
                 plan = self._decode_plan_response(response)
             except PlannerError as exc:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "planner_response_rejected",
+                    request_id=ANALYSIS_REQUEST_ID.get(),
+                    provider="deepseek",
+                    model=DEEPSEEK_MODEL,
+                    attempt=attempt + 1,
+                    reason=str(exc),
+                    validation_errors=(
+                        (exc.raw_response or {}).get("validation_errors", [])
+                    ),
+                )
                 if exc.http_status in {400, 401, 403, 404}:
                     raise
                 last_error = exc
@@ -305,6 +332,16 @@ class DeepSeekQueryPlanner:
                 break
 
             self._finalize_plan(plan)
+            log_event(
+                logger,
+                logging.INFO,
+                "planner_intent_normalized",
+                request_id=ANALYSIS_REQUEST_ID.get(),
+                provider="deepseek",
+                model=DEEPSEEK_MODEL,
+                attempt=attempt + 1,
+                intent=(plan.intent.model_dump(mode="json") if plan.intent else None),
+            )
             if (
                 validator is not None
                 and plan.feasibility == "supported"
@@ -318,11 +355,35 @@ class DeepSeekQueryPlanner:
                 feedback = str(last_error)
             elif validator is not None:
                 try:
-                    validator(plan)
-                    return plan
+                    validated_plan = validator(plan)
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "planner_plan_validated",
+                        request_id=ANALYSIS_REQUEST_ID.get(),
+                        provider="deepseek",
+                        model=DEEPSEEK_MODEL,
+                        attempt=attempt + 1,
+                        pipeline=(
+                            validated_plan.result_pipeline.model_dump(mode="json")
+                            if validated_plan.result_pipeline
+                            else None
+                        ),
+                    )
+                    return validated_plan
                 except ValueError as exc:
                     last_error = exc
                     feedback = str(exc)
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "planner_plan_rejected",
+                        request_id=ANALYSIS_REQUEST_ID.get(),
+                        provider="deepseek",
+                        model=DEEPSEEK_MODEL,
+                        attempt=attempt + 1,
+                        reason=str(exc),
+                    )
             else:
                 return plan
 
@@ -432,6 +493,15 @@ class DeepSeekQueryPlanner:
                 http_status=response.status_code,
                 raw_response=payload,
             )
+        log_event(
+            logger,
+            logging.INFO,
+            "planner_raw_output",
+            request_id=ANALYSIS_REQUEST_ID.get(),
+            provider="deepseek",
+            model=str(payload.get("model") or DEEPSEEK_MODEL),
+            content=content,
+        )
         try:
             raw_plan = json.loads(content)
             self._normalize_raw_query_defaults(raw_plan)

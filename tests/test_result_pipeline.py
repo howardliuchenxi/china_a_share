@@ -1,7 +1,10 @@
+import logging
+
 import pytest
 
 from china_a_share.core.contracts import QueryResult, ResultPipeline
 from china_a_share.result_pipeline import ResultPipelineExecutor
+from china_a_share.observability import ANALYSIS_REQUEST_ID
 
 
 def source_result():
@@ -19,6 +22,36 @@ def source_result():
         ],
         row_count=4,
     )
+
+
+def test_pipeline_logs_request_scoped_step_row_counts(caplog):
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "retail-proxy",
+            "output_query_id": "limited",
+            "steps": [
+                {"operation": "drop_missing", "fields": ["cr10_float_registered"]},
+                {"operation": "limit", "count": 2},
+            ],
+        }
+    )
+    context_token = ANALYSIS_REQUEST_ID.set("trace-123")
+    try:
+        with caplog.at_level(logging.INFO):
+            ResultPipelineExecutor().execute(pipeline, source_result())
+    finally:
+        ANALYSIS_REQUEST_ID.reset(context_token)
+
+    events = [
+        getattr(record, "structured_fields", {})
+        for record in caplog.records
+        if getattr(record, "structured_fields", {}).get("event")
+        == "result_pipeline_step_completed"
+    ]
+    assert [event["request_id"] for event in events] == ["trace-123", "trace-123"]
+    assert events[0]["input_row_count"] == 4
+    assert events[0]["output_row_count"] == 3
+    assert events[0]["eliminated_row_count"] == 1
 
 
 def test_pipeline_applies_projection_rename_distinct_and_predicate_operators():

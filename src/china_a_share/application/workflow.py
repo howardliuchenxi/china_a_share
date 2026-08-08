@@ -16,6 +16,7 @@ from china_a_share.core.contracts import (
     CalculationTraceStep,
     AnalysisRequest,
     AnalysisResponse,
+    DataOperation,
     DataQuery,
     DecisionTraceStep,
     ExecutionNode,
@@ -32,6 +33,7 @@ from china_a_share.core.errors import DataProviderError, PlannerError, VisionErr
 from china_a_share.core.ports import MarketDataProvider, QueryPlanner, VisionAnalyzer
 from china_a_share.result_pipeline import ResultPipelineExecutor
 from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
+from china_a_share.observability import ANALYSIS_REQUEST_ID, log_event
 from china_a_share.time_range import (
     add_calendar_offset,
     resolve_consecutive_session_count,
@@ -81,6 +83,30 @@ SNAPSHOT_RANKING_METRICS = {
     "volume_ratio": "volume_ratio",
     "dv_ratio": "dv_ratio",
     "dv_ttm": "dv_ttm",
+}
+RANKING_METRIC_PROMPT_ALIASES = {
+    "市盈率": {"pe", "pe_ttm"},
+    "市净率": {"pb"},
+    "总市值": {"total_mv"},
+    "流通市值": {"circ_mv"},
+    "换手率": {"turnover_rate", "turnover_rate_f"},
+    "量比": {"volume_ratio"},
+    "股息率": {"dv_ratio", "dv_ttm"},
+    "pe": {"pe", "pe_ttm"},
+    "pb": {"pb"},
+}
+CHINESE_DIGITS = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
 }
 QUARTER_END_PATTERN = re.compile(r"^\d{4}(0331|0630|0930|1231)$")
 DATE_VALUE_PATTERN = re.compile(r"^\d{8}$")
@@ -265,6 +291,104 @@ class ASharePlanValidator:
         constraint_ids = [constraint.constraint_id for constraint in plan.constraints]
         if len(constraint_ids) != len(set(constraint_ids)):
             raise PlanValidationError("Constraint identifiers must be unique.")
+
+    @staticmethod
+    def validate_prompt_intent_coverage(prompt: str, plan: QueryPlan) -> QueryPlan:
+        """Reconcile deterministic facts in the user text with typed ranking intent."""
+        intent = plan.intent
+        if intent is None or intent.analysis_type != "rank_metric":
+            return plan
+        normalized_prompt = prompt.casefold()
+
+        industry_matches = []
+        industry_patterns = (
+            r"(?:a股|沪深(?:两市)?)\s*([\w\u4e00-\u9fff]{1,16})行业",
+            r"(?:在|从|属于)\s*([\w\u4e00-\u9fff]{1,16})行业",
+            r"^\s*([\w\u4e00-\u9fff]{1,16})行业",
+        )
+        for pattern in industry_patterns:
+            industry_matches.extend(re.findall(pattern, normalized_prompt))
+        expected_industries = {
+            re.sub(
+                r"^(?:(?:在|从|属于)|a股|沪深两市|沪深)+",
+                "",
+                value,
+            ).strip()
+            for value in industry_matches
+            if value.strip()
+        }
+        declared_industries = {
+            str(row_filter.value).casefold().strip()
+            for row_filter in intent.universe.filters
+            if row_filter.field == "industry" and row_filter.operator == "eq"
+        }
+        missing_industries = expected_industries.difference(declared_industries)
+        if missing_industries:
+            raise PlanValidationError(
+                "Typed intent omitted explicit industry constraints: "
+                + ", ".join(sorted(missing_industries))
+            )
+
+        for alias, accepted_metrics in RANKING_METRIC_PROMPT_ALIASES.items():
+            if re.search(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", normalized_prompt):
+                if intent.metric.type not in accepted_metrics:
+                    raise PlanValidationError(
+                        f"Typed intent metric does not match explicit prompt metric: {alias}"
+                    )
+                break
+
+        limit_match = re.search(
+            r"(?:top|前|bottom|后)\s*([0-9一二两三四五六七八九十百]+)",
+            normalized_prompt,
+        )
+        if limit_match is None:
+            limit_match = re.search(
+                r"(?:最高|最大|最多|最低|最小|最少)(?:的)?\s*"
+                r"([0-9一二两三四五六七八九十百]+)",
+                normalized_prompt,
+            )
+        if limit_match:
+            expected_limit = ASharePlanValidator._parse_bounded_count(
+                limit_match.group(1)
+            )
+            if expected_limit is not None and intent.ranking.limit != expected_limit:
+                raise PlanValidationError(
+                    "Typed intent ranking limit does not match the explicit prompt."
+                )
+
+        descending_terms = ("最高", "最大", "最多", "降序", "top", "前")
+        ascending_terms = ("最低", "最小", "最少", "升序", "bottom", "后")
+        expected_direction = None
+        if any(term in normalized_prompt for term in descending_terms):
+            expected_direction = "desc"
+        if any(term in normalized_prompt for term in ascending_terms):
+            if expected_direction is not None:
+                raise PlanValidationError(
+                    "Prompt contains conflicting ranking directions."
+                )
+            expected_direction = "asc"
+        if expected_direction and intent.ranking.direction != expected_direction:
+            raise PlanValidationError(
+                "Typed intent ranking direction does not match the explicit prompt."
+            )
+        return plan
+
+    @staticmethod
+    def _parse_bounded_count(value: str) -> Optional[int]:
+        """Parse one explicit Arabic or Chinese count within the ranking limit."""
+        if value.isdigit():
+            parsed = int(value)
+            return parsed if 1 <= parsed <= 100 else None
+        if value == "百" or value == "一百":
+            return 100
+        if "十" in value:
+            tens, ones = value.split("十", 1)
+            parsed = (CHINESE_DIGITS.get(tens, 1) * 10) + (
+                CHINESE_DIGITS.get(ones, 0) if ones else 0
+            )
+            return parsed if 1 <= parsed <= 100 else None
+        parsed = CHINESE_DIGITS.get(value)
+        return parsed if parsed and parsed <= 100 else None
 
     @staticmethod
     def _validate_typed_ranking_boundary(plan: QueryPlan) -> None:
@@ -1504,6 +1628,75 @@ class AnalysisService:
             error_info,
         )
 
+    def _plan_with_request_context(
+        self,
+        request_id: str,
+        planning_request: AnalysisRequest,
+        original_prompt: str,
+        operations: List[DataOperation],
+    ) -> QueryPlan:
+        """Plan under request-scoped observability and deterministic reconciliation."""
+        context_token = ANALYSIS_REQUEST_ID.set(request_id)
+        try:
+            validated_planner = getattr(self._planner, "plan_validated", None)
+            if callable(validated_planner):
+                plan = validated_planner(
+                    planning_request,
+                    operations,
+                    lambda candidate: self._validate_planner_candidate(
+                        candidate,
+                        planning_request.prompt,
+                        original_prompt,
+                    ),
+                )
+            else:
+                plan = self._planner.plan(planning_request, operations)
+            plan = self._compile_intent(
+                self._normalize_plan_for_request(plan, planning_request.prompt)
+            )
+            ASharePlanValidator.validate_prompt_intent_coverage(
+                original_prompt,
+                plan,
+            )
+            log_event(
+                logger,
+                logging.INFO,
+                "deterministic_plan_compiled",
+                request_id=request_id,
+                planner=self._planner.name,
+                intent=(plan.intent.model_dump(mode="json") if plan.intent else None),
+                constraints=[
+                    constraint.model_dump(mode="json")
+                    for constraint in plan.constraints
+                ],
+                pipeline=(
+                    plan.result_pipeline.model_dump(mode="json")
+                    if plan.result_pipeline
+                    else None
+                ),
+            )
+            return plan
+        finally:
+            ANALYSIS_REQUEST_ID.reset(context_token)
+
+    def _validate_planner_candidate(
+        self,
+        candidate: QueryPlan,
+        planning_prompt: str,
+        original_prompt: str,
+    ) -> QueryPlan:
+        """Normalize, reconcile, compile, and validate one model candidate."""
+        normalized = self._normalize_plan_for_request(candidate, planning_prompt)
+        ASharePlanValidator.validate_prompt_intent_coverage(
+            original_prompt,
+            normalized,
+        )
+        compiled = self._compile_intent(normalized)
+        return self._validate_planned_time_semantics(
+            self._validator.validate(compiled),
+            planning_prompt,
+        )
+
 
     def analyze(
         self,
@@ -1549,27 +1742,11 @@ class AnalysisService:
                     evidence=[f"Candidate operations: {len(operations)}"],
                 )
             )
-            validated_planner = getattr(self._planner, "plan_validated", None)
-            if callable(validated_planner):
-                plan = validated_planner(
-                    planning_request,
-                    operations,
-                    lambda candidate: self._validate_planned_time_semantics(
-                        self._validator.validate(
-                            self._compile_intent(
-                                self._normalize_plan_for_request(
-                                    candidate,
-                                    planning_request.prompt,
-                                )
-                            )
-                        ),
-                        planning_request.prompt,
-                    ),
-                )
-            else:
-                plan = self._planner.plan(planning_request, operations)
-            plan = self._compile_intent(
-                self._normalize_plan_for_request(plan, planning_request.prompt)
+            plan = self._plan_with_request_context(
+                request_id,
+                planning_request,
+                request.prompt,
+                operations,
             )
             self._normalize_latest_plan_dates(
                 plan,
@@ -1830,6 +2007,7 @@ class AnalysisService:
                 None,
             )
             if source is not None and source.status == QueryStatus.SUCCESS:
+                execution_context_token = ANALYSIS_REQUEST_ID.set(request_id)
                 try:
                     transformed = self._result_pipeline_executor.execute(
                         validated_plan.result_pipeline,
@@ -1852,6 +2030,8 @@ class AnalysisService:
                         status=QueryStatus.ERROR,
                         error=ServiceError(source="system", message=str(exc)),
                     )
+                finally:
+                    ANALYSIS_REQUEST_ID.reset(execution_context_token)
                 results = [transformed] + [
                     result
                     for result in results

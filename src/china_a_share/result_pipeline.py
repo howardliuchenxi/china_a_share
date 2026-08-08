@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, Mapping, Optional, Set, Tuple
 
 import pandas as pd
@@ -15,6 +16,7 @@ from china_a_share.core.contracts import (
     ResultPipelineStep,
     SummaryMetricMetadata,
 )
+from china_a_share.observability import ANALYSIS_REQUEST_ID, log_event
 
 
 COMPARISONS: Dict[str, Callable[[pd.Series, object], pd.Series]] = {
@@ -24,6 +26,9 @@ COMPARISONS: Dict[str, Callable[[pd.Series, object], pd.Series]] = {
     "le": lambda series, value: series <= value,
     "lt": lambda series, value: series < value,
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 class ResultPipelineExecutor:
@@ -41,10 +46,23 @@ class ResultPipelineExecutor:
         source_results = dict(sources or {})
         source_results.setdefault(source.query_id, source)
         summary_input_frame: Optional[pd.DataFrame] = None
-        for step in pipeline.steps:
+        for step_index, step in enumerate(pipeline.steps):
             if step.operation == "summarize":
                 summary_input_frame = frame.copy()
+            input_row_count = len(frame)
             frame = self._execute_step(frame, step, source_results)
+            log_event(
+                logger,
+                logging.INFO,
+                "result_pipeline_step_completed",
+                request_id=ANALYSIS_REQUEST_ID.get(),
+                pipeline_id=pipeline.output_query_id,
+                step_index=step_index,
+                operation=step.operation,
+                input_row_count=input_row_count,
+                output_row_count=len(frame),
+                eliminated_row_count=max(input_row_count - len(frame), 0),
+            )
         self._validate_result_invariants(pipeline, frame)
         rows = (
             frame.astype(object)
