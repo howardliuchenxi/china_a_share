@@ -1405,6 +1405,32 @@ def test_lift_uncertainty_preserves_dates_without_comparable_factor_events():
     )
 
 
+def test_lift_uncertainty_detects_persistent_security_effects():
+    rows = []
+    outcomes = {
+        "000001.SZ": 0.10,
+        "000002.SZ": -0.10,
+        "000003.SZ": 0.10,
+        "000004.SZ": -0.10,
+    }
+    for trade_date in ("20260105", "20260106", "20260107", "20260108"):
+        for ts_code, forward_return in outcomes.items():
+            rows.append(
+                {
+                    "trade_date": trade_date,
+                    "ts_code": ts_code,
+                    "factor": 1.0 if ts_code in {"000001.SZ", "000002.SZ"} else 0.0,
+                    "forward_return": forward_return,
+                }
+            )
+    dataset = pd.DataFrame(rows)
+
+    result = FactorBacktester.evaluate_rule(dataset, "factor == 1")
+
+    assert result.win_rate_lift == 0.0
+    assert result.lift_standard_error == pytest.approx(1.0 / (12.0**0.5))
+
+
 def test_rule_evaluation_uses_hac_error_for_overlapping_forward_windows():
     dataset = pd.DataFrame(
         {

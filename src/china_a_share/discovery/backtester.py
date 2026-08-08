@@ -932,7 +932,10 @@ class FactorBacktester:
         signal_dates: pd.Series,
     ) -> float:
         """Estimate uncertainty of selected-versus-baseline lift by signal date."""
-        observations = frame[["trade_date", "forward_return"]].copy()
+        observation_fields = ["trade_date", "forward_return"]
+        if "ts_code" in frame:
+            observation_fields.append("ts_code")
+        observations = frame[observation_fields].copy()
         observations["forward_return"] = pd.to_numeric(
             observations["forward_return"], errors="coerce"
         )
@@ -970,11 +973,30 @@ class FactorBacktester:
             ordered_dates,
             fill_value=0.0,
         )
-        return FactorBacktester._hac_standard_error(
+        date_standard_error = FactorBacktester._hac_standard_error(
             cluster_influence,
             dependence_lag_days,
             effective_cluster_count=cluster_count,
         )
+        if "ts_code" not in observations:
+            return date_standard_error
+        security_influence = observations.groupby("ts_code")[
+            "lift_influence"
+        ].sum()
+        security_count = len(security_influence)
+        if security_count <= 1:
+            return date_standard_error
+        security_variance = (
+            security_count
+            / (security_count - 1)
+            * float((security_influence**2).sum())
+        )
+        # Persistent stock-specific outcomes can cancel within every market
+        # date and therefore remain invisible to date HAC. Use the larger
+        # marginal cluster error so neither dependence dimension can make the
+        # selected-versus-baseline lift look more precise than it is.
+        security_standard_error = math.sqrt(max(0.0, security_variance))
+        return max(date_standard_error, security_standard_error)
 
     @staticmethod
     def _hac_standard_error(
