@@ -16,6 +16,7 @@ from china_a_share.core.contracts import (
     CalculationTraceStep,
     AnalysisRequest,
     AnalysisResponse,
+    DataFilter,
     DataOperation,
     DataQuery,
     DecisionTraceStep,
@@ -50,6 +51,7 @@ MAX_QUERIES_PER_ANALYSIS = 8
 MAX_DYNAMIC_HOLDER_QUERIES = 6_000
 FANOUT_RECOVERY_ATTEMPTS = 1
 MAX_BOUNDARY_DATE_PROBES = 10
+MAX_CALENDAR_DATE_FANOUT = 400
 TRADING_SESSION_HORIZON_MULTIPLIER = 2
 TRADING_SESSION_HORIZON_BUFFER_DAYS = 7
 HOLDER_FANOUT_LOG_INTERVAL = 50
@@ -64,6 +66,14 @@ FANOUT_OPERATIONS = {
     "cashflow",
     "fina_indicator",
     "dividend",
+    "share_float",
+    "stk_holdertrade",
+    "forecast",
+}
+DATE_FANOUT_PARAMETERS = {
+    "share_float": "float_date",
+    "stk_holdertrade": "ann_date",
+    "forecast": "ann_date",
 }
 UNIVERSE_OPERATIONS = {"stock_basic", "ths_member"}
 VALID_THS_INDEX_SUFFIX = ".TI"
@@ -213,6 +223,7 @@ class ASharePlanValidator:
             for query in plan.queries
             if query.operation in FANOUT_OPERATIONS
             and not query.params.get("ts_code")
+            and not ASharePlanValidator._uses_bounded_date_fanout(query)
         ]
         has_universe_query = any(
             query.operation in UNIVERSE_OPERATIONS
@@ -766,6 +777,12 @@ class ASharePlanValidator:
             and query.params.get(constraint.field) == constraint.value
         ):
             return True
+        if (
+            constraint.operator == "eq"
+            and constraint.field in {"period", "end_date"}
+            and query.params.get("period") == constraint.value
+        ):
+            return True
         boundary_param = {
             "ge": "start_date",
             "gt": "start_date",
@@ -776,6 +793,15 @@ class ASharePlanValidator:
             boundary_param
             and constraint.field.endswith("date")
             and query.params.get(boundary_param) == constraint.value
+        )
+
+    @staticmethod
+    def _uses_bounded_date_fanout(query: DataQuery) -> bool:
+        """Return whether an unbound provider read has an executable date range."""
+        return bool(
+            query.operation in DATE_FANOUT_PARAMETERS
+            and query.params.get("start_date")
+            and query.params.get("end_date")
         )
 
     @staticmethod
@@ -2295,7 +2321,9 @@ class AnalysisService:
             q.operation in UNIVERSE_OPERATIONS for q in plan.queries
         )
         has_security_template = any(
-            q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
+            q.operation in FANOUT_OPERATIONS
+            and not q.params.get("ts_code")
+            and not ASharePlanValidator._uses_bounded_date_fanout(q)
             for q in plan.queries
         )
         return has_universe and has_security_template
@@ -2310,9 +2338,14 @@ class AnalysisService:
             and q.params.get("end_date")
             for q in plan.queries
         )
+        has_disclosure_range = any(
+            ASharePlanValidator._uses_bounded_date_fanout(q)
+            for q in plan.queries
+        )
         return (
             AnalysisService._needs_dynamic_security_fanout(plan)
             or has_daily_range
+            or has_disclosure_range
         )
 
     def _execute_execution_plan(
@@ -2342,7 +2375,17 @@ class AnalysisService:
                     node.node_id,
                     node.kind,
                 )
-                if node.kind == "query" and node.fanout_input_field is None:
+                if (
+                    node.kind == "query"
+                    and node.fanout_input_field is None
+                    and ASharePlanValidator._uses_bounded_date_fanout(node.query)
+                ):
+                    result = self._execute_disclosure_range_by_date(
+                        node.query,
+                        api_route=api_route,
+                        request_id=request_id,
+                    )
+                elif node.kind == "query" and node.fanout_input_field is None:
                     result = self._executor.execute(
                         node.query,
                         api_route=api_route,
@@ -2528,6 +2571,7 @@ class AnalysisService:
         fanout_templates = [
             q for q in plan.queries
             if q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
+            and not ASharePlanValidator._uses_bounded_date_fanout(q)
         ]
         daily_range_queries = [
             q for q in plan.queries
@@ -2536,7 +2580,19 @@ class AnalysisService:
             and q.params.get("start_date")
             and q.params.get("end_date")
         ]
-        fanout_ids = {q.query_id for q in universe_queries + fanout_templates + daily_range_queries}
+        disclosure_range_queries = [
+            q for q in plan.queries
+            if ASharePlanValidator._uses_bounded_date_fanout(q)
+        ]
+        fanout_ids = {
+            q.query_id
+            for q in (
+                universe_queries
+                + fanout_templates
+                + daily_range_queries
+                + disclosure_range_queries
+            )
+        }
         standalone_queries = [
             q for q in plan.queries if q.query_id not in fanout_ids
         ]
@@ -2589,6 +2645,15 @@ class AnalysisService:
         for query in daily_range_queries:
             results.append(
                 self._execute_full_market_range_by_date(
+                    query,
+                    api_route=api_route,
+                    request_id=request_id,
+                )
+            )
+
+        for query in disclosure_range_queries:
+            results.append(
+                self._execute_disclosure_range_by_date(
                     query,
                     api_route=api_route,
                     request_id=request_id,
@@ -2753,6 +2818,65 @@ class AnalysisService:
             )
 
         return results
+
+    def _execute_disclosure_range_by_date(
+        self,
+        query: DataQuery,
+        *,
+        api_route: str,
+        request_id: str,
+    ) -> QueryResult:
+        """Execute a bounded disclosure range through exact calendar-date reads."""
+        start_date = datetime.strptime(query.params["start_date"], "%Y%m%d").date()
+        end_date = datetime.strptime(query.params["end_date"], "%Y%m%d").date()
+        day_count = (end_date - start_date).days + 1
+        if day_count < 1 or day_count > MAX_CALENDAR_DATE_FANOUT:
+            return QueryResult(
+                query_id=query.query_id,
+                provider=self._provider.name,
+                operation=query.operation,
+                status=QueryStatus.ERROR,
+                error=ServiceError(
+                    source="system",
+                    message=(
+                        f"Disclosure date fan-out ({day_count}) exceeds the limit "
+                        f"({MAX_CALENDAR_DATE_FANOUT})."
+                    ),
+                ),
+            )
+        parameter = DATE_FANOUT_PARAMETERS[query.operation]
+        dates = [
+            (start_date + timedelta(days=offset)).strftime("%Y%m%d")
+            for offset in range(day_count)
+        ]
+
+        def _fetch_date(value: str) -> QueryResult:
+            dated_query = query.model_copy(deep=True)
+            dated_query.query_id = f"{query.query_id}-{value}"
+            dated_query.params.pop("start_date", None)
+            dated_query.params.pop("end_date", None)
+            dated_query.params[parameter] = value
+            return self._executor.execute(
+                dated_query,
+                api_route=api_route,
+                request_id=request_id,
+            )
+
+        rows: List[Dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
+            for result in pool.map(_fetch_date, dates):
+                if result.status != QueryStatus.SUCCESS:
+                    return result
+                rows.extend(result.rows)
+        return QueryResult(
+            query_id=query.query_id,
+            provider=self._provider.name,
+            operation=query.operation,
+            status=QueryStatus.SUCCESS,
+            columns=list(query.fields),
+            rows=rows,
+            row_count=len(rows),
+        )
 
     def _execute_full_market_range_by_date(
         self,
@@ -3267,6 +3391,7 @@ class AnalysisService:
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
+        AnalysisService._compile_industry_valuation_dividend(plan, prompt)
         if plan.execution_plan is not None:
             # The planner owns DAG business semantics; local code only validates and
             # executes the declared nodes without applying prompt-specific compilers.
@@ -3296,7 +3421,6 @@ class AnalysisService:
         AnalysisService._compile_block_trade_snapshot(plan, prompt)
         AnalysisService._compile_dividend_yield_ranking(plan, prompt)
         AnalysisService._compile_composite_valuation(plan, prompt)
-        AnalysisService._normalize_secondary_disclosures(plan, prompt)
         AnalysisService._normalize_suspension_request(plan, prompt)
         AnalysisService._compile_margin_balance_ranking(plan, prompt)
         AnalysisService._compile_security_moneyflow_comparison(plan, prompt)
@@ -3335,6 +3459,122 @@ class AnalysisService:
         # accidentally revive a request for unavailable private or order-level data.
         AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         return plan
+
+    @staticmethod
+    def _compile_industry_valuation_dividend(plan: QueryPlan, prompt: str) -> None:
+        """Compile an industry valuation view enriched with annual dividends."""
+        normalized_prompt = prompt.casefold()
+        industries = ASharePlanValidator._extract_prompt_industries(normalized_prompt)
+        year_match = re.search(r"(20\d{2})年", prompt)
+        if not (
+            industries
+            and year_match
+            and "分红" in prompt
+            and (
+                "市盈率" in prompt
+                or re.search(r"(?<![a-z])pe(?![a-z])", normalized_prompt)
+            )
+        ):
+            return
+
+        planned_queries = list(plan.queries)
+        if plan.execution_plan is not None:
+            planned_queries.extend(
+                node.query
+                for node in plan.execution_plan.nodes
+                if node.kind == "query"
+            )
+        valuation_query = next(
+            (
+                query
+                for query in planned_queries
+                if query.operation == "daily_basic"
+                and query.params.get("trade_date")
+            ),
+            None,
+        )
+        trusted_snapshot = re.search(r"event_end_date=(\d{8})", prompt)
+        trade_date = (
+            valuation_query.params["trade_date"]
+            if valuation_query is not None
+            else trusted_snapshot.group(1) if trusted_snapshot else None
+        )
+        if trade_date is None:
+            return
+
+        industry = sorted(industries)[0]
+        year = year_match.group(1)
+        universe_query = DataQuery(
+            query_id="industry_security_universe",
+            operation="stock_basic",
+            fields=["ts_code", "name", "industry"],
+            filters=[
+                DataFilter(field="industry", operator="contains", value=industry)
+            ],
+            purpose="Define the requested industry security universe.",
+        )
+        valuation_query = DataQuery(
+            query_id="industry_valuation_snapshot",
+            operation="daily_basic",
+            params={"trade_date": trade_date},
+            fields=["ts_code", "pe"],
+            purpose="Retrieve the latest completed valuation snapshot.",
+        )
+        dividend_query = DataQuery(
+            query_id="industry_dividend_disclosures",
+            operation="dividend",
+            fields=["ts_code", "ann_date", "cash_div_tax"],
+            filters=[
+                DataFilter(field="ann_date", operator="ge", value=f"{year}0101"),
+                DataFilter(field="ann_date", operator="le", value=f"{year}1231"),
+            ],
+            purpose="Retrieve annual dividend disclosures for each industry security.",
+        )
+        plan.feasibility = "supported"
+        plan.intent = None
+        plan.execution_plan = None
+        plan.constraints = []
+        plan.queries = [universe_query, valuation_query, dividend_query]
+        plan.limitations = []
+        for requirement in plan.requirements:
+            requirement.status = "covered"
+        AnalysisService._compile_composed_result(
+            plan,
+            source_query=dividend_query,
+            output_query_id="industry_valuation_dividend_result",
+            steps=[
+                {
+                    "operation": "latest_by_group",
+                    "group_by": ["ts_code"],
+                    "order_by": "ann_date",
+                    "direction": "desc",
+                },
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": valuation_query.query_id,
+                    "join_on": ["ts_code"],
+                    "fields": {"pe": "pe"},
+                    "cardinality": "many_to_one",
+                },
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": universe_query.query_id,
+                    "join_on": ["ts_code"],
+                    "fields": {"name": "name"},
+                    "cardinality": "many_to_one",
+                },
+                {
+                    "operation": "select_fields",
+                    "fields": ["ts_code", "name", "pe", "cash_div_tax"],
+                },
+            ],
+            output_descriptions={
+                "ts_code": "A-share security code.",
+                "name": "Security name.",
+                "pe": "Price-to-earnings ratio from the valuation snapshot.",
+                "cash_div_tax": "Latest announced pre-tax cash dividend per share.",
+            },
+        )
 
     @staticmethod
     def _enforce_unverifiable_data_boundary(plan: QueryPlan, prompt: str) -> None:
@@ -4840,6 +5080,11 @@ class AnalysisService:
             resolved = (previous_date, previous_date)
         elif resolved is None and any(
             token in prompt for token in ("最近交易日", "最新交易日")
+        ):
+            resolved = (end_date, end_date)
+        elif resolved is None and (
+            "市盈率" in prompt
+            or re.search(r"(?<![a-z])pe(?![a-z])", prompt.casefold())
         ):
             resolved = (end_date, end_date)
         horizon = resolve_future_horizon(prompt)

@@ -104,6 +104,11 @@ def build_query_plan_system_prompt(
         "by setting fanout_input_field and fanout_param; use this when an intermediate "
         "candidate set must drive per-security provider calls. Dependencies must be "
         "acyclic, and result_node_id must identify the final answer. "
+        "Use rank_metric intent only when the requested metric is one of the exact "
+        "AnalysisMetric.type enum values. For any provider field outside that enum, "
+        "set intent to null and express ranking with provider queries plus a result "
+        "pipeline or execution plan. Never force an unrelated typed metric merely "
+        "because the user requests a ranking. "
         "For an event study that asks for up or down probabilities after consecutive "
         "limit-up sessions, output only a high-level intent with "
         "analysis_type=event_outcome_probability. Populate event_window, "
@@ -215,6 +220,9 @@ def build_query_plan_system_prompt(
         f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}\n\n"
         "Critical contract invariants to check immediately before responding:\n"
         "- requirements[].status is exactly covered or unsupported.\n"
+        "- For every provider-backed requirement, evidence must name the exact "
+        "operation that supplies it, and that operation must be present in the "
+        "executable plan.\n"
         "- feasibility=supported requires every requirement status to be covered.\n"
         "- feasibility=unsupported requires at least one unsupported requirement, "
         "at least one concrete limitation, and no queries or execution_plan.\n"
@@ -381,6 +389,10 @@ class DeepSeekQueryPlanner:
             elif validator is not None:
                 try:
                     validated_plan = validator(plan)
+                    self._validate_requirement_operation_lineage(
+                        validated_plan,
+                        candidate_operations,
+                    )
                     log_event(
                         logger,
                         logging.INFO,
@@ -424,6 +436,46 @@ class DeepSeekQueryPlanner:
                 f"{DEEPSEEK_MAX_ATTEMPTS} attempts: {last_error}"
             ),
         ) from last_error
+
+    @staticmethod
+    def _validate_requirement_operation_lineage(
+        plan: QueryPlan,
+        candidate_operations: Sequence[DataOperation],
+    ) -> None:
+        """Require provider operations cited as evidence to exist in the plan."""
+        if plan.feasibility == "unsupported" and all(
+            requirement.implementation for requirement in plan.requirements
+        ):
+            raise ValueError(
+                "An unsupported plan must identify at least one requirement without "
+                "an executable implementation."
+            )
+        planned_operations = {query.operation for query in plan.queries}
+        if plan.execution_plan is not None:
+            planned_operations.update(
+                node.query.operation
+                for node in plan.execution_plan.nodes
+                if node.kind == "query"
+            )
+        cited_operations = set()
+        evidence = " ".join(
+            " ".join(
+                value
+                for value in (requirement.implementation, requirement.evidence)
+                if value
+            )
+            for requirement in plan.requirements
+            if requirement.status == "covered"
+        )
+        for operation in candidate_operations:
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(operation.name)}(?![A-Za-z0-9_])", evidence):
+                cited_operations.add(operation.name)
+        missing = cited_operations.difference(planned_operations)
+        if missing:
+            raise ValueError(
+                "Requirement evidence cites provider operations absent from the "
+                "executable plan: " + ", ".join(sorted(missing))
+            )
 
     @staticmethod
     def _build_contract_feedback(error: PlannerError) -> str:
@@ -480,6 +532,8 @@ class DeepSeekQueryPlanner:
         """Apply deterministic normalization before semantic validation."""
         self._normalize_fields(plan)
         self._normalize_join_field_mappings(plan)
+        self._normalize_execution_answer_fields(plan)
+        self._normalize_requirement_statuses(plan)
         self._normalize_limit_list_queries(plan)
         self._normalize_event_study_source(plan)
         self._normalize_pipeline_query_windows(plan)
@@ -536,6 +590,94 @@ class DeepSeekQueryPlanner:
             if step.fields:
                 normalized_steps.append(step)
         pipeline.steps = normalized_steps
+
+    @staticmethod
+    def _normalize_execution_answer_fields(plan: QueryPlan) -> None:
+        """Copy contract fields through graph joins when their source is unambiguous."""
+        execution_plan = plan.execution_plan
+        contract = plan.answer_contract
+        if execution_plan is None or contract is None:
+            return
+
+        required_fields = {output.field for output in contract.outputs}
+        nodes_by_id = {node.node_id: node for node in execution_plan.nodes}
+        resolved_fields: dict[str, set[str]] = {}
+        resolving: set[str] = set()
+
+        def resolve(node_id: str) -> set[str]:
+            if node_id in resolved_fields:
+                return resolved_fields[node_id]
+            if node_id in resolving or node_id not in nodes_by_id:
+                return set()
+            resolving.add(node_id)
+            node = nodes_by_id[node_id]
+            if node.kind == "query":
+                fields = set(node.query.fields)
+                if node.fanout_input_field:
+                    fields.add(node.fanout_input_field)
+            else:
+                fields = resolve(node.input_result_ids[0]).copy()
+                step = node.step
+                right_fields = (
+                    resolve(step.right_source_query_id)
+                    if step.right_source_query_id
+                    else set()
+                )
+                if step.operation in {"semi_join", "inner_join", "join_fields"}:
+                    copied_fields = {
+                        field: field
+                        for field in required_fields & right_fields - fields
+                    }
+                    if step.operation == "semi_join":
+                        right_node = nodes_by_id.get(step.right_source_query_id)
+                        can_copy_unique_security_fields = bool(
+                            right_node
+                            and right_node.kind == "query"
+                            and right_node.query.operation == "stock_basic"
+                            and step.join_on == ["ts_code"]
+                        )
+                        if not can_copy_unique_security_fields:
+                            copied_fields = {}
+                        elif copied_fields:
+                            # stock_basic has one row per ts_code, so this upgrade keeps
+                            # membership filtering without introducing duplicate rows.
+                            step.operation = "inner_join"
+                            step.cardinality = "many_to_one"
+                    if copied_fields:
+                        existing = step.fields if isinstance(step.fields, dict) else {}
+                        step.fields = {**existing, **copied_fields}
+                    if isinstance(step.fields, dict):
+                        fields.update(step.fields.values())
+                elif step.operation == "select_fields":
+                    fields = set(step.fields)
+                elif step.operation in {"aggregate", "summarize", "resample"}:
+                    fields = set(step.group_by)
+                    fields.update(item.output_field for item in step.aggregations)
+                elif step.operation == "rename_fields":
+                    fields.difference_update(step.fields)
+                    fields.update(step.fields.values())
+                elif step.operation in {"intersect_keys", "except_keys"}:
+                    fields = set(step.join_on)
+                elif step.output_field:
+                    fields.add(step.output_field)
+                    if step.matched_date_output_field:
+                        fields.add(step.matched_date_output_field)
+            resolving.remove(node_id)
+            resolved_fields[node_id] = fields
+            return fields
+
+        resolve(execution_plan.result_node_id)
+
+    @staticmethod
+    def _normalize_requirement_statuses(plan: QueryPlan) -> None:
+        """Resolve a covered implementation that contradicts its status label."""
+        if plan.feasibility != "supported":
+            return
+        for requirement in plan.requirements:
+            if requirement.status == "unsupported" and requirement.implementation:
+                # A concrete implementation on a supported plan is an explicit
+                # coverage claim; the status label is the only contradictory value.
+                requirement.status = "covered"
 
     def _decode_plan_response(self, response: Any) -> QueryPlan:
         """Validate one planner response before any deterministic normalization."""
@@ -846,7 +988,16 @@ class DeepSeekQueryPlanner:
                         # unique. Bind the omitted identifier without guessing data.
                         step["right_source_query_id"] = other_query_ids[0]
         for constraint in raw_plan.get("constraints") or []:
-            if not isinstance(constraint, dict) or constraint.get("operator") != "eq":
+            if not isinstance(constraint, dict):
+                continue
+            if (
+                constraint.get("query_id") not in query_by_id
+                and len(query_by_id) == 1
+            ):
+                # One executable provider read leaves no ambiguity about which query
+                # owns the constraint, even when the model used a stale local alias.
+                constraint["query_id"] = next(iter(query_by_id))
+            if constraint.get("operator") != "eq":
                 continue
             query = query_by_id.get(constraint.get("query_id"))
             params = query.get("params") if isinstance(query, dict) else None
@@ -1226,6 +1377,10 @@ class DeepSeekQueryPlanner:
                 # An empty mapping is a valid filtering join: it retains matching
                 # left rows without copying any right-side payload columns.
                 step["fields"] = {}
+            if operation == "inner_join" and not step.get("cardinality"):
+                # Missing uniqueness evidence cannot justify a stricter merge
+                # contract. many_to_many preserves standard inner-join semantics.
+                step["cardinality"] = "many_to_many"
             if operation in {"inner_join", "join_fields"}:
                 fields = step.get("fields")
                 join_on = step.get("join_on")

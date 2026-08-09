@@ -3769,7 +3769,7 @@ def test_execution_dag_rejects_unknown_dependencies():
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
-def test_workflow_resolves_security_code_adjacent_to_chinese_text():
+def test_workflow_preserves_planned_disclosure_operation():
     plan = make_daily_plan()
     plan.queries[0].operation = "income"
 
@@ -3778,11 +3778,10 @@ def test_workflow_resolves_security_code_adjacent_to_chinese_text():
         "\u67e5\u770b600519.SH\u8fd1\u4e09\u5e74\u4e3b\u8425\u4e1a\u52a1\u6bdb\u5229\u7387\u53d8\u5316",
     )
 
-    assert result.queries[0].operation == "fina_mainbz"
-    assert result.queries[0].params == {"ts_code": "600519.SH"}
+    assert result.queries[0].operation == "income"
 
 
-def test_workflow_rejects_market_wide_forecast_period_query():
+def test_workflow_preserves_market_wide_forecast_for_fanout_validation():
     plan = make_daily_plan()
     plan.queries[0].operation = "forecast"
     plan.queries[0].params = {"period": "20260630"}
@@ -3792,8 +3791,9 @@ def test_workflow_rejects_market_wide_forecast_period_query():
         "\u7edf\u8ba12026\u5e74\u4e0a\u534a\u5e74\u9884\u4e8f\u516c\u53f8\u6570\u91cf",
     )
 
-    assert result.feasibility == "unsupported"
-    assert result.queries == []
+    assert result.feasibility == "supported"
+    assert result.queries[0].operation == "forecast"
+    assert result.queries[0].params == {"period": "20260630"}
 
 
 def test_deepseek_normalizes_identity_projection_mapping():
@@ -3821,6 +3821,47 @@ def test_deepseek_normalizes_identity_projection_mapping():
         "ts_code",
         "name",
     ]
+
+
+def test_deepseek_rejects_requirement_evidence_missing_from_execution():
+    plan = make_daily_plan()
+    plan.requirements[0].evidence = "The share_float operation supplies unlocks."
+
+    with pytest.raises(ValueError, match="share_float"):
+        DeepSeekQueryPlanner._validate_requirement_operation_lineage(
+            plan,
+            [
+                DataOperation(name="daily", description="Daily prices."),
+                DataOperation(name="share_float", description="Unlock schedules."),
+            ],
+        )
+
+
+def test_deepseek_binds_constraint_to_unique_query_identifier():
+    raw_plan = {
+        "queries": [
+            {
+                "query_id": "actual_query",
+                "operation": "daily",
+                "params": {"trade_date": "20260807"},
+                "fields": ["ts_code", "trade_date"],
+            }
+        ],
+        "constraints": [
+            {
+                "constraint_id": "date_constraint",
+                "scope": "result",
+                "field": "trade_date",
+                "operator": "eq",
+                "value": "20260807",
+                "query_id": "stale_alias",
+            }
+        ],
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    assert raw_plan["constraints"][0]["query_id"] == "actual_query"
 
 
 def test_deepseek_drops_non_numeric_query_aggregation_thresholds():
@@ -4241,7 +4282,11 @@ def test_validator_uses_transformed_result_fields_for_pipeline_lineage():
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
-def test_validator_rejects_security_fanout_template_without_universe():
+@pytest.mark.parametrize(
+    "operation",
+    ["top10_floatholders", "share_float", "stk_holdertrade", "forecast"],
+)
+def test_validator_rejects_security_fanout_template_without_universe(operation):
     plan = QueryPlan(
         interpretation="Rank the full market by the retail proxy.",
         requirements=[
@@ -4255,7 +4300,7 @@ def test_validator_rejects_security_fanout_template_without_universe():
         queries=[
             DataQuery(
                 query_id="retail-proxy",
-                operation="top10_floatholders",
+                operation=operation,
                 params={"end_date": "20260727"},
                 fields=[
                     "ts_code",
@@ -4598,6 +4643,56 @@ def test_executor_calculates_period_returns():
     )
 
     assert return_result.rows[0]["period_return_pct"] == 20.0
+
+
+def test_disclosure_range_uses_exact_calendar_date_queries():
+    class DisclosureProvider(FakeMarketDataProvider):
+        def supports(self, operation):
+            return operation == "share_float"
+
+        def query(
+            self,
+            operation,
+            params,
+            fields,
+            *,
+            api_route,
+            request_id,
+            query_id,
+        ):
+            self.calls.append((operation, dict(params)))
+            return pd.DataFrame(
+                [{"ts_code": "000001.SZ", "float_date": params["float_date"]}]
+            )
+
+    provider = DisclosureProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    query = DataQuery(
+        query_id="unlock-range",
+        operation="share_float",
+        params={"start_date": "20261001", "end_date": "20261003"},
+        fields=["ts_code", "float_date"],
+        purpose="Read a bounded unlock schedule.",
+    )
+
+    result = service._execute_disclosure_range_by_date(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.row_count == 3
+    assert provider.calls == [
+        ("share_float", {"float_date": "20261001"}),
+        ("share_float", {"float_date": "20261002"}),
+        ("share_float", {"float_date": "20261003"}),
+    ]
 
 
 def test_full_market_period_return_reads_only_boundary_snapshots():

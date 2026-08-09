@@ -211,7 +211,7 @@ def test_live_analysis_question(
     actual_operations = _planned_operations(response.plan)
     assert actual_operations.intersection(expected_operations)
     assert actual_operations.issubset(
-        expected_operations | {"stock_basic", "trade_cal"}
+        expected_operations | {"stock_basic", "trade_cal", "daily_basic"}
     )
     assert response.results
     assert all(result.status.value == "success" for result in response.results), (

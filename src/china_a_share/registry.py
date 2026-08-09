@@ -250,7 +250,20 @@ CORE_OPERATION_GUIDANCE = {
         "Major shareholder transactions. Parameters include ts_code, ann_date, "
         "start_date, and end_date. Common fields include ts_code, ann_date, holder_name, "
         "holder_type, in_de, change_vol, change_ratio, after_share, after_ratio, "
-        "avg_price, and total_share."
+        "avg_price, and total_share. Date-range market screens require a stock_basic "
+        "universe and bounded ts_code fan-out; do not issue an unbound market-wide read."
+    ),
+    "forecast": (
+        "Disclosed management earnings guidance, not a model-generated price or "
+        "profit prediction. Use this operation for companies forecasting profit "
+        "growth, loss, or other result types for a reporting period. Parameters "
+        "include ts_code, ann_date, start_date, "
+        "end_date, period, and type. Common fields include ts_code, ann_date, "
+        "end_date, type, p_change_min, p_change_max, net_profit_min, "
+        "net_profit_max, summary, and change_reason. Market-wide period screens "
+        "should use a bounded start_date/end_date announcement window; the executor "
+        "expands it into exact ann_date reads and filters the requested period. Avoid "
+        "full-universe ts_code fan-out when an announcement window can be bounded."
     ),
     "express": (
         "Earnings express reports. Parameters include ts_code, ann_date, start_date, "
@@ -273,7 +286,12 @@ CORE_OPERATION_GUIDANCE = {
     "share_float": (
         "Restricted-share unlock schedules. Parameters include ts_code, ann_date, "
         "float_date, start_date, and end_date. Common fields include ts_code, "
-        "ann_date, float_date, float_share, float_ratio, holder_name, and share_type."
+        "ann_date, float_date, float_share, float_ratio, holder_name, and share_type. "
+        "float_ratio is the native unlocked-share percentage of total shares; use it "
+        "directly for ratio rankings without joining daily_basic. "
+        "Market screens with a bounded schedule window use exact float_date fan-out. "
+        "Without a defensible date window, use a stock_basic universe and bounded "
+        "ts_code fan-out; do not issue an unbound market-wide read."
     ),
     "new_share": (
         "IPO issuance records. Common fields include ts_code, name, ipo_date, "
