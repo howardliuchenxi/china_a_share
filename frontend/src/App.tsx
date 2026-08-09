@@ -697,6 +697,29 @@ function ResultTable({
   const safePage = Math.min(resultPage, totalPages);
   const visibleRows = processedRows.slice((safePage - 1) * RESULT_PAGE_SIZE, safePage * RESULT_PAGE_SIZE);
 
+  function renderPagination(label: string) {
+    if (processedRows.length <= RESULT_PAGE_SIZE) return null;
+    return (
+      <nav className="result-pagination" aria-label={label}>
+        <button
+          type="button"
+          disabled={safePage === 1}
+          onClick={() => setResultPage((page) => Math.max(1, page - 1))}
+        >
+          上一页
+        </button>
+        <span>第 {safePage} 页，共 {totalPages} 页（{processedRows.length.toLocaleString()} 行）</span>
+        <button
+          type="button"
+          disabled={safePage === totalPages}
+          onClick={() => setResultPage((page) => Math.min(totalPages, page + 1))}
+        >
+          下一页
+        </button>
+      </nav>
+    );
+  }
+
   function updateSort(column: string) {
     if (sortColumn !== column) {
       setSortColumn(column);
@@ -796,6 +819,7 @@ function ResultTable({
         </dl>
       ) : visibleRows.length > 0 ? (
         <>
+          {renderPagination("结果分页（表格上方）")}
           <div className="table-scroll">
             <table>
               <thead><tr>{result.columns.map((column) => {
@@ -832,25 +856,7 @@ function ResultTable({
               </tbody>
             </table>
           </div>
-          {processedRows.length > RESULT_PAGE_SIZE && (
-            <nav className="result-pagination" aria-label="结果分页">
-              <button
-                type="button"
-                disabled={safePage === 1}
-                onClick={() => setResultPage((page) => Math.max(1, page - 1))}
-              >
-                上一页
-              </button>
-              <span>第 {safePage} 页，共 {totalPages} 页（{processedRows.length.toLocaleString()} 行）</span>
-              <button
-                type="button"
-                disabled={safePage === totalPages}
-                onClick={() => setResultPage((page) => Math.min(totalPages, page + 1))}
-              >
-                下一页
-              </button>
-            </nav>
-          )}
+          {renderPagination("结果分页（表格下方）")}
         </>
       ) : result.row_count > 0 ? (
         <div className="empty-result" role="status">

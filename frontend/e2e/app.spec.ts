@@ -16,6 +16,7 @@ import {
   successWithSingleStockManyRowsFixture,
   unsupportedAnalysisFixture,
 } from "./fixtures";
+import type { AnalysisResponse } from "../src/contracts";
 
 /* ------------------------------------------------------------------ */
 /*  Mock setup helper — intercept /api/* routes                         */
@@ -110,6 +111,46 @@ test("A-share result codes link to Eastmoney verification pages", async ({
   );
   await expect(verificationLink).toHaveAttribute("target", "_blank");
   await expect(verificationLink).toHaveAttribute("rel", "noopener noreferrer");
+});
+
+test("large analysis results expose pagination above and below the table", async ({ page }) => {
+  const baseResult = successWithMultiRowFixture.results[0];
+  const rows = Array.from({ length: 299 }, (_, index) => ({
+    ...baseResult.rows[index % baseResult.rows.length],
+    ts_code: `${String(index + 1).padStart(6, "0")}.SZ`,
+  }));
+  const largeResultFixture: AnalysisResponse = {
+    ...successWithMultiRowFixture,
+    results: [{
+      ...baseResult,
+      rows,
+      row_count: rows.length,
+    }],
+  };
+  await mockApiRoutes(page, largeResultFixture);
+
+  await page.goto("/analysis");
+  await page.locator("#analysis-prompt").fill("查询2026年A股汽车行业股票的市盈率和分红数据");
+  await page.locator('button[type="submit"]').click();
+
+  const topPagination = page.getByRole("navigation", { name: "结果分页（表格上方）" });
+  const bottomPagination = page.getByRole("navigation", { name: "结果分页（表格下方）" });
+  await expect(topPagination).toContainText("第 1 页，共 3 页（299 行）");
+  await expect(bottomPagination).toContainText("第 1 页，共 3 页（299 行）");
+
+  await topPagination.getByRole("button", { name: "下一页" }).click();
+
+  await expect(topPagination).toContainText("第 2 页，共 3 页（299 行）");
+  await expect(bottomPagination).toContainText("第 2 页，共 3 页（299 行）");
+});
+
+test("small analysis results do not show pagination", async ({ page }) => {
+  await mockApiRoutes(page, successWithMultiRowFixture);
+  await page.goto("/analysis");
+  await page.locator("#analysis-prompt").fill("查询2026年7月17日A股涨跌分布");
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.getByRole("navigation", { name: /结果分页/ })).toHaveCount(0);
 });
 
 test("administrator feedback dialog stays open while entering a suggestion", async ({
