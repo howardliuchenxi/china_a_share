@@ -1003,6 +1003,89 @@ def test_planner_can_converge_across_contract_and_capability_rejections():
     )
 
 
+def test_planner_selects_the_most_complete_valid_complex_candidate():
+    candidates = []
+    for index, output_fields in enumerate(
+        (["ts_code"], ["ts_code", "change"], ["change"]),
+        start=1,
+    ):
+        candidate = make_daily_plan()
+        candidate.requirements.append(
+            candidate.requirements[0].model_copy(
+                update={"requirement": "Return every requested output field."}
+            )
+        )
+        candidate.answer_contract = AnswerContract.model_validate(
+            {
+                "result_query_id": "market_direction",
+                "result_kind": "table",
+                "outputs": [
+                    {"field": field, "description": f"Requested field {field}."}
+                    for field in output_fields
+                ],
+            }
+        )
+        candidate.queries[0].purpose = f"Candidate {index}."
+        candidates.append(candidate)
+    session = SequenceFakeSession(
+        [
+            FakeResponse(
+                {"choices": [{"message": {"content": plan.model_dump_json()}}]}
+            )
+            for plan in candidates
+        ]
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+        AnalysisRequest(prompt="Return two related market measures."),
+        [DataOperation(name="daily", description="Daily prices.")],
+        lambda plan: plan,
+    )
+
+    assert [output.field for output in result.answer_contract.outputs] == [
+        "ts_code",
+        "change",
+    ]
+    assert len(session.calls) == 3
+    assert "candidate 2" in session.calls[1][1]["json"]["messages"][-1]["content"]
+    assert "candidate 3" in session.calls[2][1]["json"]["messages"][-1]["content"]
+
+
+def test_planner_stops_after_three_identical_valid_complex_candidates():
+    candidate = make_daily_plan()
+    candidate.requirements.append(
+        candidate.requirements[0].model_copy(
+            update={"requirement": "Return the related market measure."}
+        )
+    )
+    candidate.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [
+                {"field": "ts_code", "description": "A-share security code."}
+            ],
+        }
+    )
+    session = SequenceFakeSession(
+        [
+            FakeResponse(
+                {"choices": [{"message": {"content": candidate.model_dump_json()}}]}
+            )
+            for _ in range(3)
+        ]
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+        AnalysisRequest(prompt="Return two related market measures."),
+        [DataOperation(name="daily", description="Daily prices.")],
+        lambda plan: plan,
+    )
+
+    assert result == candidate
+    assert len(session.calls) == 3
+
+
 def test_planner_final_retry_can_return_contextual_clarification_options():
     invalid_plan = make_daily_plan()
     clarification_plan = QueryPlan(
@@ -1031,7 +1114,7 @@ def test_planner_final_retry_can_return_contextual_clarification_options():
                         ]
                     }
                 )
-                for _ in range(4)
+                for _ in range(19)
             ],
             FakeResponse(
                 {

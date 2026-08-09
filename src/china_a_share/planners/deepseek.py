@@ -30,7 +30,9 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEEPSEEK_TIMEOUT_SECONDS = 180
 DEEPSEEK_MAX_OUTPUT_TOKENS = 12_000
-DEEPSEEK_MAX_ATTEMPTS = 5
+DEEPSEEK_MAX_ATTEMPTS = 20
+DEEPSEEK_TARGET_VALID_CANDIDATES = 3
+DEEPSEEK_MAX_IDENTICAL_CANDIDATES = 3
 DEEPSEEK_RETRY_DELAY_SECONDS = 1
 RETAIL_PROXY_DISCLOSURE = (
     "This result uses non_top10_float_ratio as a holding-dispersion proxy. "
@@ -289,7 +291,10 @@ class DeepSeekQueryPlanner:
             allowed_operations,
         )
         feedback = None
+        candidate_guidance = None
         last_error: Optional[Exception] = None
+        valid_candidates: list[QueryPlan] = []
+        candidate_fingerprints: dict[str, int] = {}
         for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -315,6 +320,8 @@ class DeepSeekQueryPlanner:
                         ),
                     }
                 )
+            elif candidate_guidance:
+                messages.append({"role": "system", "content": candidate_guidance})
             request_payload = {
                 "model": DEEPSEEK_MODEL,
                 "messages": messages,
@@ -407,10 +414,46 @@ class DeepSeekQueryPlanner:
                             else None
                         ),
                     )
-                    return validated_plan
+                    if not self._requires_candidate_selection(validated_plan):
+                        return validated_plan
+                    fingerprint = validated_plan.model_dump_json(
+                        exclude_none=True,
+                    )
+                    valid_candidates.append(validated_plan)
+                    candidate_fingerprints[fingerprint] = (
+                        candidate_fingerprints.get(fingerprint, 0) + 1
+                    )
+                    if (
+                        len(candidate_fingerprints)
+                        >= DEEPSEEK_TARGET_VALID_CANDIDATES
+                        or candidate_fingerprints[fingerprint]
+                        >= DEEPSEEK_MAX_IDENTICAL_CANDIDATES
+                    ):
+                        selected = self._select_best_candidate(valid_candidates)
+                        log_event(
+                            logger,
+                            logging.INFO,
+                            "planner_candidate_selected",
+                            request_id=ANALYSIS_REQUEST_ID.get(),
+                            provider="deepseek",
+                            model=DEEPSEEK_MODEL,
+                            candidate_count=len(valid_candidates),
+                            distinct_candidate_count=len(candidate_fingerprints),
+                            score=self._candidate_score(selected),
+                        )
+                        return selected
+                    feedback = None
+                    candidate_guidance = (
+                        "A valid candidate already exists. Produce another independent "
+                        "candidate for deterministic comparison. Preserve every explicit "
+                        "user requirement, do not introduce unrequested ranking or limits, "
+                        "and prefer the smallest executable plan that returns every "
+                        f"requested output. This is candidate {len(valid_candidates) + 1}."
+                    )
                 except ValueError as exc:
                     last_error = exc
                     feedback = self._build_plan_feedback(plan, exc)
+                    candidate_guidance = None
                     log_event(
                         logger,
                         logging.WARNING,
@@ -427,6 +470,20 @@ class DeepSeekQueryPlanner:
             if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
                 sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
 
+        if valid_candidates:
+            selected = self._select_best_candidate(valid_candidates)
+            log_event(
+                logger,
+                logging.INFO,
+                "planner_candidate_selected",
+                request_id=ANALYSIS_REQUEST_ID.get(),
+                provider="deepseek",
+                model=DEEPSEEK_MODEL,
+                candidate_count=len(valid_candidates),
+                distinct_candidate_count=len(candidate_fingerprints),
+                score=self._candidate_score(selected),
+            )
+            return selected
         if isinstance(last_error, PlannerError):
             raise last_error
         raise PlannerError(
@@ -436,6 +493,43 @@ class DeepSeekQueryPlanner:
                 f"{DEEPSEEK_MAX_ATTEMPTS} attempts: {last_error}"
             ),
         ) from last_error
+
+    @staticmethod
+    def _requires_candidate_selection(plan: QueryPlan) -> bool:
+        """Return whether a validated plan is complex enough to benefit from comparison."""
+        return len(plan.requirements) > 1
+
+    @staticmethod
+    def _candidate_score(plan: QueryPlan) -> tuple[int, int, int, int]:
+        """Rank valid candidates by completeness before execution complexity."""
+        covered_requirements = sum(
+            requirement.status == "covered" for requirement in plan.requirements
+        )
+        output_count = (
+            len(plan.answer_contract.outputs) if plan.answer_contract else 0
+        )
+        node_count = len(plan.queries)
+        if plan.execution_plan is not None:
+            node_count += len(plan.execution_plan.nodes)
+        if plan.result_pipeline is not None:
+            node_count += len(plan.result_pipeline.steps)
+        return (
+            int(plan.feasibility == "supported"),
+            covered_requirements,
+            output_count,
+            -node_count,
+        )
+
+    @classmethod
+    def _select_best_candidate(cls, candidates: Sequence[QueryPlan]) -> QueryPlan:
+        """Return the highest-scoring validated candidate deterministically."""
+        return max(
+            candidates,
+            key=lambda candidate: (
+                cls._candidate_score(candidate),
+                candidate.model_dump_json(exclude_none=True),
+            ),
+        )
 
     @staticmethod
     def _validate_requirement_operation_lineage(
