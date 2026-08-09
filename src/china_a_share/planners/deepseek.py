@@ -73,7 +73,9 @@ def build_query_plan_system_prompt(
         "offset. Source queries may start earlier to warm up an ordered calculation "
         "and must extend far enough after the event interval to measure the outcome. "
         "Decompose the request into atomic requirements and provide catalog evidence "
-        "for each requirement. Preserve every numeric value and comparison direction "
+        "for each requirement. Set requirements[].status to exactly covered or "
+        "unsupported; never use synonyms such as supported, available, or feasible. "
+        "Preserve every numeric value and comparison direction "
         "from the user request; do not replace them with fixed thresholds or counts. "
         "For every supported plan, populate answer_contract with the exact query or "
         "pipeline result that answers the user. Use result_kind=summary when the user "
@@ -332,7 +334,7 @@ class DeepSeekQueryPlanner:
                 if exc.http_status in {400, 401, 403, 404}:
                     raise
                 last_error = exc
-                feedback = str(exc)
+                feedback = self._build_contract_feedback(exc)
                 if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
                     sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
                     continue
@@ -359,7 +361,7 @@ class DeepSeekQueryPlanner:
                     "A supported model-generated plan must include answer_contract "
                     "with every user-requested final output field."
                 )
-                feedback = str(last_error)
+                feedback = self._build_plan_feedback(plan, last_error)
             elif validator is not None:
                 try:
                     validated_plan = validator(plan)
@@ -380,7 +382,7 @@ class DeepSeekQueryPlanner:
                     return validated_plan
                 except ValueError as exc:
                     last_error = exc
-                    feedback = str(exc)
+                    feedback = self._build_plan_feedback(plan, exc)
                     log_event(
                         logger,
                         logging.WARNING,
@@ -406,6 +408,39 @@ class DeepSeekQueryPlanner:
                 f"{DEEPSEEK_MAX_ATTEMPTS} attempts: {last_error}"
             ),
         ) from last_error
+
+    @staticmethod
+    def _build_contract_feedback(error: PlannerError) -> str:
+        """Return machine-readable repair context for one rejected model response."""
+        raw_response = error.raw_response or {}
+        feedback = {
+            "decision": "REVISE",
+            "phase": "contract_validation",
+            "instruction": (
+                "Return a complete corrected query plan. Preserve the user intent, "
+                "change every invalid value, and satisfy the full JSON schema."
+            ),
+            "errors": raw_response.get("validation_errors") or [
+                {"message": str(error)}
+            ],
+            "rejected_output": raw_response.get("content"),
+        }
+        return json.dumps(feedback, ensure_ascii=False)
+
+    @staticmethod
+    def _build_plan_feedback(plan: QueryPlan, error: Exception) -> str:
+        """Return machine-readable replanning context for a semantic rejection."""
+        feedback = {
+            "decision": "REPLAN",
+            "phase": "capability_validation",
+            "instruction": (
+                "Return a complete replacement query plan using only documented "
+                "capabilities. Preserve the user intent and revalidate the whole plan."
+            ),
+            "errors": [{"message": str(error)}],
+            "rejected_plan": plan.model_dump(mode="json"),
+        }
+        return json.dumps(feedback, ensure_ascii=False)
 
     def _finalize_plan(self, plan: QueryPlan) -> None:
         """Apply deterministic normalization before semantic validation."""

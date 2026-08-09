@@ -803,6 +803,85 @@ def test_planner_retries_one_contract_invalid_response():
     assert "invalid JSON at line 1, column 20" in retry_messages[-1]["content"]
 
 
+def test_planner_revises_invalid_requirement_status_with_structured_feedback():
+    invalid_plan = make_daily_plan().model_dump(mode="json")
+    invalid_plan["requirements"][0]["status"] = "supported"
+    valid_plan = make_daily_plan()
+    session = SequenceFakeSession(
+        [
+            FakeResponse(
+                {"choices": [{"message": {"content": json.dumps(invalid_plan)}}]}
+            ),
+            FakeResponse(
+                {"choices": [{"message": {"content": valid_plan.model_dump_json()}}]}
+            ),
+        ]
+    )
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+        AnalysisRequest(prompt="Count stocks."),
+        [DataOperation(name="daily", description="Daily prices.")],
+    )
+
+    assert result.requirements[0].status == "covered"
+    feedback_message = session.calls[1][1]["json"]["messages"][-1]["content"]
+    assert '"decision": "REVISE"' in feedback_message
+    assert '"phase": "contract_validation"' in feedback_message
+    assert '"location": "requirements.0.status"' in feedback_message
+    assert '\\"status\\": \\"supported\\"' in feedback_message
+
+
+def test_planner_replans_semantic_rejection_with_complete_candidate():
+    first_plan = make_daily_plan()
+    revised_plan = make_daily_plan()
+    answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [
+                {
+                    "field": "ts_code",
+                    "description": "A-share security code.",
+                }
+            ],
+        }
+    )
+    first_plan.answer_contract = answer_contract
+    revised_plan.answer_contract = answer_contract
+    revised_plan.queries[0].purpose = "Use the documented provider capability."
+    session = SequenceFakeSession(
+        [
+            FakeResponse(
+                {"choices": [{"message": {"content": first_plan.model_dump_json()}}]}
+            ),
+            FakeResponse(
+                {"choices": [{"message": {"content": revised_plan.model_dump_json()}}]}
+            ),
+        ]
+    )
+    validation_attempts = 0
+
+    def reject_once(plan):
+        nonlocal validation_attempts
+        validation_attempts += 1
+        if validation_attempts == 1:
+            raise PlanValidationError("Operation is outside the provider catalog.")
+        return plan
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+        AnalysisRequest(prompt="Count stocks."),
+        [DataOperation(name="daily", description="Daily prices.")],
+        reject_once,
+    )
+
+    assert result.queries[0].purpose == "Use the documented provider capability."
+    feedback_message = session.calls[1][1]["json"]["messages"][-1]["content"]
+    assert '"decision": "REPLAN"' in feedback_message
+    assert '"phase": "capability_validation"' in feedback_message
+    assert '"rejected_plan"' in feedback_message
+    assert "Operation is outside the provider catalog." in feedback_message
+
+
 def test_planner_final_retry_can_return_contextual_clarification_options():
     invalid_plan = make_daily_plan()
     clarification_plan = QueryPlan(
