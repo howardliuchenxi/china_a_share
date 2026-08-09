@@ -29,45 +29,10 @@ from china_a_share.time_range import (
     resolve_future_horizon,
 )
 
-from golden_questions import GOLDEN_QUESTION_FAMILIES
+from live_analysis_cases import LIVE_ANALYSIS_CASES
 
 
 LIVE_ANALYSIS_ENVIRONMENT_VARIABLE = "RUN_LIVE_ANALYSIS"
-LIVE_SUPPORTED_FAMILIES = (
-    "market_breadth",
-    "limit_up_list",
-    "limit_up_trend",
-    "two_limit_up_probability",
-    "limit_up_forward_horizon",
-    "market_period_return",
-    "valuation_period_return",
-    "valuation_screen",
-    "liquidity_ranking",
-    "block_trade",
-    "holder_count",
-    "security_moneyflow",
-    "margin_financing",
-    "financial_statements",
-    "dividend",
-)
-LIVE_UNSUPPORTED_CASE_COUNTS = {
-    "verified_retail_ownership": 1,
-    "future_price_prediction": 2,
-    "investor_demographics": 1,
-    "market_wide_dividend_total": 1,
-}
-GOLDEN_FAMILY_BY_NAME = {
-    family["family"]: family for family in GOLDEN_QUESTION_FAMILIES
-}
-LIVE_ANALYSIS_CASES = [
-    (family_name, prompt)
-    for family_name in LIVE_SUPPORTED_FAMILIES
-    for prompt in GOLDEN_FAMILY_BY_NAME[family_name]["prompts"]
-] + [
-    (family_name, prompt)
-    for family_name, count in LIVE_UNSUPPORTED_CASE_COUNTS.items()
-    for prompt in GOLDEN_FAMILY_BY_NAME[family_name]["prompts"][:count]
-]
 LIVE_REGRESSION_CASES = [
     {
         "name": "battery_valuation_and_dividend_contract_repair",
@@ -168,10 +133,12 @@ def _assert_quality_invariants(response, prompt, invariants) -> None:
         assert operations.index("sort") < operations.index("limit")
 
 
-def test_live_analysis_matrix_contains_exactly_50_questions() -> None:
+def test_live_analysis_matrix_contains_exactly_100_questions() -> None:
     """Keep the paid external regression suite at the reviewed case count."""
-    assert len(LIVE_ANALYSIS_CASES) == 50
-    assert len(set(LIVE_ANALYSIS_CASES)) == 50
+    prompts = [case["prompt"] for case in LIVE_ANALYSIS_CASES]
+
+    assert len(LIVE_ANALYSIS_CASES) == 100
+    assert len(set(prompts)) == 100
 
 
 def test_live_regression_matrix_contains_unique_prompts() -> None:
@@ -183,11 +150,11 @@ def test_live_regression_matrix_contains_unique_prompts() -> None:
 
 
 @pytest.mark.parametrize(
-    ("family_name", "prompt"),
+    "case",
     LIVE_ANALYSIS_CASES,
     ids=[
-        f"{family}-{index + 1}"
-        for index, (family, _) in enumerate(LIVE_ANALYSIS_CASES)
+        f"{case['family']}-{index + 1}"
+        for index, case in enumerate(LIVE_ANALYSIS_CASES)
     ],
 )
 @pytest.mark.live
@@ -200,19 +167,17 @@ def test_live_regression_matrix_contains_unique_prompts() -> None:
 )
 def test_live_analysis_question(
     live_analysis_service,
-    family_name,
-    prompt,
+    case,
 ) -> None:
     """Run one curated question through real planning, data, and result execution."""
-    family = GOLDEN_FAMILY_BY_NAME[family_name]
     response = live_analysis_service.analyze(
-        request_id=f"live-{family_name}-{uuid4()}",
-        request=AnalysisRequest(prompt=prompt),
+        request_id=f"live-{case['family']}-{uuid4()}",
+        request=AnalysisRequest(prompt=case["prompt"]),
         api_route="/local-live-analysis",
         progress_callback=(lambda completed, total: None),
     )
 
-    if family["tier"] == "unsupported":
+    if case["tier"] == "unsupported":
         assert response.status is AnalysisStatus.ERROR
         assert response.plan is not None
         assert response.plan.feasibility == "unsupported"
@@ -227,7 +192,7 @@ def test_live_analysis_question(
         requirement.status == "covered"
         for requirement in response.plan.requirements
     )
-    expected_operations = set(family["operations"])
+    expected_operations = set(case["operations"])
     actual_operations = {query.operation for query in response.plan.queries}
     assert actual_operations.intersection(expected_operations)
     assert actual_operations.issubset(
@@ -240,8 +205,8 @@ def test_live_analysis_question(
     _assert_pipeline_result_succeeded(response)
     _assert_quality_invariants(
         response,
-        prompt,
-        set(family.get("quality_invariants", [])),
+        case["prompt"],
+        set(case.get("quality_invariants", [])),
     )
 
 

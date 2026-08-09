@@ -1,9 +1,63 @@
-"""Second-wave live cases focused on semantic and data-boundary stress."""
+"""Unified paid live-analysis cases for real DeepSeek and Tushare validation."""
 
 from typing import Any, Dict, List
 
+from golden_questions import GOLDEN_QUESTION_FAMILIES
 
-SECONDARY_LIVE_ANALYSIS_CASES: List[Dict[str, Any]] = [
+
+LIVE_SUPPORTED_FAMILIES = (
+    "market_breadth",
+    "limit_up_list",
+    "limit_up_trend",
+    "two_limit_up_probability",
+    "limit_up_forward_horizon",
+    "market_period_return",
+    "valuation_period_return",
+    "valuation_screen",
+    "liquidity_ranking",
+    "block_trade",
+    "holder_count",
+    "security_moneyflow",
+    "margin_financing",
+    "financial_statements",
+    "dividend",
+)
+LIVE_UNSUPPORTED_CASE_COUNTS = {
+    "verified_retail_ownership": 1,
+    "future_price_prediction": 2,
+    "investor_demographics": 1,
+    "market_wide_dividend_total": 1,
+}
+GOLDEN_FAMILY_BY_NAME = {
+    family["family"]: family for family in GOLDEN_QUESTION_FAMILIES
+}
+
+
+LIVE_ANALYSIS_CASES: List[Dict[str, Any]] = [
+    {
+        "family": family_name,
+        "tier": GOLDEN_FAMILY_BY_NAME[family_name]["tier"],
+        "operations": GOLDEN_FAMILY_BY_NAME[family_name]["operations"],
+        "quality_invariants": GOLDEN_FAMILY_BY_NAME[family_name].get(
+            "quality_invariants", []
+        ),
+        "prompt": prompt,
+    }
+    for family_name in LIVE_SUPPORTED_FAMILIES
+    for prompt in GOLDEN_FAMILY_BY_NAME[family_name]["prompts"]
+] + [
+    {
+        "family": family_name,
+        "tier": GOLDEN_FAMILY_BY_NAME[family_name]["tier"],
+        "operations": GOLDEN_FAMILY_BY_NAME[family_name]["operations"],
+        "quality_invariants": GOLDEN_FAMILY_BY_NAME[family_name].get(
+            "quality_invariants", []
+        ),
+        "prompt": prompt,
+    }
+    for family_name, count in LIVE_UNSUPPORTED_CASE_COUNTS.items()
+    for prompt in GOLDEN_FAMILY_BY_NAME[family_name]["prompts"][:count]
+] + [
     # Historical snapshots test explicit dates, direction, ties, and metric units.
     *[
         {"family": "historical_market_snapshot", "tier": "supported", "operations": ["daily"], "prompt": prompt}

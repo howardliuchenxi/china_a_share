@@ -358,22 +358,22 @@ Run backend tests:
 pytest
 ```
 
-Run the 50-question end-to-end quality matrix against the real DeepSeek and
-Tushare APIs:
+Run the unified 100-question end-to-end quality matrix and production-reported
+regressions against the real DeepSeek and Tushare APIs:
 
 ```bash
 make live-check
 ```
 
-This opt-in check covers 15 supported or approximated business families and
-five explicit unsupported-boundary questions. It validates planning semantics,
-provider operations, result pipelines, and business invariants rather than
-exact model JSON. It loads `DEEPSEEK_API_KEY` and `TUSHARE_TOKEN` from `.env`,
-uses an in-process cache without Google Cloud credentials, and consumes real
-upstream API quota. A successful first attempt for every case makes at least 50
-DeepSeek planning requests; bounded retries can raise that total to 150. The
-default test suite skips the external cases so routine tests remain
-deterministic and offline.
+This opt-in check validates planning semantics, provider operations, result
+pipelines, business invariants, unsupported capability boundaries, and prompts
+reported from production rather than exact model JSON. It loads
+`DEEPSEEK_API_KEY` and `TUSHARE_TOKEN` from `.env`, uses an in-process cache
+without Google Cloud credentials, and consumes real upstream API quota. The
+100 fixed cases require at least 100 DeepSeek planning requests; bounded retries
+can raise that total to 500, and production regressions add their own calls. The
+default test suite skips the external cases so routine tests remain deterministic
+and offline.
 
 Validate the frontend production build:
 
