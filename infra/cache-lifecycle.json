@@ -16,7 +16,7 @@
         "type": "Delete"
       },
       "condition": {
-        "age": 7,
+        "age": 365,
         "matchesPrefix": [
           "analysis-jobs/"
         ]

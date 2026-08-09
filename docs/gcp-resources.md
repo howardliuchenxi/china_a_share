@@ -115,7 +115,7 @@ project-wide Cloud Run administration.
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
 | Object versioning | Disabled |
-| Lifecycle | Delete `cache/` objects after 90 days, `analysis-jobs/` after 7 days, and `fix-requests/` after 30 days |
+| Lifecycle | Delete `cache/` objects after 90 days, `analysis-jobs/` after 365 days, and `fix-requests/` after 30 days |
 | Runtime access | `roles/storage.objectUser` for the Cloud Run runtime identity |
 
 This bucket is the persistent L2 cache for successful Tushare responses and the
@@ -323,8 +323,8 @@ The following services are not live resources for this project:
 - The Feishu deployment webhook adds one low-volume secret access and one
   outbound request after each real deployment, with no material expected cost.
 - The persistent cache has a 90-day deletion lifecycle to prevent unbounded
-  object accumulation, while asynchronous task records expire after 7 days and
-  private UI feedback records expire after 30 days.
+  object accumulation, while asynchronous task records expire after 365 days
+  and private UI feedback records expire after 30 days.
 - Four low-cardinality log-based metrics are expected to remain within the
   billing account's 150 MiB monthly user-defined metric allowance at low
   traffic.
@@ -377,3 +377,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-07-24 | Deployed revision `china-a-share-lab-00027-qft` through `make deploy`; recorded source `main@79f4c6efec959e20b81c2edc6279a73ee992afa1`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-07-25 | Created `feishu-bot-webhook` with automatic replication for successful deployment notifications and granted secret-level access only to the deployment automation identity; expected cost remains negligible. |
 | 2026-08-08 | Increased `china-a-share-analysis-worker` memory from 1 GiB to 4 GiB after a full-market multi-year discovery workload exceeded the previous limit; retained 1 vCPU, one task, two-hour timeout, one retry, the existing runtime identity, and usage-only billing with no idle job cost. |
+| 2026-08-08 | Extended the `analysis-jobs/` Cloud Storage deletion lifecycle from 7 days to 365 days so asynchronous analysis and discovery task results remain available for historical review; retained the existing bucket, Standard storage class, access boundary, and usage-based cost model. |
