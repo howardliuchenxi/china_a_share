@@ -55,6 +55,11 @@
 
 - After making changes, limit automated validation to fast, relevant code
   checks such as compilation, type checking, linting, or targeted unit tests.
+- When a code change fixes a production-reported user prompt, add that exact
+  prompt to the live end-to-end regression suite and run that specific live
+  case against the real configured model and data provider before handoff.
+  Unrelated live cases may remain skipped, but a previous run from before the
+  latest related change does not satisfy this requirement.
 - For UI changes, start the local application and open the exact affected page
   for the user to review. Do not inspect the DOM, take screenshots, or perform
   automated browser interactions unless the user explicitly requests them.
