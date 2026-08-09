@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { submitAnalysis } from "./api";
 import { UiFeedbackController } from "./UiFeedbackController";
 import { DiscoveryPage } from "./DiscoveryPage";
+import { EndToEndCasesPage } from "./EndToEndCasesPage";
 import type {
   AnalysisImage,
   AnalysisResponse,
@@ -974,6 +975,7 @@ function groupResults(results: QueryResult[], queries: DataQuery[]): GroupedResu
 }
 
 function ReferenceDataPage() {
+  const [activeReferenceTab, setActiveReferenceTab] = useState<"dictionary" | "e2e">("dictionary");
   const [dictionaryPage, setDictionaryPage] = useState(1);
   const [dictionarySearch, setDictionarySearch] = useState("");
   const DICTIONARY_PAGE_SIZE = 50;
@@ -1001,6 +1003,11 @@ function ReferenceDataPage() {
 
   return (
     <div className="reference-page" data-feedback-id="reference-page">
+      <nav className="reference-tabs" aria-label="基础信息功能" role="tablist">
+        <button type="button" role="tab" aria-selected={activeReferenceTab === "dictionary"} onClick={() => setActiveReferenceTab("dictionary")}>数据字典</button>
+        <button type="button" role="tab" aria-selected={activeReferenceTab === "e2e"} onClick={() => setActiveReferenceTab("e2e")}>端到端测试</button>
+      </nav>
+      {activeReferenceTab === "e2e" ? <EndToEndCasesPage /> : (
       <section className="reference-panel" aria-labelledby="dictionary-heading">
           <div className="reference-view-heading">
             <h2 id="dictionary-heading">数据字典</h2>
@@ -1062,6 +1069,7 @@ function ReferenceDataPage() {
           )}
           {filteredDictionary.length === 0 && <p className="empty-state">没有符合当前搜索条件的字段。</p>}
       </section>
+      )}
     </div>
   );
 }

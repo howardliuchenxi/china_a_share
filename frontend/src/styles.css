@@ -215,6 +215,91 @@ select {
   box-shadow: inset 0 -3px 0 #b44c27;
 }
 
+.reference-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.reference-tabs button {
+  background: transparent;
+  border: 1px solid var(--border-color, #c9d2cc);
+  color: inherit;
+}
+
+.reference-tabs button[aria-selected="true"] {
+  background: #183f32;
+  color: #fff;
+}
+
+.e2e-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.e2e-editor form,
+.e2e-editor label {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.e2e-editor form {
+  gap: 1rem;
+}
+
+.e2e-editor input,
+.e2e-editor textarea,
+.e2e-editor select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid #c9d2cc;
+  border-radius: 4px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+.e2e-actions,
+.e2e-toolbar,
+.e2e-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.e2e-toolbar {
+  margin-bottom: 1rem;
+}
+
+.secondary-button,
+.text-button {
+  background: #f4f6f3;
+  color: #183f32;
+  border: 1px solid #c9d2cc;
+}
+
+.text-button {
+  padding: 0.35rem 0.55rem;
+}
+
+.text-button.danger,
+.e2e-fail strong {
+  color: #a12820;
+}
+
+.e2e-pass strong {
+  color: #16734a;
+}
+
+.e2e-message,
+.e2e-summary {
+  padding: 0.75rem;
+  border-radius: 4px;
+  background: #edf5ef;
+}
+
 .eyebrow,
 .panel-label {
   margin: 0 0 14px;
