@@ -817,6 +817,7 @@ def test_planner_parses_deepseek_json_plan():
     sent = session.calls[0][1]
     assert sent["headers"]["Authorization"] == "Bearer test-key"
     assert sent["json"]["thinking"] == {"type": "disabled"}
+    assert sent["json"]["temperature"] == 0
     system_prompt = sent["json"]["messages"][0]["content"]
     assert "Mark feasibility as supported only when every requirement maps" in system_prompt
     assert "return no queries" in system_prompt
