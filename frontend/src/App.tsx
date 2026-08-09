@@ -1,5 +1,4 @@
 import {
-  ChangeEvent,
   ClipboardEvent,
   FormEvent,
   useEffect,
@@ -1112,8 +1111,6 @@ export default function App() {
       return next;
     });
   }
-  const imageInputRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     params.set("page", activePage);
@@ -1168,12 +1165,6 @@ export default function App() {
     } finally {
       setIsImageReading(false);
     }
-  }
-
-  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (file) void loadAnalysisImage(file);
   }
 
   function handlePromptPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -1351,30 +1342,11 @@ export default function App() {
             onPaste={handlePromptPaste}
             placeholder="例如：北京时间2026年7月17日有多少只A股上涨，多少只下跌？"
           />
-          <div className="screenshot-control">
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              onChange={handleImageChange}
-              aria-label="Select screenshot"
-            />
-            <button
-              type="button"
-              className="screenshot-select-button"
-              disabled={isImageReading || isLoading}
-              onClick={() => imageInputRef.current?.click()}
-            >
-              {analysisImage
-                ? "\u66f4\u6362\u622a\u56fe"
-                : "\u6dfb\u52a0\u622a\u56fe"}
-            </button>
-            <span>
-              {isImageReading
-                ? "\u6b63\u5728\u8bfb\u53d6\u622a\u56fe\u2026"
-                : "\u652f\u6301 PNG\u3001JPEG\u3001WebP\uff0c\u6700\u5927 10 MiB\uff1b\u4e5f\u53ef\u76f4\u63a5\u7c98\u8d34\u622a\u56fe\u3002"}
-            </span>
-          </div>
+          <p className="screenshot-hint">
+            {isImageReading
+              ? "\u6b63\u5728\u8bfb\u53d6\u622a\u56fe\u2026"
+              : "\u53ef\u76f4\u63a5\u7c98\u8d34 PNG\u3001JPEG \u6216 WebP \u622a\u56fe\uff0c\u6700\u5927 10 MiB\u3002"}
+          </p>
           {analysisImage && (
             <div className="screenshot-preview">
               <img

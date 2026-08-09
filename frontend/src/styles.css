@@ -316,42 +316,17 @@ textarea:focus {
   box-shadow: 0 0 0 2px rgba(180, 76, 39, 0.13);
 }
 
-.screenshot-control {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.screenshot-hint {
   margin-top: 12px;
+  color: #657169;
+  font-size: 0.76rem;
+  line-height: 1.45;
 }
 
 .task-progress {
   margin: 10px 0 0;
   color: #657169;
   font-size: 0.84rem;
-}
-
-.screenshot-control input[type="file"] {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  clip-path: inset(50%);
-}
-
-.screenshot-select-button {
-  flex: 0 0 auto;
-  margin: 0;
-  border: 1px solid #9da69d;
-  background: #f8f8f3;
-  color: #273b32;
-  padding: 9px 13px;
-}
-
-.screenshot-control > span {
-  color: #657169;
-  font-size: 0.76rem;
-  line-height: 1.45;
 }
 
 .screenshot-preview {
@@ -1184,11 +1159,6 @@ table tbody tr:hover { background-color: #f1f3ee; }
 
   .workflow-list {
     grid-template-columns: 1fr;
-  }
-
-  .screenshot-control {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .screenshot-preview {
