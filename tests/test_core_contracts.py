@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from china_a_share.core.contracts import (
+    AnalysisIntent,
     AnalysisResponse,
     DataCacheRecord,
     DataFilter,
@@ -36,6 +37,27 @@ def test_provider_neutral_query_plan_uses_operation_names():
 
     assert plan.queries[0].operation == "daily"
     assert "api_name" not in plan.queries[0].model_dump()
+
+
+def test_field_analysis_accepts_aggregation_without_ranking_field():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "field_analysis",
+            "operation": "dividend",
+            "fields": ["ts_code", "cash_div"],
+            "group_by": ["ts_code"],
+            "aggregations": [
+                {
+                    "output_field": "total_cash_div",
+                    "field": "cash_div",
+                    "function": "sum",
+                }
+            ],
+        }
+    )
+
+    assert intent.analysis_field is None
+    assert intent.aggregations[0].output_field == "total_cash_div"
 
 
 @pytest.mark.parametrize(

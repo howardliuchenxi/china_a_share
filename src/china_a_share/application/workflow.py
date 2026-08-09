@@ -47,6 +47,7 @@ from china_a_share.capabilities import build_capability_manifest
 
 logger = logging.getLogger(__name__)
 
+BACKGROUND_TASK_REQUIRED_ERROR_CODE = "BACKGROUND_TASK_REQUIRED"
 MAX_QUERIES_PER_ANALYSIS = 8
 MAX_DYNAMIC_HOLDER_QUERIES = 6_000
 FANOUT_RECOVERY_ATTEMPTS = 1
@@ -2201,7 +2202,11 @@ class AnalysisService:
                 status="error",
                 plan=validated_plan,
                 decision_trace=decision_trace,
-                error=ServiceError(source="system", message=message),
+                error=ServiceError(
+                    source="system",
+                    code=BACKGROUND_TASK_REQUIRED_ERROR_CODE,
+                    message=message,
+                ),
             )
 
         if validated_plan.execution_plan is not None:

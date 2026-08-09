@@ -4,7 +4,9 @@ import os
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 
+from china_a_share.api import create_app
 from china_a_share.application.workflow import (
     ASharePlanValidator,
     AnalysisService,
@@ -28,11 +30,26 @@ from china_a_share.time_range import (
     resolve_consecutive_session_count,
     resolve_future_horizon,
 )
+from china_a_share.tasks import AnalysisTaskCoordinator, MemoryAnalysisTaskStore
 
 from live_analysis_cases import LIVE_ANALYSIS_CASES, LIVE_REGRESSION_CASES
 
 
 LIVE_ANALYSIS_ENVIRONMENT_VARIABLE = "RUN_LIVE_ANALYSIS"
+BACKGROUND_FANOUT_REPORTED_PROMPT = "A股2026年汽车行业，市盈率和分红数据"
+
+
+class RecordingTaskDispatcher:
+    """Record local dispatches while the test invokes the worker explicitly."""
+
+    def __init__(self) -> None:
+        self.task_ids = []
+
+    def dispatch(self, task_id: str) -> None:
+        """Record the durable task that production would send to Cloud Run."""
+        self.task_ids.append(task_id)
+
+
 @pytest.fixture(scope="module")
 def live_analysis_service() -> AnalysisService:
     """Build one real service so all cases share only local market-data cache."""
@@ -271,3 +288,62 @@ def test_live_reported_prompt_regression(live_analysis_service, case) -> None:
     assert all(result.status.value == "success" for result in response.results), (
         _failure_message(response)
     )
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
+def test_live_background_fanout_through_http_and_worker(
+    live_analysis_service,
+) -> None:
+    """Run the reported fan-out request through HTTP, worker, and task polling."""
+    dispatcher = RecordingTaskDispatcher()
+    coordinator = AnalysisTaskCoordinator(MemoryAnalysisTaskStore(), dispatcher)
+    client = TestClient(
+        create_app(live_analysis_service, task_coordinator=coordinator)
+    )
+
+    submission_response = client.post(
+        "/api/analysis",
+        json={"prompt": BACKGROUND_FANOUT_REPORTED_PROMPT},
+    )
+
+    assert submission_response.status_code == 202, submission_response.text
+    submission = submission_response.json()
+    assert submission["status"] == "queued"
+    assert submission["status_url"] == (
+        f"/api/analysis/tasks/{submission['task_id']}"
+    )
+    assert dispatcher.task_ids == [submission["task_id"]]
+
+    completed_task = coordinator.run(submission["task_id"], live_analysis_service)
+    polled_response = client.get(submission["status_url"])
+
+    assert completed_task.status.value == "succeeded"
+    assert polled_response.status_code == 200
+    task_status = polled_response.json()
+    assert task_status["status"] == "succeeded"
+    assert task_status["error"] is None
+    analysis = task_status["response"]
+    assert analysis is not None
+    assert analysis["status"] == "success", analysis.get("error")
+    assert analysis["error"] is None
+    assert analysis["plan"]["feasibility"] == "supported"
+    operations = {
+        query["operation"] for query in analysis["plan"]["queries"]
+    }
+    execution_plan = analysis["plan"]["execution_plan"]
+    if execution_plan is not None:
+        operations.update(
+            node["query"]["operation"]
+            for node in execution_plan["nodes"]
+            if node["kind"] == "query"
+        )
+    assert {"stock_basic", "daily_basic", "dividend"}.issubset(operations)
+    assert analysis["results"]
+    assert all(result["status"] == "success" for result in analysis["results"])

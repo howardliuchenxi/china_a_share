@@ -1199,7 +1199,10 @@ class AnalysisIntent(BaseModel):
                 *(row_filter.field for row_filter in self.filters),
                 *(aggregation.field for aggregation in self.aggregations),
             }.difference({None})
-            if self.analysis_field not in aggregation_outputs:
+            if (
+                self.analysis_field is not None
+                and self.analysis_field not in aggregation_outputs
+            ):
                 required_fields.add(self.analysis_field)
             missing_fields = required_fields.difference(self.fields)
             if missing_fields:

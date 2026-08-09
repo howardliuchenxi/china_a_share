@@ -4633,6 +4633,7 @@ def test_analysis_rejects_synchronous_security_fanout_before_provider_calls():
 
     assert response.status == "error"
     assert response.error.source == "system"
+    assert response.error.code == "BACKGROUND_TASK_REQUIRED"
     assert "requires a background task" in response.error.message
     assert response.decision_trace[-2].status == "skipped"
     assert provider.calls == []

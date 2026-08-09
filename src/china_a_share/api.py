@@ -4,14 +4,17 @@ import logging
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from .application.workflow import AnalysisService
+from .application.workflow import (
+    BACKGROUND_TASK_REQUIRED_ERROR_CODE,
+    AnalysisService,
+)
 from .application.stock_catalog import StockCatalogService
 from .bootstrap import create_analysis_service as build_analysis_service
 from .bootstrap import create_analysis_task_coordinator
@@ -468,22 +471,64 @@ def create_app(
 
     @application.post(
         ANALYSIS_API_ROUTE,
-        response_model=AnalysisResponse,
+        response_model=Union[AnalysisResponse, AnalysisTaskSubmission],
     )
     def analyze(
         request: AnalysisRequest,
         http_request: Request,
     ):
         """Accept a natural-language request for A-share data."""
-        nonlocal active_service
+        nonlocal active_service, active_task_coordinator
         if active_service is None:
             active_service = create_analysis_service()
         try:
-            return active_service.analyze(
+            response = active_service.analyze(
                 http_request.state.request_id,
                 request,
                 api_route=ANALYSIS_API_ROUTE,
             )
+            if (
+                response.error is not None
+                and response.error.code == BACKGROUND_TASK_REQUIRED_ERROR_CODE
+            ):
+                try:
+                    if active_task_coordinator is None:
+                        active_task_coordinator = create_analysis_task_coordinator(
+                            Settings.from_env()
+                        )
+                    submission = active_task_coordinator.submit(request)
+                except Exception as exc:
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "analysis_background_task_submission_failed",
+                        api_route=ANALYSIS_API_ROUTE,
+                        request_id=http_request.state.request_id,
+                        source="system",
+                        exc_info=True,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail=(
+                            "Background analysis task submission is temporarily "
+                            "unavailable."
+                        ),
+                    ) from exc
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "analysis_background_task_submitted",
+                    api_route=ANALYSIS_API_ROUTE,
+                    request_id=http_request.state.request_id,
+                    task_id=submission.task_id,
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_202_ACCEPTED,
+                    content=submission.model_dump(mode="json"),
+                )
+            return response
+        except HTTPException:
+            raise
         except Exception:
             # This API boundary prevents unexpected execution or transformation
             # defects from degrading into an untraceable plain-text HTTP 500.

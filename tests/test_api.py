@@ -13,6 +13,7 @@ from china_a_share.core.contracts import (
     AnalysisTaskSubmission,
     AnalysisResponse,
     AnalysisStatus,
+    ServiceError,
     StockListItem,
     StockListResponse,
     UiFeedbackConfig,
@@ -55,6 +56,38 @@ class FakeAnalysisService:
 class FailingAnalysisService(FakeAnalysisService):
     def analyze(self, request_id, request, *, api_route):
         raise RuntimeError("unexpected transform failure")
+
+
+class BackgroundRequiredAnalysisService(FakeAnalysisService):
+    def analyze(self, request_id, request, *, api_route):
+        self.calls.append((request_id, request, api_route))
+        return AnalysisResponse(
+            request_id=request_id,
+            planner="test-planner",
+            data_provider="test-provider",
+            status=AnalysisStatus.ERROR,
+            error=ServiceError(
+                source="system",
+                code="BACKGROUND_TASK_REQUIRED",
+                message="Background execution is required.",
+            ),
+        )
+
+
+class FakeAnalysisTaskCoordinator:
+    def __init__(self, error=None):
+        self.error = error
+        self.requests = []
+
+    def submit(self, request):
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return AnalysisTaskSubmission(
+            task_id="analysis-api-task",
+            status=AnalysisTaskStatus.QUEUED,
+            status_url="/api/analysis/tasks/analysis-api-task",
+        )
 
 
 class FakeDiscoveryCoordinator:
@@ -594,6 +627,54 @@ def test_analysis_endpoint_returns_structured_error_for_unexpected_failure(caplo
     )
     assert event.exc_info
     assert event.structured_fields["request_id"] == payload["request_id"]
+
+
+def test_analysis_endpoint_queues_supported_background_work(caplog):
+    service = BackgroundRequiredAnalysisService()
+    coordinator = FakeAnalysisTaskCoordinator()
+    client = TestClient(create_app(service, task_coordinator=coordinator))
+
+    with caplog.at_level(logging.INFO):
+        response = client.post(
+            "/api/analysis",
+            json={"prompt": "A股2026年汽车行业，市盈率和分红数据"},
+        )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "task_id": "analysis-api-task",
+        "status": "queued",
+        "status_url": "/api/analysis/tasks/analysis-api-task",
+    }
+    assert coordinator.requests[0].prompt == "A股2026年汽车行业，市盈率和分红数据"
+    event = next(
+        record.structured_fields
+        for record in caplog.records
+        if getattr(record, "structured_fields", {}).get("event")
+        == "analysis_background_task_submitted"
+    )
+    assert event["request_id"] == service.calls[0][0]
+    assert event["task_id"] == "analysis-api-task"
+
+
+def test_analysis_endpoint_returns_503_when_background_queue_fails():
+    coordinator = FakeAnalysisTaskCoordinator(error=RuntimeError("queue unavailable"))
+    client = TestClient(
+        create_app(
+            BackgroundRequiredAnalysisService(),
+            task_coordinator=coordinator,
+        )
+    )
+
+    response = client.post(
+        "/api/analysis",
+        json={"prompt": "Run one supported fan-out analysis."},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Background analysis task submission is temporarily unavailable."
+    )
 
 
 def test_analysis_prompt_does_not_select_a_special_delivery_mode():
