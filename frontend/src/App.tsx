@@ -980,6 +980,61 @@ function groupResults(results: QueryResult[], queries: DataQuery[]): GroupedResu
   return grouped;
 }
 
+function ResultTables({ results, queries }: { results: QueryResult[]; queries: DataQuery[] }) {
+  return groupResults(results, queries).map((group) => {
+    if (!group.isGrouped) {
+      return (
+        <ResultTable
+          result={group.singleResult!}
+          query={group.singleQuery}
+          key={group.key}
+        />
+      );
+    }
+
+    const combinedRows = group.results!.flatMap((result) => result.rows);
+    const combinedRowCount = group.results!.reduce(
+      (sum, result) => sum + result.row_count,
+      0,
+    );
+    const combinedSummary: Record<string, number | null> = {};
+    const combinedSummaryMetadata: NonNullable<QueryResult["summary_metadata"]> = {};
+    const combinedColumnMetadata: NonNullable<QueryResult["column_metadata"]> = {};
+    for (const result of group.results!) {
+      for (const [key, value] of Object.entries(result.summary)) {
+        if (value === null) {
+          if (!(key in combinedSummary)) combinedSummary[key] = null;
+        } else {
+          combinedSummary[key] = (combinedSummary[key] || 0) + value;
+        }
+      }
+      Object.assign(combinedSummaryMetadata, result.summary_metadata);
+      Object.assign(combinedColumnMetadata, result.column_metadata);
+    }
+    const virtualResult: QueryResult = {
+      query_id: group.key,
+      provider: group.provider!,
+      operation: group.operation!,
+      status: "success",
+      columns: group.columns!,
+      rows: combinedRows,
+      row_count: combinedRowCount,
+      summary: combinedSummary,
+      summary_metadata: combinedSummaryMetadata,
+      column_metadata: combinedColumnMetadata,
+      error: null,
+    };
+    return (
+      <ResultTable
+        result={virtualResult}
+        key={group.key}
+        rawResults={group.results}
+        rawQueries={group.queries}
+      />
+    );
+  });
+}
+
 function ReferenceDataPage() {
   const [activeReferenceTab, setActiveReferenceTab] = useState<"dictionary" | "e2e">("dictionary");
   const [dictionaryPage, setDictionaryPage] = useState(1);
@@ -1428,60 +1483,34 @@ export default function App() {
             onSelectOption={handleClarificationOption}
           />
         )}
-        {(() => {
-          if (!response?.results) return null;
-          const grouped = groupResults(response.results, response.plan?.queries || []);
-          return grouped.map((group) => {
-            if (group.isGrouped) {
-              const combinedRows = group.results!.flatMap((r) => r.rows);
-              const combinedRowCount = group.results!.reduce((sum, r) => sum + r.row_count, 0);
-              const combinedSummary: Record<string, number | null> = {};
-              const combinedSummaryMetadata: NonNullable<QueryResult["summary_metadata"]> = {};
-              const combinedColumnMetadata: NonNullable<QueryResult["column_metadata"]> = {};
-              for (const r of group.results!) {
-                for (const [key, val] of Object.entries(r.summary)) {
-                  if (val === null) {
-                    if (!(key in combinedSummary)) {
-                      combinedSummary[key] = null;
-                    }
-                  } else {
-                    combinedSummary[key] = (combinedSummary[key] || 0) + val;
-                  }
-                }
-                Object.assign(combinedSummaryMetadata, r.summary_metadata);
-                Object.assign(combinedColumnMetadata, r.column_metadata);
-              }
-              const virtualResult: QueryResult = {
-                query_id: group.key,
-                provider: group.provider!,
-                operation: group.operation!,
-                status: "success",
-                columns: group.columns!,
-                rows: combinedRows,
-                row_count: combinedRowCount,
-                summary: combinedSummary,
-                summary_metadata: combinedSummaryMetadata,
-                column_metadata: combinedColumnMetadata,
-                error: null,
-              };
-              return (
-                <ResultTable
-                  result={virtualResult}
-                  key={group.key}
-                  rawResults={group.results}
-                  rawQueries={group.queries}
-                />
-              );
-            } else {
-              return (
-                <ResultTable
-                  result={group.singleResult!}
-                  query={group.singleQuery}
-                  key={group.key}
-                />
-              );
-            }
-          });
+        {response?.results && (() => {
+          const resultQueryId = response.plan?.answer_contract?.result_query_id;
+          if (!resultQueryId) {
+            return <ResultTables results={response.results} queries={response.plan?.queries || []} />;
+          }
+          const primaryResults = response.results.filter(
+            (result) => result.query_id === resultQueryId || result.status !== "success",
+          );
+          const supportingResults = response.results.filter(
+            (result) => result.query_id !== resultQueryId && result.status === "success",
+          );
+          return (
+            <>
+              <ResultTables results={primaryResults} queries={response.plan?.queries || []} />
+              {supportingResults.length > 0 && (
+                <details className="collapsible-panel supporting-results">
+                  <summary>
+                    <strong>计算依据</strong>
+                    <span>（{supportingResults.length.toLocaleString()} 个中间数据集）</span>
+                  </summary>
+                  <ResultTables
+                    results={supportingResults}
+                    queries={response.plan?.queries || []}
+                  />
+                </details>
+              )}
+            </>
+          );
         })()}
         {!localError && !response && <p className="empty-output">数据源查询结果将在这里显示。</p>}
       </section>

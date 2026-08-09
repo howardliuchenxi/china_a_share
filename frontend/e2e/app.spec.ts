@@ -153,6 +153,75 @@ test("small analysis results do not show pagination", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: /结果分页/ })).toHaveCount(0);
 });
 
+test("multi-stage analysis keeps supporting datasets collapsed", async ({ page }) => {
+  const finalResult = successWithMultiRowFixture.results[0];
+  const supportingRows = Array.from({ length: 299 }, (_, index) => ({
+    ts_code: `${String(index + 1).padStart(6, "0")}.SZ`,
+    name: `Security ${index + 1}`,
+    industry: "Auto Parts",
+  }));
+  const multiStageFixture: AnalysisResponse = {
+    ...successWithMultiRowFixture,
+    plan: {
+      ...successWithMultiRowFixture.plan,
+      answer_contract: {
+        result_query_id: "ranked-output",
+        result_kind: "table",
+        outputs: [],
+      },
+      queries: [
+        ...successWithMultiRowFixture.plan.queries,
+        {
+          query_id: "industry-universe",
+          operation: "stock_basic",
+          params: { list_status: "L" },
+          fields: ["ts_code", "name", "industry"],
+          purpose: "Build the requested industry universe.",
+          transform: null,
+          filters: [],
+          aggregations: [],
+        },
+      ],
+    },
+    results: [
+      {
+        ...finalResult,
+        query_id: "ranked-output",
+        operation: "result_pipeline",
+        rows: finalResult.rows.slice(0, 2),
+        row_count: 2,
+      },
+      {
+        query_id: "industry-universe",
+        provider: "tushare",
+        operation: "stock_basic",
+        status: "success",
+        columns: ["ts_code", "name", "industry"],
+        rows: supportingRows,
+        row_count: supportingRows.length,
+        summary: {},
+        summary_metadata: {},
+        column_metadata: {},
+        error: null,
+      },
+    ],
+  };
+  await mockApiRoutes(page, multiStageFixture);
+
+  await page.goto("/analysis");
+  await page.locator("#analysis-prompt").fill("Rank one industry and keep its universe as evidence");
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.getByRole("heading", { name: "tushare · result_pipeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "tushare · stock_basic" })).not.toBeVisible();
+
+  const supportingResults = page.locator("details.supporting-results");
+  await expect(supportingResults).toContainText("1 个中间数据集");
+  await supportingResults.locator("summary").click();
+  await expect(page.getByRole("heading", { name: "tushare · stock_basic" })).toBeVisible();
+  await expect(supportingResults).toContainText("共 299 行");
+});
+
 test("administrator feedback dialog stays open while entering a suggestion", async ({
   page,
 }) => {
