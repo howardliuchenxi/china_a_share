@@ -29,24 +29,10 @@ from china_a_share.time_range import (
     resolve_future_horizon,
 )
 
-from live_analysis_cases import LIVE_ANALYSIS_CASES
+from live_analysis_cases import LIVE_ANALYSIS_CASES, LIVE_REGRESSION_CASES
 
 
 LIVE_ANALYSIS_ENVIRONMENT_VARIABLE = "RUN_LIVE_ANALYSIS"
-LIVE_REGRESSION_CASES = [
-    {
-        "name": "battery_valuation_and_dividend_contract_repair",
-        "prompt": "A股2026年电池行业，市盈率和分红数据",
-        "expected_feasibility": "supported",
-    },
-    {
-        "name": "automotive_valuation_and_dividend_contract_repair",
-        "prompt": "A股2026年汽车行业，市盈率和分红数据",
-        "expected_feasibility": "supported",
-    },
-]
-
-
 @pytest.fixture(scope="module")
 def live_analysis_service() -> AnalysisService:
     """Build one real service so all cases share only local market-data cache."""

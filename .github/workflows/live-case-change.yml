@@ -1,0 +1,103 @@
+name: Update live cases
+run-name: ${{ format('[{0}] {1} live case {2}', github.event.client_payload.change_id, github.event.client_payload.operation, github.event.client_payload.case_id) }}
+
+on:
+  repository_dispatch:
+    types: [live_case_change_requested]
+
+concurrency:
+  group: live-case-main-update
+  cancel-in-progress: false
+
+jobs:
+  validate_and_push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate deployed base revision
+        env:
+          BASE_GIT_SHA: ${{ github.event.client_payload.base_git_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$BASE_GIT_SHA"
+          git merge-base --is-ancestor "$BASE_GIT_SHA" HEAD
+
+      - name: Apply the validated live-case mutation
+        env:
+          OPERATION: ${{ github.event.client_payload.operation }}
+          CASE_ID: ${{ github.event.client_payload.case_id }}
+          CASE_JSON: ${{ toJSON(github.event.client_payload.case) }}
+          PREVIOUS_CASE_JSON: ${{ toJSON(github.event.client_payload.previous_case) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("live_cases.json")
+          catalog = json.loads(path.read_text(encoding="utf-8"))
+          operation = os.environ["OPERATION"]
+          case_id = os.environ["CASE_ID"]
+          case = json.loads(os.environ["CASE_JSON"])
+          previous_case = json.loads(os.environ["PREVIOUS_CASE_JSON"])
+          positions = {
+              item["id"]: index for index, item in enumerate(catalog["cases"])
+          }
+          if operation == "create":
+              if case_id in positions:
+                  raise SystemExit(f"Live case already exists: {case_id}")
+              catalog["cases"].append(case)
+          elif operation == "update":
+              if case_id not in positions:
+                  raise SystemExit(f"Live case does not exist: {case_id}")
+              if catalog["cases"][positions[case_id]] != previous_case:
+                  raise SystemExit(
+                      "The live case changed after the submitted deployment; refresh and retry."
+                  )
+              if case["id"] != case_id:
+                  raise SystemExit("A live case ID cannot change during update.")
+              catalog["cases"][positions[case_id]] = case
+          elif operation == "delete":
+              if case_id not in positions:
+                  raise SystemExit(f"Live case does not exist: {case_id}")
+              if catalog["cases"][positions[case_id]] != previous_case:
+                  raise SystemExit(
+                      "The live case changed after the submitted deployment; refresh and retry."
+                  )
+              del catalog["cases"][positions[case_id]]
+          else:
+              raise SystemExit(f"Unsupported live-case operation: {operation}")
+          path.write_text(
+              json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Install backend test dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check -e '.[dev]'
+
+      - name: Validate the catalog and focused regressions
+        run: |
+          .venv/bin/python -m pytest tests/test_live_case_catalog.py tests/test_live_analysis.py --collect-only
+          git diff --check
+
+      - name: Commit and push the case change
+        env:
+          OPERATION: ${{ github.event.client_payload.operation }}
+          CASE_ID: ${{ github.event.client_payload.case_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "live-case-manager[bot]"
+          git config user.email "live-case-manager[bot]@users.noreply.github.com"
+          git add live_cases.json
+          git commit -m "${OPERATION^} live case ${CASE_ID}"
+          git push origin HEAD:main

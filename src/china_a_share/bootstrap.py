@@ -22,6 +22,11 @@ from china_a_share.feedback import (
     GoogleAdminVerifier,
     UiFeedbackService,
 )
+from china_a_share.e2e_cases import (
+    CloudStorageLiveCaseChangeStore,
+    GitHubLiveCaseDispatcher,
+    LiveCaseService,
+)
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
     CloudRunJobDispatcher,
@@ -127,6 +132,36 @@ def create_ui_feedback_service(settings: Settings) -> UiFeedbackService:
         ),
         google_client_id=settings.google_oauth_client_id,
         git_branch=settings.app_git_branch,
+        git_sha=settings.app_git_sha,
+    )
+
+
+def create_live_case_service(settings: Settings) -> LiveCaseService:
+    """Assemble the authenticated Git-backed live-case management workflow."""
+    required_settings = {
+        "ADMIN_EMAIL": settings.admin_email,
+        "GOOGLE_OAUTH_CLIENT_ID": settings.google_oauth_client_id,
+        "GITHUB_FIX_REPO": settings.github_fix_repo,
+        "GITHUB_FIX_TOKEN": settings.github_fix_token,
+        "TUSHARE_CACHE_BUCKET": settings.tushare_cache_bucket,
+        "APP_GIT_SHA": settings.app_git_sha,
+    }
+    missing = [name for name, value in required_settings.items() if not value]
+    if missing:
+        raise ConfigurationError(
+            "Live-case management is disabled because required settings are missing: "
+            + ", ".join(missing)
+        )
+    return LiveCaseService(
+        GoogleAdminVerifier(
+            settings.google_oauth_client_id,
+            settings.admin_email,
+        ),
+        CloudStorageLiveCaseChangeStore(settings.tushare_cache_bucket),
+        GitHubLiveCaseDispatcher(
+            settings.github_fix_repo,
+            settings.github_fix_token,
+        ),
         git_sha=settings.app_git_sha,
     )
 

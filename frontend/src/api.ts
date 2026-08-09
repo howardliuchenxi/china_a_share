@@ -13,9 +13,46 @@ import type {
   UiFeedbackChatResponse,
   UiFeedbackRequest,
   UiFeedbackSubmission,
+  LiveCaseChangeRequest,
+  LiveCaseChangeSubmission,
+  LiveCaseListResponse,
 } from "./contracts";
 
 const ANALYSIS_TASK_POLL_INTERVAL_MS = 2_000;
+
+function administratorHeaders(idToken: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${idToken}`,
+  };
+}
+
+export async function fetchLiveCases(idToken: string): Promise<LiveCaseListResponse> {
+  const response = await fetch("/api/e2e-cases", {
+    headers: administratorHeaders(idToken),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { detail?: string };
+    throw new Error(payload.detail || `端到端用例查询返回 HTTP ${response.status}。`);
+  }
+  return response.json() as Promise<LiveCaseListResponse>;
+}
+
+export async function submitLiveCaseChange(
+  idToken: string,
+  request: LiveCaseChangeRequest,
+): Promise<LiveCaseChangeSubmission> {
+  const response = await fetch("/api/e2e-cases/changes", {
+    method: "POST",
+    headers: administratorHeaders(idToken),
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { detail?: string };
+    throw new Error(payload.detail || `端到端用例变更返回 HTTP ${response.status}。`);
+  }
+  return response.json() as Promise<LiveCaseChangeSubmission>;
+}
 
 export class StockListRequestError extends Error {
   /** Structured backend failure associated with the rejected stock request. */

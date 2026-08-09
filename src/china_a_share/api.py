@@ -17,6 +17,7 @@ from .bootstrap import create_analysis_service as build_analysis_service
 from .bootstrap import create_analysis_task_coordinator
 from .bootstrap import create_stock_catalog_service as build_stock_catalog_service
 from .bootstrap import create_ui_feedback_service as build_ui_feedback_service
+from .bootstrap import create_live_case_service as build_live_case_service
 from .config import ConfigurationError, Settings
 from .core.contracts import (
     AnalysisRequest,
@@ -37,6 +38,12 @@ from .core.contracts import (
 )
 from .core.errors import DataProviderError
 from .feedback import UiFeedbackAuthenticationError, UiFeedbackService
+from .e2e_cases import (
+    LiveCaseChangeRequest,
+    LiveCaseChangeSubmission,
+    LiveCaseListResponse,
+    LiveCaseService,
+)
 from .observability import log_event
 from .tasks import AnalysisTaskCoordinator
 
@@ -55,6 +62,7 @@ STOCKS_API_ROUTE = "/api/stocks"
 UI_FEEDBACK_API_ROUTE = "/api/ui-feedback"
 UI_FEEDBACK_CONFIG_API_ROUTE = "/api/ui-feedback/config"
 UI_FEEDBACK_CHAT_API_ROUTE = "/api/ui-feedback/chat"
+LIVE_CASES_API_ROUTE = "/api/e2e-cases"
 ANALYSIS_PAGE_ROUTE = "/analysis"
 BASIC_PAGE_ROUTE = "/basic"
 MONITORED_API_ROUTES = {
@@ -65,6 +73,7 @@ MONITORED_API_ROUTES = {
     UI_FEEDBACK_API_ROUTE,
     UI_FEEDBACK_CONFIG_API_ROUTE,
     UI_FEEDBACK_CHAT_API_ROUTE,
+    LIVE_CASES_API_ROUTE,
 }
 MILLISECONDS_PER_SECOND = 1_000
 DEFAULT_STOCK_PAGE_SIZE = 20
@@ -73,6 +82,16 @@ MAX_STOCK_FILTER_LENGTH = 100
 
 
 logger = logging.getLogger(__name__)
+
+
+def _administrator_bearer_token(authorization: str) -> str:
+    """Extract a required administrator bearer token from one API request."""
+    if not authorization.startswith("Bearer ") or not authorization[7:].strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Administrator authentication is required.",
+        )
+    return authorization[7:].strip()
 
 
 def create_analysis_service() -> AnalysisService:
@@ -92,6 +111,7 @@ def create_app(
     stock_catalog_service: Optional[StockCatalogService] = None,
     task_coordinator: Optional[AnalysisTaskCoordinator] = None,
     ui_feedback_service: Optional[UiFeedbackService] = None,
+    live_case_service: Optional[LiveCaseService] = None,
 ) -> FastAPI:
     """Create the local HTTP application."""
     application = FastAPI(
@@ -115,6 +135,7 @@ def create_app(
             if (
                 api_route in MONITORED_API_ROUTES
                 or api_route.startswith(f"{ANALYSIS_TASK_API_ROUTE}/")
+                or api_route.startswith(f"{LIVE_CASES_API_ROUTE}/")
             ):
                 response_size = 0
                 try:
@@ -163,6 +184,7 @@ def create_app(
     active_stock_catalog_service = stock_catalog_service
     active_task_coordinator = task_coordinator
     active_ui_feedback_service = ui_feedback_service
+    active_live_case_service = live_case_service
 
     def get_ui_feedback_service() -> UiFeedbackService:
         """Build the optional administrator workflow only when it is requested."""
@@ -170,6 +192,87 @@ def create_app(
         if active_ui_feedback_service is None:
             active_ui_feedback_service = build_ui_feedback_service(Settings.from_env())
         return active_ui_feedback_service
+
+    def get_live_case_service() -> LiveCaseService:
+        """Build live-case dependencies only when the administrator opens the tab."""
+        nonlocal active_live_case_service
+        if active_live_case_service is None:
+            active_live_case_service = build_live_case_service(Settings.from_env())
+        return active_live_case_service
+
+    @application.get(LIVE_CASES_API_ROUTE, response_model=LiveCaseListResponse)
+    def list_live_cases(
+        authorization: str = Header(default=""),
+    ) -> LiveCaseListResponse:
+        """Return the canonical catalog with refresh-safe pending overlays."""
+        token = _administrator_bearer_token(authorization)
+        try:
+            return get_live_case_service().list_cases(token)
+        except UiFeedbackAuthenticationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(exc),
+            ) from exc
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "live_case_list_failed",
+                api_route=LIVE_CASES_API_ROUTE,
+                source="system",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The live-case catalog is temporarily unavailable.",
+            ) from exc
+
+    @application.post(
+        f"{LIVE_CASES_API_ROUTE}/changes",
+        response_model=LiveCaseChangeSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_live_case_change(
+        request: LiveCaseChangeRequest,
+        authorization: str = Header(default=""),
+    ) -> LiveCaseChangeSubmission:
+        """Persist and dispatch one administrator-authored Git mutation."""
+        token = _administrator_bearer_token(authorization)
+        try:
+            return get_live_case_service().submit(token, request)
+        except UiFeedbackAuthenticationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "live_case_change_failed",
+                api_route=LIVE_CASES_API_ROUTE,
+                source="system",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The live-case change could not be dispatched.",
+            ) from exc
 
     @application.get(
         UI_FEEDBACK_CONFIG_API_ROUTE,

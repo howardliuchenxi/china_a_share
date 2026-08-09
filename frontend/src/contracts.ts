@@ -593,3 +593,60 @@ export interface UiFeedbackSubmission {
   /** Repository Actions page where the administrator can inspect execution. */
   actions_url: string;
 }
+
+export type LiveCaseFeasibility = "supported" | "unsupported";
+export type LiveCaseTier = "supported" | "approximation" | "unsupported";
+
+export interface LiveCase {
+  /** Stable identifier used by Git, pending changes, and report rows. */
+  id: string;
+  /** Short operator-facing name for the regression scenario. */
+  name: string;
+  /** Regression family used for grouped maintenance and reporting. */
+  family: string;
+  /** Exact natural-language request sent to the public analysis workflow. */
+  prompt: string;
+  /** Planner feasibility required for this case to pass. */
+  expected_feasibility: LiveCaseFeasibility;
+  /** Reviewed support tier represented by the case. */
+  tier: LiveCaseTier;
+  /** Allowed provider operations asserted by matrix cases. */
+  operations: string[];
+  /** Stable semantic invariants asserted by matrix cases. */
+  quality_invariants: string[];
+  /** Whether the case belongs to the matrix or a reported regression. */
+  source: "matrix" | "reported_regression";
+  /** Publication state after applying durable pending changes. */
+  publication_status: "published" | "pending" | "failed";
+  /** Durable pending mutation identifier when publication is incomplete. */
+  change_id: string | null;
+}
+
+export interface LiveCaseListResponse {
+  /** Exact deployed Git revision backing the published catalog. */
+  git_sha: string;
+  /** Published cases with durable pending create and update overlays. */
+  cases: LiveCase[];
+  /** Published case identifiers with a pending delete mutation. */
+  pending_deletions: string[];
+}
+
+export interface LiveCaseChangeRequest {
+  /** Deterministic mutation applied by GitHub Actions. */
+  operation: "create" | "update" | "delete";
+  /** Complete desired case for create and update operations. */
+  case?: Omit<LiveCase, "publication_status" | "change_id">;
+  /** Stable target identifier for a delete operation. */
+  case_id?: string;
+  /** Deployed revision used for optimistic concurrency control. */
+  base_git_sha: string;
+}
+
+export interface LiveCaseChangeSubmission {
+  /** Durable identifier assigned to the pending mutation. */
+  change_id: string;
+  /** Initial lifecycle state before Git publication. */
+  status: "pending";
+  /** GitHub Actions page used to inspect validation and publication. */
+  actions_url: string;
+}

@@ -1,0 +1,1388 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "market_breadth-01",
+      "name": "market_breadth 1",
+      "family": "market_breadth",
+      "prompt": "今天A股上涨、下跌和平盘各有多少只？",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "market_breadth-02",
+      "name": "market_breadth 2",
+      "family": "market_breadth",
+      "prompt": "统计最近交易日大A涨跌家数",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "market_breadth-03",
+      "name": "market_breadth 3",
+      "family": "market_breadth",
+      "prompt": "昨天全市场红盘和绿盘股票数量",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_list-01",
+      "name": "limit_up_list 1",
+      "family": "limit_up_list",
+      "prompt": "昨天涨停的股票有哪些？",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_list-02",
+      "name": "limit_up_list 2",
+      "family": "limit_up_list",
+      "prompt": "列出最近交易日所有涨停股",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_list-03",
+      "name": "limit_up_list 3",
+      "family": "limit_up_list",
+      "prompt": "大A今天涨停了多少只，分别是谁？",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_trend-01",
+      "name": "limit_up_trend 1",
+      "family": "limit_up_trend",
+      "prompt": "过去一个月每天的涨停数量",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_trend-02",
+      "name": "limit_up_trend 2",
+      "family": "limit_up_trend",
+      "prompt": "今年哪一天涨停股最多？",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_trend-03",
+      "name": "limit_up_trend 3",
+      "family": "limit_up_trend",
+      "prompt": "近三十个交易日涨停趋势",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "two_limit_up_probability-01",
+      "name": "two_limit_up_probability 1",
+      "family": "two_limit_up_probability",
+      "prompt": "连续两天涨停后第三天上涨的概率",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [
+        "native_limit_up_source",
+        "consecutive_session_count",
+        "valid_sample_count"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "two_limit_up_probability-02",
+      "name": "two_limit_up_probability 2",
+      "family": "two_limit_up_probability",
+      "prompt": "过去一个月二连板第三日收涨比例",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [
+        "native_limit_up_source",
+        "consecutive_session_count",
+        "valid_sample_count"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "two_limit_up_probability-03",
+      "name": "two_limit_up_probability 3",
+      "family": "two_limit_up_probability",
+      "prompt": "两个交易日连板后下一天还涨的频率",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [
+        "native_limit_up_source",
+        "consecutive_session_count",
+        "valid_sample_count"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_forward_horizon-01",
+      "name": "limit_up_forward_horizon 1",
+      "family": "limit_up_forward_horizon",
+      "prompt": "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [
+        "native_limit_up_source",
+        "consecutive_session_count",
+        "future_horizon",
+        "valid_sample_count"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_forward_horizon-02",
+      "name": "limit_up_forward_horizon 2",
+      "family": "limit_up_forward_horizon",
+      "prompt": "统计20250101至20251231三连板事件未来三个月的收益表现",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [
+        "native_limit_up_source",
+        "consecutive_session_count",
+        "future_horizon",
+        "valid_sample_count"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "limit_up_forward_horizon-03",
+      "name": "limit_up_forward_horizon 3",
+      "family": "limit_up_forward_horizon",
+      "prompt": "分析过去一年连续四个交易日涨停后未来两周的上涨概率和收益分布",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "daily"
+      ],
+      "quality_invariants": [
+        "native_limit_up_source",
+        "consecutive_session_count",
+        "future_horizon",
+        "valid_sample_count"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "market_period_return-01",
+      "name": "market_period_return 1",
+      "family": "market_period_return",
+      "prompt": "A股6月涨幅最大的公司是",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [
+        "period_return_direction",
+        "sort_before_limit"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "market_period_return-02",
+      "name": "market_period_return 2",
+      "family": "market_period_return",
+      "prompt": "大A在6月上涨最多的股票前十",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [
+        "period_return_direction",
+        "sort_before_limit"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "market_period_return-03",
+      "name": "market_period_return 3",
+      "family": "market_period_return",
+      "prompt": "2026年A股跌幅最大的前10只",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [
+        "period_return_direction",
+        "sort_before_limit"
+      ],
+      "source": "matrix"
+    },
+    {
+      "id": "valuation_period_return-01",
+      "name": "valuation_period_return 1",
+      "family": "valuation_period_return",
+      "prompt": "市盈率p90线上的选10家公司，看看最近半年的涨跌幅",
+      "expected_feasibility": "supported",
+      "tier": "approximation",
+      "operations": [
+        "daily_basic",
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "valuation_period_return-02",
+      "name": "valuation_period_return 2",
+      "family": "valuation_period_return",
+      "prompt": "高PE的前20只股票最近一个月涨了多少",
+      "expected_feasibility": "supported",
+      "tier": "approximation",
+      "operations": [
+        "daily_basic",
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "valuation_period_return-03",
+      "name": "valuation_period_return 3",
+      "family": "valuation_period_return",
+      "prompt": "市净率最低的50家公司今年以来的收益率",
+      "expected_feasibility": "supported",
+      "tier": "approximation",
+      "operations": [
+        "daily_basic",
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "valuation_screen-01",
+      "name": "valuation_screen 1",
+      "family": "valuation_screen",
+      "prompt": "筛选市盈率低于10的A股",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "valuation_screen-02",
+      "name": "valuation_screen 2",
+      "family": "valuation_screen",
+      "prompt": "找低PE、低PB、高股息率的十只股票",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "valuation_screen-03",
+      "name": "valuation_screen 3",
+      "family": "valuation_screen",
+      "prompt": "最近交易日股息率最高的前10只",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "liquidity_ranking-01",
+      "name": "liquidity_ranking 1",
+      "family": "liquidity_ranking",
+      "prompt": "今天成交额排名前20的A股",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "liquidity_ranking-02",
+      "name": "liquidity_ranking 2",
+      "family": "liquidity_ranking",
+      "prompt": "最近交易日换手率最高的20只股票",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "liquidity_ranking-03",
+      "name": "liquidity_ranking 3",
+      "family": "liquidity_ranking",
+      "prompt": "列出今日成交量和换手最活跃的股票",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "block_trade-01",
+      "name": "block_trade 1",
+      "family": "block_trade",
+      "prompt": "本月大宗交易成交金额最多的20只股票",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "block_trade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "block_trade-02",
+      "name": "block_trade 2",
+      "family": "block_trade",
+      "prompt": "查询昨天所有大宗交易",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "block_trade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "block_trade-03",
+      "name": "block_trade 3",
+      "family": "block_trade",
+      "prompt": "平安银行过去三个月的大宗交易",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "block_trade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_count-01",
+      "name": "holder_count 1",
+      "family": "holder_count",
+      "prompt": "贵州茅台最新股东户数",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdernumber"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_count-02",
+      "name": "holder_count 2",
+      "family": "holder_count",
+      "prompt": "平安银行过去两年股东人数变化",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdernumber"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_count-03",
+      "name": "holder_count 3",
+      "family": "holder_count",
+      "prompt": "查看600519.SH各报告期股东户数",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdernumber"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_moneyflow-01",
+      "name": "security_moneyflow 1",
+      "family": "security_moneyflow",
+      "prompt": "查询平安银行昨天主力资金净流入",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "moneyflow"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_moneyflow-02",
+      "name": "security_moneyflow 2",
+      "family": "security_moneyflow",
+      "prompt": "最近交易日A股大单买入金额排名",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "moneyflow"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_moneyflow-03",
+      "name": "security_moneyflow 3",
+      "family": "security_moneyflow",
+      "prompt": "贵州茅台近一月大单小单资金流向",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "moneyflow"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "margin_financing-01",
+      "name": "margin_financing 1",
+      "family": "margin_financing",
+      "prompt": "今日融资余额最高的股票",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "margin_detail",
+        "margin_secs"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "margin_financing-02",
+      "name": "margin_financing 2",
+      "family": "margin_financing",
+      "prompt": "查看中国平安最近一月融资融券变化",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "margin_detail",
+        "margin_secs"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "margin_financing-03",
+      "name": "margin_financing 3",
+      "family": "margin_financing",
+      "prompt": "最新上交所融资融券标的列表",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "margin_detail",
+        "margin_secs"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "financial_statements-01",
+      "name": "financial_statements 1",
+      "family": "financial_statements",
+      "prompt": "贵州茅台2025年营业收入和净利润",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "income",
+        "balancesheet",
+        "cashflow",
+        "fina_indicator",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "financial_statements-02",
+      "name": "financial_statements 2",
+      "family": "financial_statements",
+      "prompt": "平安银行最新资产负债表",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "income",
+        "balancesheet",
+        "cashflow",
+        "fina_indicator",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "financial_statements-03",
+      "name": "financial_statements 3",
+      "family": "financial_statements",
+      "prompt": "比较中国平安近三年ROE和经营现金流",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "income",
+        "balancesheet",
+        "cashflow",
+        "fina_indicator",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "dividend-01",
+      "name": "dividend 1",
+      "family": "dividend",
+      "prompt": "贵州茅台最新分红方案",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "dividend"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "dividend-02",
+      "name": "dividend 2",
+      "family": "dividend",
+      "prompt": "600519.SH 2025年现金分红方案",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "dividend"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "dividend-03",
+      "name": "dividend 3",
+      "family": "dividend",
+      "prompt": "平安银行历年每股派息",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "dividend"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "verified_retail_ownership-01",
+      "name": "verified_retail_ownership 1",
+      "family": "verified_retail_ownership",
+      "prompt": "精确统计A股真实个人投资者持股比例，不接受代理指标",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "future_price_prediction-01",
+      "name": "future_price_prediction 1",
+      "family": "future_price_prediction",
+      "prompt": "预测明天一定涨停的股票",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "future_price_prediction-02",
+      "name": "future_price_prediction 2",
+      "family": "future_price_prediction",
+      "prompt": "给出下周收益率最高的公司",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "investor_demographics-01",
+      "name": "investor_demographics 1",
+      "family": "investor_demographics",
+      "prompt": "查询某股票持有者的平均年龄",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "market_wide_dividend_total-01",
+      "name": "market_wide_dividend_total 1",
+      "family": "market_wide_dividend_total",
+      "prompt": "2025年现金分红总额最高的A股，不接受每股分红替代",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "historical_market_snapshot-01",
+      "name": "historical_market_snapshot 1",
+      "family": "historical_market_snapshot",
+      "prompt": "Rank the 15 largest A-share gainers on 2026-06-18.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "historical_market_snapshot-02",
+      "name": "historical_market_snapshot 2",
+      "family": "historical_market_snapshot",
+      "prompt": "List the ten largest A-share decliners on 2026-05-29.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "historical_market_snapshot-03",
+      "name": "historical_market_snapshot 3",
+      "family": "historical_market_snapshot",
+      "prompt": "How many A-shares closed unchanged on 2026-04-30?",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "historical_market_snapshot-04",
+      "name": "historical_market_snapshot 4",
+      "family": "historical_market_snapshot",
+      "prompt": "Which A-share had the highest trading amount on 2026-03-16?",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "historical_market_snapshot-05",
+      "name": "historical_market_snapshot 5",
+      "family": "historical_market_snapshot",
+      "prompt": "Show the bottom 20 A-shares by percentage change on 2026-02-27.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_price_window-01",
+      "name": "security_price_window 1",
+      "family": "security_price_window",
+      "prompt": "Show 600519.SH daily closes from 2026-01-05 through 2026-01-30.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_price_window-02",
+      "name": "security_price_window 2",
+      "family": "security_price_window",
+      "prompt": "Ping An Bank weekly prices for the first half of 2026.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_price_window-03",
+      "name": "security_price_window 3",
+      "family": "security_price_window",
+      "prompt": "China Ping An monthly price history during 2025.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_price_window-04",
+      "name": "security_price_window 4",
+      "family": "security_price_window",
+      "prompt": "Compare Kweichow Moutai's highest and lowest close in June 2026.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "security_price_window-05",
+      "name": "security_price_window 5",
+      "family": "security_price_window",
+      "prompt": "查看000001.SZ近20个交易日的收盘价走势",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "composite_valuation-01",
+      "name": "composite_valuation 1",
+      "family": "composite_valuation",
+      "prompt": "Find A-shares with PE below 15 and PB below 2 on the latest trading day.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "composite_valuation-02",
+      "name": "composite_valuation 2",
+      "family": "composite_valuation",
+      "prompt": "Top 20 A-shares by dividend yield, excluding missing or zero yields.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "composite_valuation-03",
+      "name": "composite_valuation 3",
+      "family": "composite_valuation",
+      "prompt": "筛选PE为正且小于20、换手率大于3%的A股",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "composite_valuation-04",
+      "name": "composite_valuation 4",
+      "family": "composite_valuation",
+      "prompt": "找出总市值超过1000亿且PB最低的前10只",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "composite_valuation-05",
+      "name": "composite_valuation 5",
+      "family": "composite_valuation",
+      "prompt": "Rank the latest 30 stocks by lowest positive PE TTM, not static PE.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "suspension_history-01",
+      "name": "suspension_history 1",
+      "family": "suspension_history",
+      "prompt": "List all A-shares suspended on 2026-06-12.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "suspend_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "suspension_history-02",
+      "name": "suspension_history 2",
+      "family": "suspension_history",
+      "prompt": "Which stocks resumed trading on 2026-05-08?",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "suspend_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "suspension_history-03",
+      "name": "suspension_history 3",
+      "family": "suspension_history",
+      "prompt": "Show 600519.SH suspension and resumption records since 2020.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "suspend_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "suspension_history-04",
+      "name": "suspension_history 4",
+      "family": "suspension_history",
+      "prompt": "过去一个月停牌天数最多的股票",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "suspend_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "suspension_history-05",
+      "name": "suspension_history 5",
+      "family": "suspension_history",
+      "prompt": "查询2026年4月所有停复牌记录",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "suspend_d"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "share_unlock_boundaries-01",
+      "name": "share_unlock_boundaries 1",
+      "family": "share_unlock_boundaries",
+      "prompt": "A-share unlocks scheduled between 2026-09-01 and 2026-09-30.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "share_float"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "share_unlock_boundaries-02",
+      "name": "share_unlock_boundaries 2",
+      "family": "share_unlock_boundaries",
+      "prompt": "Top 20 September 2026 unlocks by unlocked share count.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "share_float"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "share_unlock_boundaries-03",
+      "name": "share_unlock_boundaries 3",
+      "family": "share_unlock_boundaries",
+      "prompt": "列出解禁股数占总股本比例最高的10只股票",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "share_float"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "share_unlock_boundaries-04",
+      "name": "share_unlock_boundaries 4",
+      "family": "share_unlock_boundaries",
+      "prompt": "查看600519.SH下一次限售股上市日期和数量",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "share_float"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "share_unlock_boundaries-05",
+      "name": "share_unlock_boundaries 5",
+      "family": "share_unlock_boundaries",
+      "prompt": "How many distinct companies have unlocks in Q4 2026?",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "share_float"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "repurchase_detail-01",
+      "name": "repurchase_detail 1",
+      "family": "repurchase_detail",
+      "prompt": "Latest repurchase progress for 600519.SH.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "repurchase"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "repurchase_detail-02",
+      "name": "repurchase_detail 2",
+      "family": "repurchase_detail",
+      "prompt": "Rank 2026 A-share repurchase plans by announced upper amount.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "repurchase"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "repurchase_detail-03",
+      "name": "repurchase_detail 3",
+      "family": "repurchase_detail",
+      "prompt": "过去90天已完成回购的公司有哪些",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "repurchase"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "repurchase_detail-04",
+      "name": "repurchase_detail 4",
+      "family": "repurchase_detail",
+      "prompt": "查看平安银行回购起止日期、价格上限和已回购数量",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "repurchase"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "repurchase_detail-05",
+      "name": "repurchase_detail 5",
+      "family": "repurchase_detail",
+      "prompt": "Count distinct A-shares that announced repurchases in June 2026.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "repurchase"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_transactions-01",
+      "name": "holder_transactions 1",
+      "family": "holder_transactions",
+      "prompt": "Major shareholder purchases of 600519.SH since 2025.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdertrade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_transactions-02",
+      "name": "holder_transactions 2",
+      "family": "holder_transactions",
+      "prompt": "Largest disclosed shareholder reduction amount in June 2026.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdertrade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_transactions-03",
+      "name": "holder_transactions 3",
+      "family": "holder_transactions",
+      "prompt": "近一个月高管增持的A股列表",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdertrade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_transactions-04",
+      "name": "holder_transactions 4",
+      "family": "holder_transactions",
+      "prompt": "统计2026年股东增持和减持次数",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdertrade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "holder_transactions-05",
+      "name": "holder_transactions 5",
+      "family": "holder_transactions",
+      "prompt": "Show China Ping An shareholder trades with holder names and change ratios.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "stk_holdertrade"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "earnings_guidance-01",
+      "name": "earnings_guidance 1",
+      "family": "earnings_guidance",
+      "prompt": "Kweichow Moutai's latest earnings forecast range.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "forecast",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "earnings_guidance-02",
+      "name": "earnings_guidance 2",
+      "family": "earnings_guidance",
+      "prompt": "A-shares forecasting the largest profit increase for 2026 H1.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "forecast",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "earnings_guidance-03",
+      "name": "earnings_guidance 3",
+      "family": "earnings_guidance",
+      "prompt": "查看平安银行2025年业绩快报",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "forecast",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "earnings_guidance-04",
+      "name": "earnings_guidance 4",
+      "family": "earnings_guidance",
+      "prompt": "统计2026年上半年预亏公司数量",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "forecast",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "earnings_guidance-05",
+      "name": "earnings_guidance 5",
+      "family": "earnings_guidance",
+      "prompt": "Compare forecast lower and upper net-profit bounds for 600519.SH.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "forecast",
+        "express"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "business_segments-01",
+      "name": "business_segments 1",
+      "family": "business_segments",
+      "prompt": "Kweichow Moutai 2025 revenue by product segment.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "fina_mainbz"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "business_segments-02",
+      "name": "business_segments 2",
+      "family": "business_segments",
+      "prompt": "China Ping An's latest revenue split by business line.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "fina_mainbz"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "business_segments-03",
+      "name": "business_segments 3",
+      "family": "business_segments",
+      "prompt": "查看600519.SH近三年主营业务毛利率变化",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "fina_mainbz"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "business_segments-04",
+      "name": "business_segments 4",
+      "family": "business_segments",
+      "prompt": "哪个产品占贵州茅台营业收入比例最高",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "fina_mainbz"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "business_segments-05",
+      "name": "business_segments 5",
+      "family": "business_segments",
+      "prompt": "List Ping An Bank's domestic and overseas segment revenue for 2025.",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "fina_mainbz"
+      ],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "unverifiable_microstructure-01",
+      "name": "unverifiable_microstructure 1",
+      "family": "unverifiable_microstructure",
+      "prompt": "Give every canceled order for 600519.SH at 10:31:07 yesterday.",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "unverifiable_microstructure-02",
+      "name": "unverifiable_microstructure 2",
+      "family": "unverifiable_microstructure",
+      "prompt": "Identify the real beneficial owner behind every anonymous trade.",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "unverifiable_microstructure-03",
+      "name": "unverifiable_microstructure 3",
+      "family": "unverifiable_microstructure",
+      "prompt": "精确列出所有A股账户的实时持仓和身份证号",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "unverifiable_microstructure-04",
+      "name": "unverifiable_microstructure 4",
+      "family": "unverifiable_microstructure",
+      "prompt": "Guarantee which order in tomorrow's opening auction will execute first.",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "unverifiable_microstructure-05",
+      "name": "unverifiable_microstructure 5",
+      "family": "unverifiable_microstructure",
+      "prompt": "还原某股票过去一年每笔委托的完整订单簿",
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "matrix"
+    },
+    {
+      "id": "battery-valuation-and-dividend-contract-repair",
+      "name": "battery_valuation_and_dividend_contract_repair",
+      "family": "reported_regression",
+      "prompt": "A股2026年电池行业，市盈率和分红数据",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "reported_regression"
+    },
+    {
+      "id": "automotive-valuation-and-dividend-contract-repair",
+      "name": "automotive_valuation_and_dividend_contract_repair",
+      "family": "reported_regression",
+      "prompt": "A股2026年汽车行业，市盈率和分红数据",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "reported_regression"
+    }
+  ]
+}

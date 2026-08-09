@@ -36,6 +36,8 @@ declare global {
 
 const GOOGLE_IDENTITY_SCRIPT = "https://accounts.google.com/gsi/client";
 const MAX_CONTEXT_LENGTH = 2_000;
+export const ADMIN_ID_TOKEN_STORAGE_KEY = "china-a-share.admin-id-token";
+export const ADMIN_AUTHENTICATED_EVENT = "china-a-share-admin-authenticated";
 
 function boundedText(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, MAX_CONTEXT_LENGTH);
@@ -101,7 +103,11 @@ export function UiFeedbackController() {
       if (!window.google || !loginButtonRef.current) return;
       window.google.accounts.id.initialize({
         client_id: config.google_client_id,
-        callback: (response) => setIdToken(response.credential),
+        callback: (response) => {
+          setIdToken(response.credential);
+          window.sessionStorage.setItem(ADMIN_ID_TOKEN_STORAGE_KEY, response.credential);
+          window.dispatchEvent(new Event(ADMIN_AUTHENTICATED_EVENT));
+        },
       });
       window.google.accounts.id.renderButton(loginButtonRef.current, {
         theme: "outline",

@@ -23,6 +23,10 @@ from china_a_share.core.contracts import (
     DiscoveryTask,
     DiscoveryTaskProgress,
 )
+from china_a_share.e2e_cases import (
+    LiveCaseChangeSubmission,
+    LiveCaseListResponse,
+)
 ORIGINAL_COMPLEX_PROMPT = (
     "\u8fc7\u53bb\u4e00\u4e2a\u6708\uff0c\u533b\u7597\u884c\u4e1a\uff0c"
     "\u6309\u7167\u6563\u6237\u6bd4\u4f8b\u5206\u4e24\u534a\uff0c"
@@ -130,6 +134,31 @@ class FakeUiFeedbackService:
         )
 
 
+class FakeLiveCaseService:
+    """Capture authenticated live-case API calls without external services."""
+
+    def __init__(self):
+        self.calls = []
+
+    def list_cases(self, token):
+        """Return one empty deployed catalog."""
+        self.calls.append(("list", token))
+        return LiveCaseListResponse(
+            git_sha="a" * 40,
+            cases=[],
+            pending_deletions=[],
+        )
+
+    def submit(self, token, request):
+        """Return one accepted deterministic mutation."""
+        self.calls.append(("submit", token, request))
+        return LiveCaseChangeSubmission(
+            change_id="change-1",
+            status="pending",
+            actions_url="https://github.com/example/repository/actions",
+        )
+
+
 def stock_response():
     return StockListResponse(
         request_id="placeholder",
@@ -190,6 +219,54 @@ def test_capabilities_endpoint_exposes_the_runtime_manifest():
 
     assert response.status_code == 200
     assert response.json() == service.capability_manifest
+
+
+def test_live_case_list_requires_admin_and_returns_merged_catalog():
+    live_case_service = FakeLiveCaseService()
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            live_case_service=live_case_service,
+        )
+    )
+
+    unauthorized = client.get("/api/e2e-cases")
+    response = client.get(
+        "/api/e2e-cases",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert unauthorized.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["git_sha"] == "a" * 40
+    assert live_case_service.calls == [("list", "admin-token")]
+
+
+def test_live_case_change_dispatches_structured_mutation():
+    live_case_service = FakeLiveCaseService()
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            live_case_service=live_case_service,
+        )
+    )
+
+    response = client.post(
+        "/api/e2e-cases/changes",
+        headers={"Authorization": "Bearer admin-token"},
+        json={
+            "operation": "delete",
+            "case_id": "case-1",
+            "base_git_sha": "a" * 40,
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["change_id"] == "change-1"
+    _, token, request = live_case_service.calls[0]
+    assert token == "admin-token"
+    assert request.operation == "delete"
+    assert request.case_id == "case-1"
 
 
 def test_discovery_endpoints_validate_submit_and_return_progress():

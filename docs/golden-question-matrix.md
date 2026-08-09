@@ -11,9 +11,11 @@ variants and declares:
 - synchronous or asynchronous delivery;
 - the provider operations required by the intended analysis.
 
-The executable corpus lives in `tests/golden_questions.py`. CI validates its
-breadth, uniqueness, catalog references, unsupported boundaries, and enforced
-asynchronous routes.
+The paid live corpus and reported regressions live in the version-controlled
+`live_cases.json` catalog. Both the administrator page and `make live-check`
+load that canonical file. The broader deterministic planning corpus remains in
+`tests/golden_questions.py`; CI validates its breadth, uniqueness, catalog
+references, unsupported boundaries, and enforced asynchronous routes.
 
 ## Coverage
 
@@ -58,4 +60,3 @@ A production incident must add a regression assertion to the existing family
 when possible. A new family is justified only when the user intent, provider
 grain, support tier, or delivery mode is materially different. This prevents
 the corpus from becoming a list of one-off phrases.
-

@@ -293,6 +293,30 @@ select {
   color: #16734a;
 }
 
+.status-published,
+.status-pending,
+.status-failed {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.status-published {
+  color: #16734a;
+  background: #e7f4ec;
+}
+
+.status-pending {
+  color: #805b00;
+  background: #fff3cf;
+}
+
+.status-failed {
+  color: #a12820;
+  background: #fbe8e6;
+}
+
 .e2e-message,
 .e2e-summary {
   padding: 0.75rem;
