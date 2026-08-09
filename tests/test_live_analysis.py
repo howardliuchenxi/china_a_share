@@ -68,6 +68,13 @@ LIVE_ANALYSIS_CASES = [
     for family_name, count in LIVE_UNSUPPORTED_CASE_COUNTS.items()
     for prompt in GOLDEN_FAMILY_BY_NAME[family_name]["prompts"][:count]
 ]
+LIVE_REGRESSION_CASES = [
+    {
+        "name": "battery_valuation_and_dividend_contract_repair",
+        "prompt": "A股2026年电池行业，市盈率和分红数据",
+        "expected_feasibility": "unsupported",
+    }
+]
 
 
 @pytest.fixture(scope="module")
@@ -167,6 +174,14 @@ def test_live_analysis_matrix_contains_exactly_50_questions() -> None:
     assert len(set(LIVE_ANALYSIS_CASES)) == 50
 
 
+def test_live_regression_matrix_contains_unique_prompts() -> None:
+    """Keep production-reported prompts as distinct end-to-end regressions."""
+    prompts = [case["prompt"] for case in LIVE_REGRESSION_CASES]
+
+    assert prompts
+    assert len(set(prompts)) == len(prompts)
+
+
 @pytest.mark.parametrize(
     ("family_name", "prompt"),
     LIVE_ANALYSIS_CASES,
@@ -228,3 +243,38 @@ def test_live_analysis_question(
         prompt,
         set(family.get("quality_invariants", [])),
     )
+
+
+@pytest.mark.parametrize(
+    "case",
+    LIVE_REGRESSION_CASES,
+    ids=[case["name"] for case in LIVE_REGRESSION_CASES],
+)
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
+def test_live_reported_prompt_regression(live_analysis_service, case) -> None:
+    """Run one production-reported prompt through the complete public workflow."""
+    response = live_analysis_service.analyze(
+        request_id=f"regression-{case['name']}-{uuid4()}",
+        request=AnalysisRequest(prompt=case["prompt"]),
+        api_route="/local-live-regression",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert response.error is None, _failure_message(response)
+    assert response.plan is not None
+    assert response.plan.feasibility == case["expected_feasibility"]
+    assert response.plan.requirements
+    assert all(
+        requirement.status in {"covered", "unsupported"}
+        for requirement in response.plan.requirements
+    )
+    assert response.plan.queries == []
+    assert response.results == []
+    assert response.plan.clarification_options

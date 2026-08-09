@@ -29,8 +29,8 @@ DEEPSEEK_PLANNER_NAME = "deepseek"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEEPSEEK_TIMEOUT_SECONDS = 180
-DEEPSEEK_MAX_OUTPUT_TOKENS = 6_000
-DEEPSEEK_MAX_ATTEMPTS = 3
+DEEPSEEK_MAX_OUTPUT_TOKENS = 12_000
+DEEPSEEK_MAX_ATTEMPTS = 5
 DEEPSEEK_RETRY_DELAY_SECONDS = 1
 RETAIL_PROXY_DISCLOSURE = (
     "This result uses non_top10_float_ratio as a holding-dispersion proxy. "
@@ -50,7 +50,9 @@ def build_query_plan_system_prompt(
     return (
         "You plan read-only market-data queries for mainland China A-shares. "
         "Return one valid JSON object matching the supplied schema and use only "
-        "operations from the active provider catalog. Resolve relative or partial "
+        "operations from the active provider catalog. Keep interpretation, purpose, "
+        "evidence, and limitation text concise and do not repeat schema instructions "
+        "inside those fields. Resolve relative or partial "
         "dates using the current date "
         f"{datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()} and "
         "Asia/Shanghai semantics. Use the latest completed trading day for end-of-day "
@@ -210,7 +212,15 @@ def build_query_plan_system_prompt(
         f"{build_capability_guidance()}\n\n"
         f"Operation catalog:\n{guidance}\n\n"
         f"Allowed operation names:\n{allowed_operations}\n\n"
-        f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}"
+        f"JSON schema:\n{json.dumps(QueryPlan.model_json_schema())}\n\n"
+        "Critical contract invariants to check immediately before responding:\n"
+        "- requirements[].status is exactly covered or unsupported.\n"
+        "- feasibility=supported requires every requirement status to be covered.\n"
+        "- feasibility=unsupported requires at least one unsupported requirement, "
+        "at least one concrete limitation, and no queries or execution_plan.\n"
+        "- A supported plan requires a complete answer_contract unless it contains "
+        "a valid high-level intent.\n"
+        "Return the complete JSON object only after checking all four invariants."
     )
 
 
@@ -361,7 +371,12 @@ class DeepSeekQueryPlanner:
                     "A supported model-generated plan must include answer_contract "
                     "with every user-requested final output field."
                 )
-                feedback = self._build_plan_feedback(plan, last_error)
+                feedback = self._build_plan_feedback(
+                    plan,
+                    last_error,
+                    decision="REVISE",
+                    phase="contract_validation",
+                )
             elif validator is not None:
                 try:
                     validated_plan = validator(plan)
@@ -428,15 +443,27 @@ class DeepSeekQueryPlanner:
         return json.dumps(feedback, ensure_ascii=False)
 
     @staticmethod
-    def _build_plan_feedback(plan: QueryPlan, error: Exception) -> str:
-        """Return machine-readable replanning context for a semantic rejection."""
-        feedback = {
-            "decision": "REPLAN",
-            "phase": "capability_validation",
-            "instruction": (
+    def _build_plan_feedback(
+        plan: QueryPlan,
+        error: Exception,
+        decision: str = "REPLAN",
+        phase: str = "capability_validation",
+    ) -> str:
+        """Return machine-readable correction context for a validated candidate."""
+        instruction = (
+            "Return a complete corrected query plan. Preserve the user intent and "
+            "the valid parts of the rejected plan, satisfy the full JSON schema, "
+            "and revalidate the whole plan."
+            if decision == "REVISE"
+            else (
                 "Return a complete replacement query plan using only documented "
                 "capabilities. Preserve the user intent and revalidate the whole plan."
-            ),
+            )
+        )
+        feedback = {
+            "decision": decision,
+            "phase": phase,
+            "instruction": instruction,
             "errors": [{"message": str(error)}],
             "rejected_plan": plan.model_dump(mode="json"),
         }

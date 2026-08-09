@@ -775,6 +775,8 @@ def test_planner_parses_deepseek_json_plan():
     assert "Security classification constraints" in system_prompt
     assert "filter that universe first" in system_prompt
     assert "before sorting or limiting" in system_prompt
+    assert "Critical contract invariants" in system_prompt
+    assert "requirements[].status is exactly covered or unsupported" in system_prompt
 
 
 def test_planner_retries_one_contract_invalid_response():
@@ -882,6 +884,69 @@ def test_planner_replans_semantic_rejection_with_complete_candidate():
     assert "Operation is outside the provider catalog." in feedback_message
 
 
+def test_planner_can_converge_across_contract_and_capability_rejections():
+    invalid_json = '{"market":"A_SHARE"'
+    invalid_status_plan = make_daily_plan().model_dump(mode="json")
+    invalid_status_plan["requirements"][0]["status"] = "supported"
+    semantic_plan = make_daily_plan()
+    semantic_plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [
+                {
+                    "field": "ts_code",
+                    "description": "A-share security code.",
+                }
+            ],
+        }
+    )
+    valid_plan = semantic_plan.model_copy(deep=True)
+    valid_plan.queries[0].purpose = "Use the corrected executable dependency."
+    session = SequenceFakeSession(
+        [
+            FakeResponse({"choices": [{"message": {"content": invalid_json}}]}),
+            FakeResponse(
+                {
+                    "choices": [
+                        {"message": {"content": json.dumps(invalid_status_plan)}}
+                    ]
+                }
+            ),
+            FakeResponse(
+                {
+                    "choices": [
+                        {"message": {"content": semantic_plan.model_dump_json()}}
+                    ]
+                }
+            ),
+            FakeResponse(
+                {"choices": [{"message": {"content": valid_plan.model_dump_json()}}]}
+            ),
+        ]
+    )
+    validation_attempts = 0
+
+    def reject_first_valid_candidate(plan):
+        nonlocal validation_attempts
+        validation_attempts += 1
+        if validation_attempts == 1:
+            raise PlanValidationError("Constraint references an unknown query.")
+        return plan
+
+    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+        AnalysisRequest(prompt="Run one multi-stage analysis."),
+        [DataOperation(name="daily", description="Daily prices.")],
+        reject_first_valid_candidate,
+    )
+
+    assert result.queries[0].purpose == "Use the corrected executable dependency."
+    assert len(session.calls) == 4
+    assert '"decision": "REPLAN"' in (
+        session.calls[3][1]["json"]["messages"][-1]["content"]
+    )
+
+
 def test_planner_final_retry_can_return_contextual_clarification_options():
     invalid_plan = make_daily_plan()
     clarification_plan = QueryPlan(
@@ -909,6 +974,12 @@ def test_planner_final_retry_can_return_contextual_clarification_options():
                 {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
             ),
             FakeResponse(
+                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
+            ),
+            FakeResponse(
+                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
+            ),
+            FakeResponse(
                 {
                     "choices": [
                         {"message": {"content": clarification_plan.model_dump_json()}}
@@ -926,7 +997,7 @@ def test_planner_final_retry_can_return_contextual_clarification_options():
 
     assert result.feasibility == "unsupported"
     assert len(result.clarification_options) == 2
-    final_feedback = session.calls[2][1]["json"]["messages"][-1]["content"]
+    final_feedback = session.calls[4][1]["json"]["messages"][-1]["content"]
     assert "two or three contextual clarification_options" in final_feedback
     assert "Do not expose the validator error as the answer" in final_feedback
 
@@ -1427,6 +1498,9 @@ def test_planner_retries_when_answer_contract_is_omitted(caplog):
         )
 
     assert result == valid_plan
+    feedback_message = session.calls[1][1]["json"]["messages"][-1]["content"]
+    assert '"decision": "REVISE"' in feedback_message
+    assert '"phase": "contract_validation"' in feedback_message
     retry_messages = session.calls[1][1]["json"]["messages"]
     assert "must include answer_contract" in retry_messages[-1]["content"]
     events = [
