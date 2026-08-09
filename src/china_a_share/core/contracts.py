@@ -1071,7 +1071,11 @@ class AnalysisIntent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    analysis_type: Literal["rank_metric", "event_outcome_probability"] = Field(
+    analysis_type: Literal[
+        "rank_metric",
+        "event_outcome_probability",
+        "field_analysis",
+    ] = Field(
         default="rank_metric",
         description="Categorized analysis intent type.",
     )
@@ -1122,6 +1126,40 @@ class AnalysisIntent(BaseModel):
         default=None,
         description="Aggregate statistic calculated over qualifying event outcomes.",
     )
+    operation: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Provider operation supplying a generic analyzable field.",
+    )
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Provider parameters bounding a generic field analysis.",
+    )
+    fields: List[str] = Field(
+        default_factory=list,
+        max_length=30,
+        description="Provider fields required by a generic field analysis.",
+    )
+    filters: List[DataFilter] = Field(
+        default_factory=list,
+        max_length=12,
+        description="Local predicates applied before generic aggregation or ranking.",
+    )
+    analysis_field: Optional[str] = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Provider field sorted by a generic field ranking.",
+    )
+    group_by: List[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Grouping keys applied before generic field aggregations.",
+    )
+    aggregations: List[ResultAggregation] = Field(
+        default_factory=list,
+        max_length=12,
+        description="Deterministic aggregations for a generic field analysis.",
+    )
 
     @model_validator(mode="after")
     def validate_intent_shape(self) -> "AnalysisIntent":
@@ -1138,11 +1176,66 @@ class AnalysisIntent(BaseModel):
                     self.observation_offset,
                     self.observation_unit,
                     self.aggregation,
+                    self.operation,
+                    self.analysis_field,
                 )
-            ) or self.outcomes:
+            ) or self.outcomes or any(
+                (self.params, self.fields, self.filters, self.group_by, self.aggregations)
+            ):
                 raise ValueError("rank_metric cannot declare event-study inputs")
             return self
-        if self.metric is not None or self.ranking is not None:
+        if self.analysis_type == "field_analysis":
+            if not self.operation or not self.fields:
+                raise ValueError("field_analysis requires operation and fields")
+            if self.ranking is not None and not self.analysis_field:
+                raise ValueError(
+                    "field_analysis ranking requires analysis_field"
+                )
+            aggregation_outputs = {
+                aggregation.output_field for aggregation in self.aggregations
+            }
+            required_fields = {
+                *self.group_by,
+                *(row_filter.field for row_filter in self.filters),
+                *(aggregation.field for aggregation in self.aggregations),
+            }.difference({None})
+            if self.analysis_field not in aggregation_outputs:
+                required_fields.add(self.analysis_field)
+            missing_fields = required_fields.difference(self.fields)
+            if missing_fields:
+                raise ValueError(
+                    "field_analysis fields omit required inputs: "
+                    + ", ".join(sorted(missing_fields))
+                )
+            if any(
+                value is not None
+                for value in (
+                    self.metric,
+                    self.event_window,
+                    self.event_type,
+                    self.consecutive_sessions,
+                    self.observation_offset,
+                    self.observation_unit,
+                    self.aggregation,
+                )
+            ) or self.outcomes:
+                raise ValueError(
+                    "field_analysis cannot declare metric or event-study inputs"
+                )
+            if self.ranking is None and not self.aggregations:
+                raise ValueError(
+                    "field_analysis requires ranking or aggregations"
+                )
+            return self
+        if (
+            self.metric is not None
+            or self.ranking is not None
+            or self.operation is not None
+            or self.analysis_field is not None
+            or any(
+                (self.params, self.fields, self.filters, self.group_by, self.aggregations)
+            )
+        ):
             raise ValueError(
                 "event_outcome_probability cannot declare metric-ranking inputs"
             )

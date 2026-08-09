@@ -1924,6 +1924,59 @@ def test_workflow_compiles_event_intent_without_model_authored_queries_or_fields
     ] == ["positive_event_ratio", "negative_event_ratio"]
 
 
+def test_workflow_compiles_generic_provider_field_ranking_intent():
+    intent = AnalysisIntent.model_validate(
+        {
+            "analysis_type": "field_analysis",
+            "operation": "forecast",
+            "params": {
+                "start_date": "20260101",
+                "end_date": "20260810",
+                "period": "20260630",
+            },
+            "fields": ["ts_code", "end_date", "p_change_max"],
+            "analysis_field": "p_change_max",
+            "group_by": ["ts_code"],
+            "aggregations": [
+                {
+                    "output_field": "max_p_change_max",
+                    "field": "p_change_max",
+                    "function": "max",
+                }
+            ],
+            "ranking": {"direction": "desc", "limit": 10},
+        }
+    )
+    plan = QueryPlan(
+        interpretation="Rank disclosed profit growth guidance.",
+        intent=intent,
+        requirements=[
+            {
+                "requirement": "Rank the largest disclosed profit increase.",
+                "status": "covered",
+                "evidence": "forecast provides p_change_max.",
+            }
+        ],
+    )
+
+    compiled = AnalysisService._compile_intent(plan)
+
+    assert compiled.queries[0].operation == "forecast"
+    assert compiled.queries[0].params["period"] == "20260630"
+    assert [step.operation for step in compiled.result_pipeline.steps] == [
+        "aggregate",
+        "drop_missing",
+        "sort",
+        "limit",
+    ]
+    assert compiled.result_pipeline.steps[2].field == "max_p_change_max"
+    assert compiled.answer_contract.result_query_id == "field_analysis_output"
+    assert {output.field for output in compiled.answer_contract.outputs} == {
+        "ts_code",
+        "max_p_change_max",
+    }
+
+
 def test_deepseek_raw_normalization_preserves_event_intent_null_legacy_fields():
     raw_plan = {
         "interpretation": "Measure post-event direction probabilities.",
@@ -3945,6 +3998,26 @@ def test_deepseek_binds_constraint_to_unique_query_identifier():
     DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
 
     assert raw_plan["constraints"][0]["query_id"] == "actual_query"
+
+
+def test_validator_accepts_year_constraint_as_complete_date_range():
+    query = DataQuery(
+        query_id="annual_disclosures",
+        operation="share_float",
+        params={"start_date": "20260101", "end_date": "20261231"},
+        fields=["ts_code", "float_date", "float_ratio"],
+        purpose="Read one calendar year of disclosures.",
+    )
+    constraint = QueryConstraint(
+        constraint_id="calendar_year",
+        scope="result",
+        field="float_year",
+        operator="eq",
+        value=2026,
+        query_id=query.query_id,
+    )
+
+    assert ASharePlanValidator._constraint_enforced_by_query(constraint, query)
 
 
 def test_deepseek_drops_non_numeric_query_aggregation_thresholds():

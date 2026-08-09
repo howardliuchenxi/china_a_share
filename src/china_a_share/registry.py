@@ -256,7 +256,9 @@ CORE_OPERATION_GUIDANCE = {
     "forecast": (
         "Disclosed management earnings guidance, not a model-generated price or "
         "profit prediction. Use this operation for companies forecasting profit "
-        "growth, loss, or other result types for a reporting period. Parameters "
+        "growth, loss, or other result types for a reporting period. Wording such as "
+        "companies or A-shares forecasting a result refers to this disclosed guidance; "
+        "it is not a request for the analysis system to invent a prediction. Parameters "
         "include ts_code, ann_date, start_date, "
         "end_date, period, and type. Common fields include ts_code, ann_date, "
         "end_date, type, p_change_min, p_change_max, net_profit_min, "

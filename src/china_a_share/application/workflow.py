@@ -502,7 +502,9 @@ class ASharePlanValidator:
             ):
                 raise PlanValidationError(
                     f"Constraint {constraint.constraint_id} is not applied by its "
-                    "declared query filter or native provider parameter."
+                    "declared query filter or native provider parameter; "
+                    f"field={constraint.field}, operator={constraint.operator}, "
+                    f"value={constraint.value}, query_params={query.params}."
                 )
 
             if pipeline is None:
@@ -751,7 +753,9 @@ class ASharePlanValidator:
             ):
                 raise PlanValidationError(
                     f"Constraint {constraint.constraint_id} is not enforced by its "
-                    "execution query."
+                    "execution query; "
+                    f"field={constraint.field}, operator={constraint.operator}, "
+                    f"value={constraint.value}, query_params={query.params}."
                 )
             if constraint.enforcement_step_index is not None:
                 raise PlanValidationError(
@@ -781,6 +785,22 @@ class ASharePlanValidator:
             constraint.operator == "eq"
             and constraint.field in {"period", "end_date"}
             and query.params.get("period") == constraint.value
+        ):
+            return True
+        constraint_value = (
+            str(int(constraint.value))
+            if isinstance(constraint.value, float) and constraint.value.is_integer()
+            else str(constraint.value)
+        )
+        if (
+            constraint.operator == "eq"
+            and re.fullmatch(r"20\d{2}", constraint_value)
+            and (
+                constraint.field.endswith("date")
+                or constraint.field.endswith("year")
+            )
+            and query.params.get("start_date") == f"{constraint_value}0101"
+            and query.params.get("end_date") == f"{constraint_value}1231"
         ):
             return True
         boundary_param = {
@@ -3030,6 +3050,94 @@ class AnalysisService:
             return plan
 
         intent = plan.intent
+        if intent.analysis_type == "field_analysis":
+            query = DataQuery(
+                query_id="field_analysis_source",
+                operation=intent.operation,
+                params=dict(intent.params),
+                fields=list(intent.fields),
+                purpose="Retrieve the provider fields declared by typed analysis intent.",
+                filters=[row_filter.model_copy(deep=True) for row_filter in intent.filters],
+            )
+            steps: List[ResultPipelineStep] = []
+            if intent.aggregations:
+                steps.append(
+                    ResultPipelineStep(
+                        operation=("aggregate" if intent.group_by else "summarize"),
+                        group_by=list(intent.group_by),
+                        aggregations=[
+                            aggregation.model_copy(deep=True)
+                            for aggregation in intent.aggregations
+                        ],
+                    )
+                )
+            ranking_field = intent.analysis_field
+            if intent.aggregations and ranking_field not in {
+                aggregation.output_field for aggregation in intent.aggregations
+            }:
+                matching_aggregations = [
+                    aggregation
+                    for aggregation in intent.aggregations
+                    if aggregation.field == ranking_field
+                ]
+                if len(matching_aggregations) == 1:
+                    ranking_field = matching_aggregations[0].output_field
+            if intent.ranking is not None:
+                steps.extend(
+                    [
+                        ResultPipelineStep(
+                            operation="drop_missing",
+                            fields=[ranking_field],
+                        ),
+                        ResultPipelineStep(
+                            operation="sort",
+                            field=ranking_field,
+                            direction=intent.ranking.direction,
+                        ),
+                        ResultPipelineStep(
+                            operation="limit",
+                            count=intent.ranking.limit,
+                        ),
+                    ]
+                )
+            pipeline = ResultPipeline(
+                source_query_id=query.query_id,
+                output_query_id="field_analysis_output",
+                steps=steps,
+            )
+            if intent.aggregations:
+                output_fields = list(intent.group_by) + [
+                    aggregation.output_field
+                    for aggregation in intent.aggregations
+                ]
+            else:
+                output_fields = [
+                    field
+                    for field in ("ts_code", intent.analysis_field)
+                    if field in intent.fields
+                ]
+            plan.queries = [query]
+            plan.constraints = []
+            plan.result_pipeline = pipeline
+            plan.execution_plan = None
+            plan.answer_contract = AnswerContract(
+                result_query_id=pipeline.output_query_id,
+                result_kind=(
+                    "summary"
+                    if intent.aggregations and not intent.group_by
+                    else "table"
+                ),
+                outputs=[
+                    {
+                        "field": field,
+                        "description": "Output produced by typed provider-field analysis.",
+                    }
+                    for field in dict.fromkeys(output_fields)
+                ],
+            )
+            plan.feasibility = "supported"
+            plan.limitations = []
+            return plan
         if intent.analysis_type == "event_outcome_probability":
             event_start = datetime.strptime(
                 intent.event_window.start,
@@ -3399,7 +3507,7 @@ class AnalysisService:
         if (
             plan.intent is not None
             and plan.intent.analysis_type
-            in {"event_outcome_probability", "rank_metric"}
+            in {"event_outcome_probability", "rank_metric", "field_analysis"}
         ):
             # The semantic compiler owns this executable plan. Legacy prompt
             # normalizers must not reinterpret or replace its typed operators.
