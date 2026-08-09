@@ -260,7 +260,7 @@ class LiveCaseService:
         self._catalog_path = catalog_path
 
     def list_cases(self, bearer_token: str) -> LiveCaseListResponse:
-        """Return the deployed catalog with durable pending changes overlaid."""
+        """Return the administrator catalog with pending changes overlaid."""
         self._verifier.verify(bearer_token)
         published = load_live_case_catalog(self._catalog_path).cases
         cases = {case.id: case for case in published}

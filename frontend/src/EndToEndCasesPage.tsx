@@ -1,12 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { fetchLiveCases, submitAnalysis, submitLiveCaseChange } from "./api";
-import type {
-  AnalysisResponse,
-  LiveCase,
-  LiveCaseFeasibility,
-  LiveCaseListResponse,
-} from "./contracts";
+import type { AnalysisResponse, LiveCase, LiveCaseListResponse } from "./contracts";
 import {
   ADMIN_AUTHENTICATED_EVENT,
   ADMIN_ID_TOKEN_STORAGE_KEY,
@@ -35,7 +30,7 @@ interface LegacyBrowserCase {
   /** Exact legacy prompt to migrate into the Git catalog. */
   prompt: string;
   /** Legacy feasibility expectation preserved during migration. */
-  expectedFeasibility: LiveCaseFeasibility;
+  expectedFeasibility: "supported" | "unsupported";
 }
 
 const LEGACY_CASE_STORAGE_KEY = "china-a-share.end-to-end-cases.v1";
@@ -52,8 +47,7 @@ function loadLegacyCases(): LegacyBrowserCase[] {
       return typeof candidate.id === "string"
         && typeof candidate.name === "string"
         && typeof candidate.prompt === "string"
-        && (candidate.expectedFeasibility === "supported"
-          || candidate.expectedFeasibility === "unsupported");
+        && candidate.expectedFeasibility === "supported";
     });
   } catch {
     return [];
@@ -62,20 +56,16 @@ function loadLegacyCases(): LegacyBrowserCase[] {
 
 function failureFromResponse(
   response: AnalysisResponse,
-  expectedFeasibility: LiveCaseFeasibility,
 ): string {
   if (response.error) return `${response.error.source}: ${response.error.message}`;
   if (!response.plan) return "The response did not include a query plan.";
-  if (response.plan.feasibility !== expectedFeasibility) {
-    return `Expected feasibility ${expectedFeasibility}, received ${response.plan.feasibility}.`;
+  if (response.plan.feasibility !== "supported") {
+    return `Expected a supported plan, received ${response.plan.feasibility}.`;
   }
   const failedResult = response.results.find((result) => result.status === "error");
   if (failedResult?.error) return `${failedResult.operation}: ${failedResult.error.message}`;
-  if (expectedFeasibility === "supported" && response.status !== "success") {
+  if (response.status !== "success") {
     return `Expected a successful response, received status ${response.status}.`;
-  }
-  if (expectedFeasibility === "unsupported" && response.status !== "error") {
-    return `Expected an unsupported error response, received status ${response.status}.`;
   }
   return "";
 }
@@ -89,10 +79,9 @@ function reportText(results: EndToEndRunResult[]): string {
   ];
   results.forEach((result, index) => {
     lines.push(
-      `${index + 1}. ${result.passed ? "PASS" : "FAIL"} — ${result.testCase.name}`,
+      `${index + 1}. ${result.passed ? "PASS" : "FAIL"} — ${result.testCase.id}`,
       `Case ID: ${result.testCase.id}`,
       `Prompt: ${result.testCase.prompt}`,
-      `Expected feasibility: ${result.testCase.expected_feasibility}`,
       `Duration: ${result.durationMs} ms`,
       `Request ID: ${result.requestId || "unavailable"}`,
       `Runtime: ${result.runtime || "unavailable"}`,
@@ -103,8 +92,8 @@ function reportText(results: EndToEndRunResult[]): string {
   return lines.join("\n").trim();
 }
 
-function newCaseId(name: string): string {
-  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+function newCaseId(prompt: string): string {
+  const slug = prompt.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return `${slug || "live-case"}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
@@ -113,10 +102,7 @@ export function EndToEndCasesPage() {
   const [catalog, setCatalog] = useState<LiveCaseListResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState("");
-  const [name, setName] = useState("");
-  const [family, setFamily] = useState("manual_regression");
   const [prompt, setPrompt] = useState("");
-  const [expectedFeasibility, setExpectedFeasibility] = useState<LiveCaseFeasibility>("supported");
   const [results, setResults] = useState<EndToEndRunResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -125,7 +111,9 @@ export function EndToEndCasesPage() {
   const [error, setError] = useState("");
   const [legacyCases, setLegacyCases] = useState<LegacyBrowserCase[]>(loadLegacyCases);
 
-  const cases = catalog?.cases ?? [];
+  const cases = (catalog?.cases ?? []).filter(
+    (testCase) => testCase.expected_feasibility === "supported",
+  );
   const pendingDeletionIds = new Set(catalog?.pending_deletions ?? []);
   const selectedCases = useMemo(
     () => cases.filter((testCase) => selectedIds.has(testCase.id)),
@@ -155,24 +143,22 @@ export function EndToEndCasesPage() {
 
   function resetEditor() {
     setEditingId("");
-    setName("");
-    setFamily("manual_regression");
     setPrompt("");
-    setExpectedFeasibility("supported");
   }
 
   async function saveCase(event: FormEvent) {
     event.preventDefault();
     if (!catalog) return;
     const existing = cases.find((item) => item.id === editingId);
-    const caseId = existing?.id ?? newCaseId(name);
+    const caseId = existing?.id ?? newCaseId(prompt);
+    const generatedName = prompt.trim().replace(/\s+/g, " ").slice(0, 60);
     const desiredCase = {
       id: caseId,
-      name: name.trim(),
-      family: family.trim(),
+      name: existing?.name ?? generatedName,
+      family: existing?.family ?? "manual_regression",
       prompt: prompt.trim(),
-      expected_feasibility: expectedFeasibility,
-      tier: expectedFeasibility,
+      expected_feasibility: "supported" as const,
+      tier: "supported" as const,
       operations: existing?.operations ?? [],
       quality_invariants: existing?.quality_invariants ?? [],
       source: existing?.source ?? "reported_regression" as const,
@@ -197,15 +183,12 @@ export function EndToEndCasesPage() {
 
   function editCase(testCase: LiveCase) {
     setEditingId(testCase.id);
-    setName(testCase.name);
-    setFamily(testCase.family);
     setPrompt(testCase.prompt);
-    setExpectedFeasibility(testCase.expected_feasibility);
     setMessage("");
   }
 
   async function deleteCase(testCase: LiveCase) {
-    if (!catalog || !window.confirm(`确认提交删除用例“${testCase.name}”？`)) return;
+    if (!catalog || !window.confirm(`确认提交删除这个用例？\n\n${testCase.prompt}`)) return;
     setIsSaving(true);
     setError("");
     try {
@@ -239,7 +222,7 @@ export function EndToEndCasesPage() {
       const startedAt = performance.now();
       try {
         const response = await submitAnalysis({ prompt: testCase.prompt });
-        const failureReason = failureFromResponse(response, testCase.expected_feasibility);
+        const failureReason = failureFromResponse(response);
         nextResults.push({
           testCase,
           passed: failureReason === "",
@@ -277,8 +260,8 @@ export function EndToEndCasesPage() {
             name: legacyCase.name,
             family: "browser_migration",
             prompt: legacyCase.prompt,
-            expected_feasibility: legacyCase.expectedFeasibility,
-            tier: legacyCase.expectedFeasibility,
+            expected_feasibility: "supported",
+            tier: "supported",
             operations: [],
             quality_invariants: [],
             source: "reported_regression",
@@ -303,7 +286,7 @@ export function EndToEndCasesPage() {
   }
 
   if (!idToken) {
-    return <section className="reference-panel"><p className="empty-state">请先使用页面右上角的管理员 Google 登录。登录后可维护和运行 Git 中的正式端到端用例。</p></section>;
+    return <section className="reference-panel"><p className="empty-state">正式用例目录仅对管理员开放。请先使用页面右上角的 Google 管理员登录；登录成功后会立即加载全部可运行用例。</p></section>;
   }
 
   return (
@@ -311,11 +294,8 @@ export function EndToEndCasesPage() {
       <section className="reference-panel e2e-editor" aria-labelledby="e2e-editor-heading">
         <div className="reference-view-heading"><h2 id="e2e-editor-heading">{editingId ? "更新用例" : "新增用例"}</h2><span>{catalog ? `正式版本 ${catalog.git_sha.slice(0, 8)}` : "正在加载…"}</span></div>
         <form onSubmit={saveCase}>
-          <label><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label><span>用例族</span><input value={family} onChange={(event) => setFamily(event.target.value)} /></label>
           <label><span>问题</span><textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
-          <label><span>预期可行性</span><select value={expectedFeasibility} onChange={(event) => setExpectedFeasibility(event.target.value as LiveCaseFeasibility)}><option value="supported">支持</option><option value="unsupported">不支持</option></select></label>
-          <div className="e2e-actions"><button type="submit" disabled={!catalog || !name.trim() || !family.trim() || !prompt.trim() || isSaving}>{isSaving ? "正在提交…" : editingId ? "提交更新" : "提交新增"}</button>{editingId && <button type="button" className="secondary-button" onClick={resetEditor}>取消</button>}</div>
+          <div className="e2e-actions"><button type="submit" disabled={!catalog || !prompt.trim() || isSaving}>{isSaving ? "正在提交…" : editingId ? "提交更新" : "提交新增"}</button>{editingId && <button type="button" className="secondary-button" onClick={resetEditor}>取消</button>}</div>
         </form>
       </section>
 
@@ -324,7 +304,7 @@ export function EndToEndCasesPage() {
         <div className="e2e-toolbar"><button type="button" className="secondary-button" disabled={cases.length === 0 || isRunning} onClick={() => setSelectedIds(selectedIds.size === cases.length ? new Set() : new Set(cases.map((item) => item.id)))}>{selectedIds.size === cases.length && cases.length > 0 ? "取消全选" : "全选"}</button><button type="button" disabled={selectedCases.length === 0 || isRunning} onClick={() => void runSelectedCases()}>{isRunning ? `运行中 ${completedCount}/${selectedCases.length}` : "一键运行所选用例"}</button><button type="button" className="secondary-button" disabled={isRunning || isSaving} onClick={() => void loadCatalog()}>刷新发布状态</button>{legacyCases.length > 0 && <button type="button" className="secondary-button" disabled={isRunning || isSaving} onClick={() => void importLegacyCases()}>迁移 {legacyCases.length} 个浏览器本地用例</button>}</div>
         {message && <p className="e2e-message" role="status">{message}</p>}
         {error && <p className="error-card" role="alert">{error}</p>}
-        {cases.length === 0 ? <p className="empty-state">没有可显示的正式或待发布用例。</p> : <div className="stock-table-scroll"><table className="stock-table"><thead><tr><th>选择</th><th>名称</th><th>问题</th><th>预期</th><th>发布状态</th><th>操作</th></tr></thead><tbody>{cases.map((testCase) => {
+        {cases.length === 0 ? <p className="empty-state">正在加载正式端到端用例；如果持续为空，请刷新发布状态。</p> : <div className="stock-table-scroll"><table className="stock-table"><thead><tr><th>选择</th><th>问题</th><th>发布状态</th>{idToken && <th>操作</th>}</tr></thead><tbody>{cases.map((testCase) => {
           const pendingDeletion = pendingDeletionIds.has(testCase.id);
           const isPending = testCase.publication_status === "pending";
           const publicationInProgress = testCase.publication_status !== "published";
@@ -340,11 +320,11 @@ export function EndToEndCasesPage() {
               : testCase.publication_status === "failed"
                 ? "提交失败"
                 : "已发布";
-          return <tr key={testCase.id}><td><input type="checkbox" aria-label={`选择 ${testCase.name}`} checked={selectedIds.has(testCase.id)} disabled={isRunning} onChange={() => setSelectedIds((current) => { const next = new Set(current); next.has(testCase.id) ? next.delete(testCase.id) : next.add(testCase.id); return next; })} /></td><td><strong>{testCase.name}</strong><br /><code>{testCase.id}</code></td><td>{testCase.prompt}</td><td>{testCase.expected_feasibility === "supported" ? "支持" : "不支持"}</td><td><span className={statusClass}>{statusLabel}</span></td><td><div className="e2e-row-actions"><button type="button" className="text-button" disabled={isRunning || isSaving || pendingDeletion || publicationInProgress} onClick={() => editCase(testCase)}>编辑</button><button type="button" className="text-button danger" disabled={isRunning || isSaving || pendingDeletion || publicationInProgress} onClick={() => void deleteCase(testCase)}>删除</button></div></td></tr>;
+          return <tr key={testCase.id}><td><input type="checkbox" aria-label={`选择 ${testCase.prompt}`} checked={selectedIds.has(testCase.id)} disabled={isRunning} onChange={() => setSelectedIds((current) => { const next = new Set(current); next.has(testCase.id) ? next.delete(testCase.id) : next.add(testCase.id); return next; })} /></td><td>{testCase.prompt}<br /><code>{testCase.id}</code></td><td><span className={statusClass}>{statusLabel}</span></td>{idToken && <td><div className="e2e-row-actions"><button type="button" className="text-button" disabled={isRunning || isSaving || pendingDeletion || publicationInProgress} onClick={() => editCase(testCase)}>编辑</button><button type="button" className="text-button danger" disabled={isRunning || isSaving || pendingDeletion || publicationInProgress} onClick={() => void deleteCase(testCase)}>删除</button></div></td>}</tr>;
         })}</tbody></table></div>}
       </section>
 
-      {results.length > 0 && <section className="reference-panel" aria-labelledby="e2e-report-heading"><div className="reference-view-heading"><h2 id="e2e-report-heading">运行报告</h2><button type="button" className="secondary-button" onClick={() => void copyReport()}>复制给 Codex</button></div><div className="e2e-summary">通过 {results.filter((result) => result.passed).length} / {results.length}</div><div className="stock-table-scroll"><table className="stock-table"><thead><tr><th>结果</th><th>用例</th><th>耗时</th><th>追踪 ID</th><th>失败原因</th></tr></thead><tbody>{results.map((result) => <tr key={result.testCase.id} className={result.passed ? "e2e-pass" : "e2e-fail"}><td><strong>{result.passed ? "成功" : "失败"}</strong></td><td>{result.testCase.name}</td><td>{(result.durationMs / 1000).toFixed(2)} 秒</td><td><code>{result.requestId || "—"}</code></td><td>{result.failureReason || "—"}</td></tr>)}</tbody></table></div></section>}
+      {results.length > 0 && <section className="reference-panel" aria-labelledby="e2e-report-heading"><div className="reference-view-heading"><h2 id="e2e-report-heading">运行报告</h2><button type="button" className="secondary-button" onClick={() => void copyReport()}>复制给 Codex</button></div><div className="e2e-summary">通过 {results.filter((result) => result.passed).length} / {results.length}</div><div className="stock-table-scroll"><table className="stock-table"><thead><tr><th>结果</th><th>问题</th><th>耗时</th><th>追踪 ID</th><th>失败原因</th></tr></thead><tbody>{results.map((result) => <tr key={result.testCase.id} className={result.passed ? "e2e-pass" : "e2e-fail"}><td><strong>{result.passed ? "成功" : "失败"}</strong></td><td>{result.testCase.prompt}</td><td>{(result.durationMs / 1000).toFixed(2)} 秒</td><td><code>{result.requestId || "—"}</code></td><td>{result.failureReason || "—"}</td></tr>)}</tbody></table></div></section>}
     </div>
   );
 }
