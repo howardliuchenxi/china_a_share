@@ -73,6 +73,7 @@ SCREENSHOT_EVIDENCE_END = "</untrusted_screenshot_evidence>"
 STOCK_NAME_OPERATION = "stock_basic"
 STOCK_METADATA_FIELDS = ("ts_code", "name", "industry")
 SNAPSHOT_RANKING_METRICS = {
+    "pct_chg": "pct_chg",
     "pe": "pe",
     "pe_ttm": "pe_ttm",
     "pb": "pb",
@@ -193,12 +194,8 @@ class ASharePlanValidator:
                 f"A query plan may contain at most {MAX_QUERIES_PER_ANALYSIS} calls."
             )
         if plan.execution_plan is not None:
-            if plan.constraints:
-                raise PlanValidationError(
-                    "Declared constraints currently require a linear result pipeline "
-                    "with explicit enforcement bindings."
-                )
             self._validate_execution_plan(plan)
+            self._validate_execution_constraint_lineage(plan)
             return plan
         pipeline_fields = None
         if plan.result_pipeline:
@@ -360,12 +357,15 @@ class ASharePlanValidator:
         count_pattern = r"[0-9一二两三四五六七八九十百]+"
         has_explicit_high = bool(re.search(r"最高|最大|最多|降序", normalized_prompt))
         has_explicit_low = bool(re.search(r"最低|最小|最少|升序", normalized_prompt))
+        has_negative_magnitude_metric = bool(
+            re.search(r"(?:跌|降)(?:幅|幅度)", normalized_prompt)
+        )
         if has_explicit_high and has_explicit_low:
             raise PlanValidationError("Prompt contains conflicting ranking directions.")
         if has_explicit_low:
-            expected_direction = "asc"
+            expected_direction = "desc" if has_negative_magnitude_metric else "asc"
         elif has_explicit_high:
-            expected_direction = "desc"
+            expected_direction = "asc" if has_negative_magnitude_metric else "desc"
         elif re.search(rf"(?:bottom|后)\s*{count_pattern}", normalized_prompt):
             expected_direction = "asc"
         elif re.search(rf"(?:top|前)\s*{count_pattern}", normalized_prompt):
@@ -402,6 +402,7 @@ class ASharePlanValidator:
     @staticmethod
     def _extract_prompt_industries(prompt: str) -> set[str]:
         """Extract explicit broad industry labels without enumerating taxonomy values."""
+        prompt = prompt.casefold()
         industry_matches = []
         industry_patterns = (
             r"(?:a股|沪深(?:两市)?)\s*([\w\u4e00-\u9fff]{1,16})行业",
@@ -410,15 +411,25 @@ class ASharePlanValidator:
         )
         for pattern in industry_patterns:
             industry_matches.extend(re.findall(pattern, prompt))
-        return {
-            re.sub(
+        industries = set()
+        for value in industry_matches:
+            normalized = re.sub(
                 r"^(?:(?:在|从|属于)|a股|沪深两市|沪深)+",
                 "",
                 value,
             ).strip()
-            for value in industry_matches
-            if value.strip()
-        }
+            # Calendar expressions qualify the requested observation period, not the
+            # security classification that follows them.
+            normalized = re.sub(
+                r"^(?:(?:19|20)\d{2}年(?:第?[一二三四1-4]季度|"
+                r"(?:上|下)半年|\d{1,2}月)?|"
+                r"今年|本年|去年|前年|近年|当前|最新)+",
+                "",
+                normalized,
+            ).strip()
+            if normalized:
+                industries.add(normalized)
+        return industries
 
     @staticmethod
     def _parse_bounded_count(value: str) -> Optional[int]:
@@ -473,15 +484,20 @@ class ASharePlanValidator:
                 raise PlanValidationError(
                     f"Constraint {constraint.constraint_id} references an unknown query."
                 )
-            if not any(
+            enforced_by_filter = any(
                 row_filter.field == constraint.field
                 and row_filter.operator == constraint.operator
                 and row_filter.value == constraint.value
                 for row_filter in query.filters
-            ):
+            )
+            enforced_by_native_parameter = (
+                constraint.operator == "eq"
+                and query.params.get(constraint.field) == constraint.value
+            )
+            if not enforced_by_filter and not enforced_by_native_parameter:
                 raise PlanValidationError(
                     f"Constraint {constraint.constraint_id} is not applied by its "
-                    "declared query filter."
+                    "declared query filter or native provider parameter."
                 )
 
             if pipeline is None:
@@ -685,6 +701,44 @@ class ASharePlanValidator:
                 raise PlanValidationError(
                     "Final execution result does not satisfy the answer contract; "
                     "missing fields: " + ", ".join(sorted(missing_fields))
+                )
+
+    @staticmethod
+    def _validate_execution_constraint_lineage(plan: QueryPlan) -> None:
+        """Require graph query constraints to be enforced by their provider read."""
+        if not plan.constraints:
+            return
+        query_by_id = {
+            node.query.query_id: node.query
+            for node in plan.execution_plan.nodes
+            if node.kind == "query"
+        }
+        for constraint in plan.constraints:
+            query = query_by_id.get(constraint.query_id)
+            if query is None:
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} references an unknown "
+                    "execution query."
+                )
+            enforced_by_filter = any(
+                row_filter.field == constraint.field
+                and row_filter.operator == constraint.operator
+                and row_filter.value == constraint.value
+                for row_filter in query.filters
+            )
+            enforced_by_native_parameter = (
+                constraint.operator == "eq"
+                and query.params.get(constraint.field) == constraint.value
+            )
+            if not enforced_by_filter and not enforced_by_native_parameter:
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} is not enforced by its "
+                    "execution query."
+                )
+            if constraint.enforcement_step_index is not None:
+                raise PlanValidationError(
+                    f"Constraint {constraint.constraint_id} cannot use a linear "
+                    "pipeline enforcement index in an execution graph."
                 )
 
     @staticmethod
@@ -967,6 +1021,8 @@ class ASharePlanValidator:
             raise PlanValidationError(
                 "Final result does not satisfy the answer contract; missing fields: "
                 + ", ".join(sorted(missing_fields))
+                + "; available fields: "
+                + ", ".join(sorted(available_fields))
             )
 
     @staticmethod
@@ -1044,7 +1100,8 @@ class ASharePlanValidator:
                     "Period ranking source must match the typed metric window."
                 )
         elif (
-            source_query.operation != "daily_basic"
+            source_query.operation
+            != ("daily" if intent.metric.type == "pct_chg" else "daily_basic")
             or source_query.params.get("trade_date") != intent.metric.as_of
         ):
             raise PlanValidationError(
@@ -1534,8 +1591,12 @@ class DataQueryExecutor:
             if isinstance(row_filter.value, str):
                 values = filtered[row_filter.field].astype("string")
                 string_operators = {
+                    "gt": lambda: values > row_filter.value,
+                    "ge": lambda: values >= row_filter.value,
                     "eq": lambda: values == row_filter.value,
                     "ne": lambda: values != row_filter.value,
+                    "le": lambda: values <= row_filter.value,
+                    "lt": lambda: values < row_filter.value,
                     "contains": lambda: values.str.contains(
                         row_filter.value,
                         regex=False,
@@ -1722,6 +1783,7 @@ class AnalysisService:
                 normalized,
             )
             plan = self._compile_intent(normalized)
+            self._align_answer_contract_result_id(plan)
             ASharePlanValidator.validate_prompt_intent_coverage(
                 original_prompt,
                 plan,
@@ -1764,10 +1826,23 @@ class AnalysisService:
             normalized,
         )
         compiled = self._compile_intent(normalized)
+        self._align_answer_contract_result_id(compiled)
         return self._validate_planned_time_semantics(
             self._validator.validate(compiled),
             planning_prompt,
         )
+
+    @staticmethod
+    def _align_answer_contract_result_id(plan: QueryPlan) -> None:
+        """Bind the answer contract to the unique deterministic final result."""
+        if plan.answer_contract is None:
+            return
+        if plan.execution_plan is not None:
+            plan.answer_contract.result_query_id = plan.execution_plan.result_node_id
+        elif plan.result_pipeline is not None:
+            plan.answer_contract.result_query_id = plan.result_pipeline.output_query_id
+        elif len(plan.queries) == 1:
+            plan.answer_contract.result_query_id = plan.queries[0].query_id
 
 
     def analyze(
@@ -2836,6 +2911,25 @@ class AnalysisService:
             plan.limitations = []
             return plan
 
+        if (
+            intent.analysis_type == "rank_metric"
+            and intent.metric.type == "period_return"
+            and intent.metric.window.start == intent.metric.window.end
+        ):
+            metric_query = DataQuery(
+                query_id="ranking_metric_snapshot",
+                operation="daily",
+                params={"trade_date": intent.metric.window.start},
+                fields=["ts_code", "trade_date", "pct_chg"],
+                purpose="Retrieve the authoritative daily percentage-change snapshot.",
+            )
+            return AnalysisService._compile_rank_metric_plan(
+                plan,
+                metric_query,
+                metric_field="pct_chg",
+                output_query_id="ranking_metric_output",
+            )
+
         if intent.analysis_type == "rank_metric" and intent.metric.type == "period_return":
             metric_query = DataQuery(
                 query_id="period_return_query",
@@ -2862,7 +2956,7 @@ class AnalysisService:
             metric_field = SNAPSHOT_RANKING_METRICS[intent.metric.type]
             metric_query = DataQuery(
                 query_id="ranking_metric_snapshot",
-                operation="daily_basic",
+                operation=("daily" if intent.metric.type == "pct_chg" else "daily_basic"),
                 params={"trade_date": intent.metric.as_of},
                 fields=["ts_code", "trade_date", metric_field],
                 purpose="Retrieve the authoritative metric snapshot for ranking.",
@@ -4779,6 +4873,14 @@ class AnalysisService:
             and plan.intent.metric.window.end > completed
         ):
             plan.intent.metric.window.end = completed
+        if (
+            plan.intent is not None
+            and plan.intent.analysis_type == "rank_metric"
+            and plan.intent.metric is not None
+            and plan.intent.metric.as_of is not None
+            and plan.intent.metric.as_of > safe_snapshot
+        ):
+            plan.intent.metric.as_of = safe_snapshot
         queries = list(plan.queries)
         if plan.execution_plan is not None:
             queries.extend(

@@ -37,8 +37,13 @@ LIVE_REGRESSION_CASES = [
     {
         "name": "battery_valuation_and_dividend_contract_repair",
         "prompt": "A股2026年电池行业，市盈率和分红数据",
-        "expected_feasibility": "unsupported",
-    }
+        "expected_feasibility": "supported",
+    },
+    {
+        "name": "automotive_valuation_and_dividend_contract_repair",
+        "prompt": "A股2026年汽车行业，市盈率和分红数据",
+        "expected_feasibility": "supported",
+    },
 ]
 
 
@@ -90,10 +95,22 @@ def _assert_pipeline_result_succeeded(response) -> None:
     assert pipeline_result.error is None
 
 
+def _planned_operations(plan) -> set[str]:
+    """Return provider operations from both linear and graph execution plans."""
+    operations = {query.operation for query in plan.queries}
+    if plan.execution_plan is not None:
+        operations.update(
+            node.query.operation
+            for node in plan.execution_plan.nodes
+            if node.kind == "query"
+        )
+    return operations
+
+
 def _assert_quality_invariants(response, prompt, invariants) -> None:
     """Check stable business meaning without binding exact planner JSON."""
     plan = response.plan
-    operations = {query.operation for query in plan.queries}
+    operations = _planned_operations(plan)
     steps = plan.result_pipeline.steps if plan.result_pipeline else []
 
     if "native_limit_up_source" in invariants:
@@ -193,7 +210,7 @@ def test_live_analysis_question(
         for requirement in response.plan.requirements
     )
     expected_operations = set(case["operations"])
-    actual_operations = {query.operation for query in response.plan.queries}
+    actual_operations = _planned_operations(response.plan)
     assert actual_operations.intersection(expected_operations)
     assert actual_operations.issubset(
         expected_operations | {"stock_basic", "trade_cal"}
@@ -240,6 +257,19 @@ def test_live_reported_prompt_regression(live_analysis_service, case) -> None:
         requirement.status in {"covered", "unsupported"}
         for requirement in response.plan.requirements
     )
-    assert response.plan.queries == []
-    assert response.results == []
-    assert response.plan.clarification_options
+    if response.plan.feasibility == "unsupported":
+        assert response.status is AnalysisStatus.ERROR
+        assert response.plan.queries == []
+        assert response.results == []
+        assert response.plan.clarification_options
+        return
+
+    assert response.status is AnalysisStatus.SUCCESS, _failure_message(response)
+    assert all(
+        requirement.status == "covered"
+        for requirement in response.plan.requirements
+    )
+    assert response.results
+    assert all(result.status.value == "success" for result in response.results), (
+        _failure_message(response)
+    )

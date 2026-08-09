@@ -929,6 +929,35 @@ def test_pipeline_does_not_require_an_earlier_sort_after_group_selection():
     assert result.row_count == 3
 
 
+def test_time_series_sort_and_limit_allows_repeated_security_identifiers():
+    source = QueryResult(
+        query_id="prices",
+        provider="tushare",
+        operation="daily",
+        status="success",
+        columns=["ts_code", "trade_date", "close"],
+        rows=[
+            {"ts_code": "000001.SZ", "trade_date": "20260806", "close": 10.0},
+            {"ts_code": "000001.SZ", "trade_date": "20260807", "close": 10.2},
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "prices",
+            "output_query_id": "recent-prices",
+            "steps": [
+                {"operation": "sort", "field": "trade_date", "direction": "asc"},
+                {"operation": "limit", "count": 20},
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.row_count == 2
+
+
 def test_result_pipeline_filters_by_quantile():
     pipeline = ResultPipeline.model_validate(
         {

@@ -460,12 +460,18 @@ class DeepSeekQueryPlanner:
                 "capabilities. Preserve the user intent and revalidate the whole plan."
             )
         )
+        result_ids = [query.query_id for query in plan.queries]
+        if plan.result_pipeline is not None:
+            result_ids.append(plan.result_pipeline.output_query_id)
+        if plan.execution_plan is not None:
+            result_ids.append(plan.execution_plan.result_node_id)
         feedback = {
             "decision": decision,
             "phase": phase,
             "instruction": instruction,
             "errors": [{"message": str(error)}],
             "rejected_plan": plan.model_dump(mode="json"),
+            "available_result_ids": list(dict.fromkeys(result_ids)),
         }
         return json.dumps(feedback, ensure_ascii=False)
 
@@ -781,9 +787,63 @@ class DeepSeekQueryPlanner:
                 normalized_steps.append(step)
             pipeline["steps"] = normalized_steps
 
+        execution_plan = raw_plan.get("execution_plan")
+        nodes = execution_plan.get("nodes") if isinstance(execution_plan, dict) else None
+        if isinstance(nodes, list):
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                query = node.get("query")
+                if (
+                    node.get("kind") == "query"
+                    and isinstance(query, dict)
+                    and node.get("node_id")
+                ):
+                    query["query_id"] = node["node_id"]
+                if not isinstance(node.get("step"), dict):
+                    continue
+                DeepSeekQueryPlanner._normalize_pipeline_step_syntax([node["step"]])
+                inputs = node.get("input_result_ids")
+                if (
+                    node["step"].get("operation") in {"inner_join", "join_fields"}
+                    and not node["step"].get("right_source_query_id")
+                    and isinstance(inputs, list)
+                    and len(inputs) == 2
+                ):
+                    node["step"]["right_source_query_id"] = inputs[1]
+
         queries = raw_plan.get("queries")
         if not isinstance(queries, list):
             return
+        query_candidates = list(queries)
+        if isinstance(nodes, list):
+            query_candidates.extend(
+                node.get("query")
+                for node in nodes
+                if isinstance(node, dict) and isinstance(node.get("query"), dict)
+            )
+        query_by_id = {
+            query.get("query_id"): query
+            for query in query_candidates
+            if isinstance(query, dict) and query.get("query_id")
+        }
+        for constraint in raw_plan.get("constraints") or []:
+            if not isinstance(constraint, dict) or constraint.get("operator") != "eq":
+                continue
+            query = query_by_id.get(constraint.get("query_id"))
+            params = query.get("params") if isinstance(query, dict) else None
+            if not isinstance(params, dict) or constraint.get("field") in params:
+                continue
+            matching_params = [
+                name
+                for name, value in params.items()
+                if value == constraint.get("value")
+            ]
+            if len(matching_params) == 1:
+                # QueryConstraint.field names the executable predicate field. When
+                # the model supplies a descriptive alias but the value identifies one
+                # native parameter unambiguously, bind it to that concrete parameter.
+                constraint["field"] = matching_params[0]
         interpretation = str(raw_plan.get("interpretation", ""))
         if "\u4e0b\u5468" in interpretation and "\u6536\u76ca\u7387" in interpretation:
             raw_plan["feasibility"] = "unsupported"
@@ -854,6 +914,7 @@ class DeepSeekQueryPlanner:
                     field in query.get("fields", [])
                     for field in ("pe", "pb")
                 )
+
             ),
             None,
         )
@@ -1061,6 +1122,32 @@ class DeepSeekQueryPlanner:
                 if output_field:
                     produced_fields.add(output_field)
             pipeline["steps"] = normalized_steps
+        DeepSeekQueryPlanner._normalize_answer_contract_result_id(raw_plan)
+
+    @staticmethod
+    def _normalize_answer_contract_result_id(raw_plan: dict) -> None:
+        """Canonicalize a model-local identifier when the final result is unique."""
+        answer_contract = raw_plan.get("answer_contract")
+        if not isinstance(answer_contract, dict):
+            return
+        result_id = None
+        execution_plan = raw_plan.get("execution_plan")
+        result_pipeline = raw_plan.get("result_pipeline")
+        queries = raw_plan.get("queries")
+        if isinstance(execution_plan, dict):
+            result_id = execution_plan.get("result_node_id")
+        elif isinstance(result_pipeline, dict):
+            result_id = result_pipeline.get("output_query_id")
+        elif (
+            isinstance(queries, list)
+            and len(queries) == 1
+            and isinstance(queries[0], dict)
+        ):
+            result_id = queries[0].get("query_id")
+        if result_id and answer_contract.get("result_query_id") != result_id:
+            # A single final result leaves no semantic choice; canonicalizing its
+            # identifier prevents model-local naming drift across contract fields.
+            answer_contract["result_query_id"] = result_id
 
     @staticmethod
     def _normalize_pipeline_step_syntax(steps: list) -> None:
@@ -1076,6 +1163,8 @@ class DeepSeekQueryPlanner:
         for index, step in enumerate(steps):
             if not isinstance(step, dict):
                 continue
+            if "fields" not in step and isinstance(step.get("fields_obj"), dict):
+                step["fields"] = step.pop("fields_obj")
             for field in ("join_on", "fields", "group_by", "aggregations"):
                 if step.get(field) is None:
                     step.pop(field, None)
@@ -1083,6 +1172,35 @@ class DeepSeekQueryPlanner:
             for field in ("purpose", "description", "reason", "label"):
                 step.pop(field, None)
             operation = step.get("operation")
+            if (
+                operation == "filter"
+                and step.get("comparison") in {"in", "not_in"}
+                and step.get("values")
+            ):
+                step["operation"] = "filter_set"
+                step["negate"] = step.pop("comparison") == "not_in"
+                operation = "filter_set"
+            if operation == "distinct" and not step.get("fields"):
+                field = step.pop("field", None)
+                if field:
+                    step["fields"] = [field]
+            if operation in {"shift", "diff", "pct_change"} and not step.get(
+                "periods"
+            ):
+                step["periods"] = 1
+            if operation == "inner_join" and "fields" not in step:
+                # An empty mapping is a valid filtering join: it retains matching
+                # left rows without copying any right-side payload columns.
+                step["fields"] = {}
+            if operation in {"inner_join", "join_fields"}:
+                fields = step.get("fields")
+                join_on = step.get("join_on")
+                if isinstance(fields, dict) and isinstance(join_on, list):
+                    for key in join_on:
+                        if fields.get(key) == key:
+                            fields.pop(key)
+                    if operation == "join_fields" and not fields:
+                        step["operation"] = "inner_join"
             if operation == "aggregate" and not step.get("group_by"):
                 step["operation"] = "summarize"
                 operation = "summarize"

@@ -22,6 +22,19 @@ MAX_ANALYSIS_IMAGE_BASE64_LENGTH = 4 * ((MAX_ANALYSIS_IMAGE_BYTES + 2) // 3)
 DATA_CACHE_SCHEMA_VERSION = 4
 PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9_-]*$"
 OPERATION_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
+AggregationFunction = Literal[
+    "count",
+    "count_distinct",
+    "sum",
+    "mean",
+    "median",
+    "min",
+    "max",
+    "std",
+    "quantile",
+    "first",
+    "last",
+]
 DISCOVERY_SEQUENCE_FACTOR_FIELDS = {
     "distance_from_5d_peak_pct",
     "max_drawdown_5d_pct",
@@ -211,13 +224,17 @@ class DataFilter(BaseModel):
     def validate_string_operator(self) -> "DataFilter":
         """Keep text and membership predicates explicit and type-safe."""
         if isinstance(self.value, str) and self.operator not in {
+            "gt",
+            "ge",
             "eq",
             "ne",
+            "le",
+            "lt",
             "contains",
             "not_contains",
         }:
             raise ValueError(
-                "string filter values require an exact or contains operator"
+                "string filter values require an ordered, exact, or contains operator"
             )
         if isinstance(self.value, list):
             if self.operator not in {"in", "not_in"}:
@@ -331,19 +348,7 @@ class ResultAggregation(BaseModel):
         pattern=OPERATION_NAME_PATTERN,
         description="Existing input column aggregated within each group.",
     )
-    function: Literal[
-        "count",
-        "count_distinct",
-        "sum",
-        "mean",
-        "median",
-        "min",
-        "max",
-        "std",
-        "quantile",
-        "first",
-        "last",
-    ] = Field(
+    function: AggregationFunction = Field(
         description="Allowlisted deterministic aggregation function.",
     )
     quantile: Optional[float] = Field(
@@ -460,7 +465,9 @@ class ResultPipelineStep(BaseModel):
         default_factory=list,
         description="Input fields required to be non-null, or rename mapping dictionary for join_fields.",
     )
-    cardinality: Optional[Literal["one_to_one", "many_to_one"]] = Field(
+    cardinality: Optional[
+        Literal["one_to_one", "many_to_one", "many_to_many"]
+    ] = Field(
         default=None,
         description="Expected cardinality constraint for join_fields.",
     )
@@ -997,6 +1004,7 @@ class AnalysisMetric(BaseModel):
 
     type: Literal[
         "period_return",
+        "pct_chg",
         "pe",
         "pe_ttm",
         "pb",
@@ -1252,13 +1260,17 @@ class QueryConstraint(BaseModel):
     def validate_value_operator(self) -> "QueryConstraint":
         """Keep declared constraint values consistent with executable filters."""
         if isinstance(self.value, str) and self.operator not in {
+            "gt",
+            "ge",
             "eq",
             "ne",
+            "le",
+            "lt",
             "contains",
             "not_contains",
         }:
             raise ValueError(
-                "string constraint values require an exact or contains operator"
+                "string constraint values require an ordered, exact, or contains operator"
             )
         if isinstance(self.value, list):
             if self.operator not in {"in", "not_in"} or not self.value:
@@ -1543,7 +1555,7 @@ class SummaryMetricMetadata(BaseModel):
         pattern=OPERATION_NAME_PATTERN,
         description="Input field aggregated to produce the summary value.",
     )
-    function: Literal["count", "sum", "mean", "min", "max"] = Field(
+    function: AggregationFunction = Field(
         description="Aggregation applied to the source field.",
     )
     value_format: Literal["number", "percentage_points", "ratio"] = Field(

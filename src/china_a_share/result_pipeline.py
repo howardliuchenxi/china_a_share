@@ -455,12 +455,18 @@ class ResultPipelineExecutor:
                     f"Result invariant failed for filter field '{step.field}'."
                 )
 
-        has_ranking_boundary = any(
-            step.operation == "sort"
+        ranking_sort = next((
+            step
+            for index, step in enumerate(pipeline.steps)
+            if step.operation == "sort"
             and index + 1 < len(pipeline.steps)
             and pipeline.steps[index + 1].operation == "limit"
-            for index, step in enumerate(pipeline.steps)
-        )
+        ), None)
+        has_ranking_boundary = ranking_sort is not None and ranking_sort.field not in {
+            "trade_date",
+            "ann_date",
+            "end_date",
+        }
         if has_ranking_boundary and "ts_code" in frame.columns:
             if frame["ts_code"].duplicated().any():
                 raise ValueError(
@@ -1050,6 +1056,11 @@ class ResultPipelineExecutor:
                     raise ValueError("join_fields many_to_one cardinality violated: duplicate keys in right frame")
                     
             fields_map = step.fields if isinstance(step.fields, dict) else {}
+            fields_map = {
+                field: output
+                for field, output in fields_map.items()
+                if not (field == output and output in frame.columns)
+            }
             for col, out_col in fields_map.items():
                 if col not in right.columns:
                     raise ValueError(f"join_fields right copy field is missing: {col}")

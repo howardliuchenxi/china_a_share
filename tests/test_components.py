@@ -967,18 +967,16 @@ def test_planner_final_retry_can_return_contextual_clarification_options():
     )
     session = SequenceFakeSession(
         [
-            FakeResponse(
-                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
-            ),
-            FakeResponse(
-                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
-            ),
-            FakeResponse(
-                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
-            ),
-            FakeResponse(
-                {"choices": [{"message": {"content": invalid_plan.model_dump_json()}}]}
-            ),
+            *[
+                FakeResponse(
+                    {
+                        "choices": [
+                            {"message": {"content": invalid_plan.model_dump_json()}}
+                        ]
+                    }
+                )
+                for _ in range(4)
+            ],
             FakeResponse(
                 {
                     "choices": [
@@ -997,7 +995,7 @@ def test_planner_final_retry_can_return_contextual_clarification_options():
 
     assert result.feasibility == "unsupported"
     assert len(result.clarification_options) == 2
-    final_feedback = session.calls[4][1]["json"]["messages"][-1]["content"]
+    final_feedback = session.calls[-1][1]["json"]["messages"][-1]["content"]
     assert "two or three contextual clarification_options" in final_feedback
     assert "Do not expose the validator error as the answer" in final_feedback
 
@@ -1675,6 +1673,32 @@ def test_workflow_clamps_future_period_return_to_completed_trading_date():
     assert plan.queries[0].params["end_date"] == "20260807"
 
 
+def test_workflow_clamps_snapshot_intent_and_compiled_query_together():
+    plan = QueryPlan(
+        interpretation="Rank a point-in-time metric.",
+        intent=AnalysisIntent.model_validate(
+            {
+                "analysis_type": "rank_metric",
+                "metric": {"type": "pe", "as_of": "20260809"},
+                "ranking": {"direction": "asc", "limit": 10},
+            }
+        ),
+        requirements=[
+            {
+                "requirement": "Rank securities by PE.",
+                "status": "covered",
+                "evidence": "daily_basic provides PE.",
+            }
+        ],
+    )
+    compiled = AnalysisService._compile_intent(plan)
+
+    AnalysisService._normalize_latest_plan_dates(compiled, date(2026, 8, 7))
+
+    assert compiled.intent.metric.as_of == "20260806"
+    assert compiled.queries[0].params["trade_date"] == "20260806"
+
+
 def test_workflow_marks_explicit_dividend_total_boundary_unsupported():
     plan = make_daily_plan()
 
@@ -1800,6 +1824,153 @@ def test_deepseek_raw_normalization_preserves_event_intent_null_legacy_fields():
     assert raw_plan["answer_contract"] is None
     assert raw_plan["clarification_options"] == []
     assert raw_plan["intent"]["analysis_type"] == "event_outcome_probability"
+
+
+def test_deepseek_raw_normalization_canonicalizes_single_final_result_id():
+    raw_plan = make_daily_plan().model_dump(mode="json")
+    raw_plan["result_pipeline"] = {
+        "source_query_id": "market_direction",
+        "output_query_id": "market_summary",
+        "steps": [
+            {
+                "operation": "summarize",
+                "aggregations": [
+                    {
+                        "output_field": "security_count",
+                        "field": "ts_code",
+                        "function": "count_distinct",
+                    }
+                ],
+            }
+        ],
+    }
+    raw_plan["answer_contract"] = {
+        "result_query_id": "model_local_name",
+        "result_kind": "summary",
+        "outputs": [
+            {
+                "field": "security_count",
+                "description": "Distinct security count.",
+            }
+        ],
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    assert raw_plan["answer_contract"]["result_query_id"] == "market_summary"
+
+
+def test_deepseek_raw_normalization_uses_canonical_pipeline_fields_key():
+    raw_plan = make_daily_plan().model_dump(mode="json")
+    raw_plan["result_pipeline"] = {
+        "source_query_id": "market_direction",
+        "output_query_id": "renamed",
+        "steps": [
+            {
+                "operation": "rename_fields",
+                "fields_obj": {"change": "price_change"},
+            }
+        ],
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    step = raw_plan["result_pipeline"]["steps"][0]
+    assert step["fields"] == {"change": "price_change"}
+    assert "fields_obj" not in step
+
+
+def test_deepseek_raw_normalization_canonicalizes_unambiguous_step_defaults():
+    raw_plan = make_daily_plan().model_dump(mode="json")
+    raw_plan["result_pipeline"] = {
+        "source_query_id": "market_direction",
+        "output_query_id": "normalized",
+        "steps": [
+            {"operation": "distinct", "field": "ts_code"},
+            {
+                "operation": "diff",
+                "field": "close",
+                "output_field": "close_change",
+                "group_by": ["ts_code"],
+                "order_by": "trade_date",
+            },
+            {
+                "operation": "inner_join",
+                "right_source_query_id": "other",
+                "join_on": ["ts_code"],
+                "cardinality": "many_to_one",
+            },
+        ],
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    steps = raw_plan["result_pipeline"]["steps"]
+    assert steps[0]["fields"] == ["ts_code"]
+    assert steps[1]["periods"] == 1
+    assert steps[2]["fields"] == {}
+
+
+def test_deepseek_raw_normalization_applies_same_adapter_to_execution_nodes():
+    raw_plan = make_daily_plan().model_dump(mode="json")
+    raw_plan["execution_plan"] = {
+        "nodes": [
+            {
+                "node_id": "left",
+                "kind": "query",
+                "input_result_ids": [],
+                "query": raw_plan["queries"][0],
+            },
+            {
+                "node_id": "right",
+                "kind": "query",
+                "input_result_ids": [],
+                "query": {**raw_plan["queries"][0], "query_id": "right"},
+            },
+            {
+                "node_id": "joined",
+                "kind": "compute",
+                "input_result_ids": ["left", "right"],
+                "step": {
+                    "operation": "join_fields",
+                    "join_on": ["ts_code"],
+                    "fields": {"ts_code": "ts_code"},
+                    "cardinality": "many_to_one",
+                },
+            },
+        ],
+        "result_node_id": "joined",
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    step = raw_plan["execution_plan"]["nodes"][2]["step"]
+    assert raw_plan["execution_plan"]["nodes"][0]["query"]["query_id"] == "left"
+    assert step["operation"] == "inner_join"
+    assert step["right_source_query_id"] == "right"
+    assert step["fields"] == {}
+
+
+def test_deepseek_raw_normalization_binds_constraint_alias_to_unique_parameter():
+    raw_plan = make_daily_plan().model_dump(mode="json")
+    raw_plan["queries"][0]["params"] = {
+        "trade_date": "20260806",
+        "limit_type": "U",
+    }
+    raw_plan["constraints"] = [
+        {
+            "constraint_id": "event_date",
+            "scope": "result",
+            "field": "event_date",
+            "operator": "eq",
+            "value": "20260806",
+            "query_id": "market_direction",
+        }
+    ]
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    assert raw_plan["constraints"][0]["field"] == "trade_date"
 
 
 def test_planner_prefers_typed_ranking_intent_over_model_authored_execution_graph():
@@ -2104,6 +2275,31 @@ def test_workflow_compiles_market_period_return_at_security_grain():
     assert result.result_pipeline.steps[0].field == "period_return_pct"
 
 
+def test_workflow_compiles_single_day_return_intent_as_daily_change_snapshot():
+    plan = make_daily_plan()
+    plan.queries = []
+    plan.result_pipeline = None
+    plan.answer_contract = None
+    plan.intent = AnalysisIntent.model_validate(
+        {
+            "metric": {
+                "type": "period_return",
+                "window": {"start": "20260618", "end": "20260618"},
+            },
+            "ranking": {"direction": "desc", "limit": 15},
+        }
+    )
+
+    result = AnalysisService._compile_intent(plan)
+
+    assert result.queries[0].operation == "daily"
+    assert result.queries[0].params == {"trade_date": "20260618"}
+    sort_step = next(
+        step for step in result.result_pipeline.steps if step.operation == "sort"
+    )
+    assert sort_step.field == "pct_chg"
+
+
 def test_workflow_compiles_intent_and_aligns_answer_contract_result():
     plan = make_daily_plan()
     plan.queries = []
@@ -2298,6 +2494,125 @@ def test_prompt_intent_reconciliation_accepts_matching_atomic_facts(
     assert reconciled is plan
 
 
+def test_prompt_intent_reconciliation_inverts_negative_magnitude_ranking():
+    plan = QueryPlan(
+        interpretation="Rank the largest declines.",
+        intent=AnalysisIntent.model_validate(
+            {
+                "analysis_type": "rank_metric",
+                "metric": {
+                    "type": "period_return",
+                    "window": {"start": "20260101", "end": "20260807"},
+                },
+                "ranking": {"direction": "asc", "limit": 10},
+            }
+        ),
+    )
+
+    reconciled = ASharePlanValidator.validate_prompt_intent_coverage(
+        "2026年A股跌幅最大的前10只",
+        plan,
+    )
+
+    assert reconciled is plan
+
+
+def test_constraint_lineage_accepts_exact_native_parameter_enforcement():
+    plan = QueryPlan(
+        interpretation="List native limit-up rows.",
+        requirements=[
+            {
+                "requirement": "Restrict the native list to limit-up rows.",
+                "status": "covered",
+                "evidence": "limit_type=U selects limit-up rows.",
+            }
+        ],
+        constraints=[
+            {
+                "constraint_id": "native_limit_type",
+                "scope": "result",
+                "field": "limit_type",
+                "operator": "eq",
+                "value": "U",
+                "query_id": "limit_rows",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="limit_rows",
+                operation="limit_list_d",
+                params={"trade_date": "20260807", "limit_type": "U"},
+                fields=["ts_code", "name"],
+                purpose="Retrieve native limit-up rows.",
+            )
+        ],
+        answer_contract=AnswerContract.model_validate(
+            {
+                "result_query_id": "limit_rows",
+                "result_kind": "table",
+                "outputs": [
+                    {"field": "ts_code", "description": "Security code."}
+                ],
+            }
+        ),
+    )
+
+    ASharePlanValidator._validate_constraint_lineage(plan)
+
+
+def test_execution_graph_constraints_bind_to_query_filters():
+    plan = QueryPlan(
+        interpretation="Filter one graph query.",
+        requirements=[
+            {
+                "requirement": "Keep positive daily changes.",
+                "status": "covered",
+                "evidence": "The daily query exposes pct_chg.",
+            }
+        ],
+        constraints=[
+            {
+                "constraint_id": "positive_change",
+                "scope": "result",
+                "field": "pct_chg",
+                "operator": "gt",
+                "value": 0,
+                "query_id": "positive_rows",
+            }
+        ],
+        answer_contract=AnswerContract.model_validate(
+            {
+                "result_query_id": "positive_rows",
+                "result_kind": "table",
+                "outputs": [
+                    {"field": "ts_code", "description": "Security code."}
+                ],
+            }
+        ),
+        execution_plan=ExecutionPlan(
+            result_node_id="positive_rows",
+            nodes=[
+                ExecutionNode(
+                    node_id="positive_rows",
+                    kind="query",
+                    query=DataQuery(
+                        query_id="positive_rows",
+                        operation="daily",
+                        params={"trade_date": "20260807"},
+                        fields=["ts_code", "pct_chg"],
+                        purpose="Retrieve positive daily changes.",
+                        filters=[{"field": "pct_chg", "operator": "gt", "value": 0}],
+                    ),
+                )
+            ],
+        ),
+    )
+
+    validated = ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+    assert validated is plan
+
+
 def test_broad_industry_prompt_normalizes_to_descendant_matching():
     plan = QueryPlan(
         interpretation="Rank one broad industry.",
@@ -2321,6 +2636,18 @@ def test_broad_industry_prompt_normalizes_to_descendant_matching():
     )
 
     assert normalized.intent.universe.filters[0].operator == "contains"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("A股2026年汽车行业，查询市盈率", {"汽车"}),
+        ("A股2025年下半年电池行业，查询分红", {"电池"}),
+        ("沪深两市今年半导体行业，查询市净率", {"半导体"}),
+    ],
+)
+def test_prompt_industry_extraction_excludes_calendar_qualifiers(prompt, expected):
+    assert ASharePlanValidator._extract_prompt_industries(prompt) == expected
 
 
 def test_explicit_exact_industry_prompt_preserves_exact_matching():

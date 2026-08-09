@@ -30,7 +30,7 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "family": "limit_up_trend",
         "tier": "supported",
         "delivery": "sync",
-        "operations": ["limit_list_d"],
+        "operations": ["limit_list_d", "daily"],
         "prompts": [
             "\u8fc7\u53bb\u4e00\u4e2a\u6708\u6bcf\u5929\u7684\u6da8\u505c\u6570\u91cf",
             "\u4eca\u5e74\u54ea\u4e00\u5929\u6da8\u505c\u80a1\u6700\u591a\uff1f",

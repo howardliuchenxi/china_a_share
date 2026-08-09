@@ -6,10 +6,14 @@ from pydantic import ValidationError
 from china_a_share.core.contracts import (
     AnalysisResponse,
     DataCacheRecord,
+    DataFilter,
     DataOperation,
     DataQuery,
     QueryPlan,
+    QueryConstraint,
     QueryResult,
+    ResultPipelineStep,
+    SummaryMetricMetadata,
     TradingCalendarBreadth,
 )
 from china_a_share.core.errors import DataProviderError, PlannerError
@@ -32,6 +36,48 @@ def test_provider_neutral_query_plan_uses_operation_names():
 
     assert plan.queries[0].operation == "daily"
     assert "api_name" not in plan.queries[0].model_dump()
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        "count",
+        "count_distinct",
+        "sum",
+        "mean",
+        "median",
+        "min",
+        "max",
+        "std",
+        "quantile",
+        "first",
+        "last",
+    ],
+)
+def test_summary_metadata_accepts_every_pipeline_aggregation(function):
+    metadata = SummaryMetricMetadata(
+        output_field="result",
+        source_field="value",
+        function=function,
+        value_format="number",
+    )
+
+    assert metadata.function == function
+
+
+@pytest.mark.parametrize("operator", ["gt", "ge", "eq", "ne", "le", "lt"])
+def test_ordered_string_predicates_share_one_filter_and_constraint_contract(operator):
+    row_filter = DataFilter(field="ann_date", operator=operator, value="20250101")
+    constraint = QueryConstraint(
+        constraint_id="announcement_boundary",
+        scope="result",
+        field="ann_date",
+        operator=operator,
+        value="20250101",
+        query_id="announcements",
+    )
+
+    assert row_filter.operator == constraint.operator
 
 
 def test_query_plan_records_requirement_coverage_and_local_filters():
@@ -207,3 +253,17 @@ def test_trading_calendar_breadth_rejects_inconsistent_traded_count():
             traded=15,
             advance_decline_ratio=2,
         )
+
+
+def test_join_steps_accept_explicit_many_to_many_cardinality():
+    step = ResultPipelineStep.model_validate(
+        {
+            "operation": "inner_join",
+            "right_source_query_id": "right",
+            "join_on": ["ts_code"],
+            "fields": {},
+            "cardinality": "many_to_many",
+        }
+    )
+
+    assert step.cardinality == "many_to_many"

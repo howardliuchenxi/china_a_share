@@ -204,6 +204,11 @@ CORE_OPERATION_GUIDANCE = {
         "market,list_date. Retrieve the listed security master and apply an exact "
         "local industry classification when an analysis requires an industry universe."
     ),
+    "block_trade": (
+        "A-share block trades. Parameters include ts_code, trade_date, start_date, "
+        "and end_date. Common fields include ts_code, trade_date, price, vol, amount, "
+        "buyer, and seller. Date-range full-market reads are supported."
+    ),
     "income": "Listed-company income statements by ts_code or reporting dates.",
     "margin_detail": (
         "Security-level margin financing and securities lending history. Common "
@@ -212,14 +217,59 @@ CORE_OPERATION_GUIDANCE = {
         "by trade_date to create the previous value, then derive the change."
     ),
     "balancesheet": "Listed-company balance sheets by ts_code or reporting dates.",
-    "cashflow": "Listed-company cash-flow statements by ts_code or reporting dates.",
+    "cashflow": (
+        "Listed-company cash-flow statements by ts_code or reporting dates. Common "
+        "fields include ts_code, ann_date, f_ann_date, end_date, report_type, comp_type, "
+        "end_type, and n_cashflow_act. Reporting periods may have multiple disclosure "
+        "versions; select the required version before joining."
+    ),
     "fina_indicator": (
         "Listed-company financial indicators. Use period=YYYYMMDD for a reporting "
         "period such as 20260331 for 2026 Q1. The native API requires ts_code for "
-        "security-specific reads; do not claim a full-market period screen is "
-        "supported unless a documented full-market operation is available."
+        "security-specific reads; common fields include ts_code, ann_date, end_date, "
+        "roe, roe_wa, and diluted_roe. Reporting periods may have multiple disclosure "
+        "versions; select the required version before joining. Do not claim a "
+        "full-market period screen is supported unless a documented full-market "
+        "operation is available."
     ),
-    "moneyflow": "A-share security-level daily fund-flow data.",
+    "moneyflow": (
+        "A-share security-level daily fund-flow data. Parameters include ts_code, "
+        "trade_date, start_date, and end_date. Common fields include ts_code, "
+        "trade_date, buy_sm_amount, sell_sm_amount, buy_lg_amount, sell_lg_amount, "
+        "buy_elg_amount, sell_elg_amount, and net_mf_amount. Requested net flows must "
+        "be derived from the documented buy and sell amount pairs when no direct net "
+        "field exists."
+    ),
+    "repurchase": (
+        "A-share repurchase disclosures. Parameters include ann_date, start_date, "
+        "end_date, and ts_code; full-market reads are supported. Common fields include "
+        "ts_code, ann_date, end_date, proc, exp_date, vol, amount, high_limit, and "
+        "low_limit. Security names require a stock_basic join."
+    ),
+    "stk_holdertrade": (
+        "Major shareholder transactions. Parameters include ts_code, ann_date, "
+        "start_date, and end_date. Common fields include ts_code, ann_date, holder_name, "
+        "holder_type, in_de, change_vol, change_ratio, after_share, after_ratio, "
+        "avg_price, and total_share."
+    ),
+    "express": (
+        "Earnings express reports. Parameters include ts_code, ann_date, start_date, "
+        "end_date, and period. Common fields include ts_code, ann_date, end_date, "
+        "revenue, operate_profit, total_profit, n_income, total_assets, diluted_eps, "
+        "diluted_roe, yoy_net_profit, bps, and perf_summary."
+    ),
+    "fina_mainbz": (
+        "Main business composition by ts_code and reporting period. Common fields "
+        "include ts_code, end_date, bz_item, bz_sales, bz_profit, bz_cost, curr_type, "
+        "and update_flag. Gross margin is not a native field and must be derived as "
+        "(bz_sales - bz_cost) / bz_sales when requested."
+    ),
+    "suspend_d": (
+        "Daily suspension records. Parameters include ts_code, suspend_type, "
+        "trade_date, start_date, and end_date. Common fields include ts_code, "
+        "trade_date, suspend_timing, and suspend_type. Suspension-day counts must be "
+        "aggregated from returned records; they are not a native field."
+    ),
     "share_float": (
         "Restricted-share unlock schedules. Parameters include ts_code, ann_date, "
         "float_date, start_date, and end_date. Common fields include ts_code, "
