@@ -3795,6 +3795,33 @@ def test_workflow_rejects_market_wide_forecast_period_query():
     assert result.queries == []
 
 
+def test_deepseek_normalizes_identity_projection_mapping():
+    raw_plan = {
+        "queries": [],
+        "execution_plan": {
+            "nodes": [
+                {
+                    "node_id": "projected",
+                    "kind": "compute",
+                    "input_result_ids": ["source"],
+                    "step": {
+                        "operation": "select_fields",
+                        "fields": {"ts_code": "ts_code", "name": "name"},
+                    },
+                }
+            ],
+            "result_node_id": "projected",
+        },
+    }
+
+    DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+
+    assert raw_plan["execution_plan"]["nodes"][0]["step"]["fields"] == [
+        "ts_code",
+        "name",
+    ]
+
+
 def test_deepseek_drops_non_numeric_query_aggregation_thresholds():
     raw_plan = {
         "queries": [

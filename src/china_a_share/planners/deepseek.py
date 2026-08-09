@@ -827,6 +827,23 @@ class DeepSeekQueryPlanner:
             for query in query_candidates
             if isinstance(query, dict) and query.get("query_id")
         }
+        if isinstance(pipeline, dict) and isinstance(steps, list):
+            source_query_id = pipeline.get("source_query_id")
+            other_query_ids = [
+                query_id
+                for query_id in query_by_id
+                if query_id != source_query_id
+            ]
+            if len(other_query_ids) == 1:
+                for step in steps:
+                    if (
+                        isinstance(step, dict)
+                        and step.get("operation") in {"inner_join", "join_fields"}
+                        and not step.get("right_source_query_id")
+                    ):
+                        # With one source and one remaining query, the right side is
+                        # unique. Bind the omitted identifier without guessing data.
+                        step["right_source_query_id"] = other_query_ids[0]
         for constraint in raw_plan.get("constraints") or []:
             if not isinstance(constraint, dict) or constraint.get("operator") != "eq":
                 continue
@@ -973,7 +990,7 @@ class DeepSeekQueryPlanner:
             return
         intent = raw_plan.get("intent")
         metric = (intent.get("metric") or {}) if isinstance(intent, dict) else {}
-        window = metric.get("window", {}) if isinstance(metric, dict) else {}
+        window = (metric.get("window") or {}) if isinstance(metric, dict) else {}
         ranking = (intent.get("ranking") or {}) if isinstance(intent, dict) else {}
         if (
             raw_plan.get("feasibility") == "supported"
@@ -1193,6 +1210,13 @@ class DeepSeekQueryPlanner:
                 field = step.pop("field", None)
                 if field:
                     step["fields"] = [field]
+            if operation == "select_fields" and isinstance(step.get("fields"), dict):
+                fields = step["fields"]
+                if all(source == output for source, output in fields.items()):
+                    # Models sometimes serialize a projection as an identity mapping.
+                    # The mapping is semantically identical to the ordered field list
+                    # required by the execution contract, so normalize it losslessly.
+                    step["fields"] = list(fields)
             if operation in {"shift", "diff", "pct_change"} and not step.get(
                 "periods"
             ):

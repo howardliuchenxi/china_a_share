@@ -485,17 +485,10 @@ class ASharePlanValidator:
                 raise PlanValidationError(
                     f"Constraint {constraint.constraint_id} references an unknown query."
                 )
-            enforced_by_filter = any(
-                row_filter.field == constraint.field
-                and row_filter.operator == constraint.operator
-                and row_filter.value == constraint.value
-                for row_filter in query.filters
-            )
-            enforced_by_native_parameter = (
-                constraint.operator == "eq"
-                and query.params.get(constraint.field) == constraint.value
-            )
-            if not enforced_by_filter and not enforced_by_native_parameter:
+            if not ASharePlanValidator._constraint_enforced_by_query(
+                constraint,
+                query,
+            ):
                 raise PlanValidationError(
                     f"Constraint {constraint.constraint_id} is not applied by its "
                     "declared query filter or native provider parameter."
@@ -741,17 +734,10 @@ class ASharePlanValidator:
                     f"Constraint {constraint.constraint_id} references an unknown "
                     "execution query."
                 )
-            enforced_by_filter = any(
-                row_filter.field == constraint.field
-                and row_filter.operator == constraint.operator
-                and row_filter.value == constraint.value
-                for row_filter in query.filters
-            )
-            enforced_by_native_parameter = (
-                constraint.operator == "eq"
-                and query.params.get(constraint.field) == constraint.value
-            )
-            if not enforced_by_filter and not enforced_by_native_parameter:
+            if not ASharePlanValidator._constraint_enforced_by_query(
+                constraint,
+                query,
+            ):
                 raise PlanValidationError(
                     f"Constraint {constraint.constraint_id} is not enforced by its "
                     "execution query."
@@ -761,6 +747,36 @@ class ASharePlanValidator:
                     f"Constraint {constraint.constraint_id} cannot use a linear "
                     "pipeline enforcement index in an execution graph."
                 )
+
+    @staticmethod
+    def _constraint_enforced_by_query(
+        constraint: QueryConstraint,
+        query: DataQuery,
+    ) -> bool:
+        """Recognize equivalent row filters and native provider boundaries."""
+        if any(
+            row_filter.field == constraint.field
+            and row_filter.operator == constraint.operator
+            and row_filter.value == constraint.value
+            for row_filter in query.filters
+        ):
+            return True
+        if (
+            constraint.operator == "eq"
+            and query.params.get(constraint.field) == constraint.value
+        ):
+            return True
+        boundary_param = {
+            "ge": "start_date",
+            "gt": "start_date",
+            "le": "end_date",
+            "lt": "end_date",
+        }.get(constraint.operator)
+        return bool(
+            boundary_param
+            and constraint.field.endswith("date")
+            and query.params.get(boundary_param) == constraint.value
+        )
 
     @staticmethod
     def _validate_result_pipeline(plan: QueryPlan) -> set[str]:
