@@ -76,11 +76,23 @@ def _failure_message(response) -> str:
     """Return the most specific available failure for one live assertion."""
     if response.error is not None:
         return response.error.message
-    return "; ".join(
+    result_errors = "; ".join(
         result.error.message
         for result in response.results
         if result.error is not None
     )
+    if result_errors:
+        return result_errors
+    if response.plan is not None:
+        details = list(response.plan.limitations)
+        details.extend(
+            requirement.evidence
+            for requirement in response.plan.requirements
+            if requirement.status == "unsupported"
+        )
+        if details:
+            return "; ".join(details)
+    return "Analysis did not satisfy the live regression contract."
 
 
 def _assert_pipeline_result_succeeded(response) -> None:

@@ -504,7 +504,9 @@ class ResultPipelineStep(BaseModel):
         default=None,
         description="Allowlisted scalar arithmetic applied by a derive operation.",
     )
-    comparison: Optional[Literal["gt", "ge", "eq", "le", "lt"]] = Field(
+    comparison: Optional[
+        Literal["gt", "ge", "eq", "ne", "le", "lt", "contains", "not_contains"]
+    ] = Field(
         default=None,
         description="Comparison used by filter and quantile-filter operations.",
     )

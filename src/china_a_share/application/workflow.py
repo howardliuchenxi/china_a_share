@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 MAX_QUERIES_PER_ANALYSIS = 8
 MAX_DYNAMIC_HOLDER_QUERIES = 6_000
+FANOUT_RECOVERY_ATTEMPTS = 1
 MAX_BOUNDARY_DATE_PROBES = 10
 TRADING_SESSION_HORIZON_MULTIPLIER = 2
 TRADING_SESSION_HORIZON_BUFFER_DAYS = 7
@@ -532,6 +533,21 @@ class ASharePlanValidator:
                 )
             enforcement = pipeline.steps[step_index]
             if (
+                enforcement.operation == "semi_join"
+                and enforcement.right_source_query_id == constraint.query_id
+                and "ts_code" in enforcement.join_on
+            ):
+                blocking_operations = {"sort", "limit", "aggregate", "summarize"}
+                if any(
+                    step.operation in blocking_operations
+                    for step in pipeline.steps[:step_index]
+                ):
+                    raise PlanValidationError(
+                        f"Constraint {constraint.constraint_id} must be enforced "
+                        "before sorting, limiting, or aggregation."
+                    )
+                continue
+            if (
                 enforcement.operation != "filter"
                 or enforcement.comparison != "eq"
                 or enforcement.value != 1
@@ -700,7 +716,12 @@ class ASharePlanValidator:
             if missing_fields:
                 raise PlanValidationError(
                     "Final execution result does not satisfy the answer contract; "
-                    "missing fields: " + ", ".join(sorted(missing_fields))
+                    "missing fields: "
+                    + ", ".join(sorted(missing_fields))
+                    + "; available fields: "
+                    + ", ".join(
+                        sorted(fields_by_id[execution_plan.result_node_id])
+                    )
                 )
 
     @staticmethod
@@ -796,6 +817,8 @@ class ASharePlanValidator:
                 raise PlanValidationError(
                     f"{step.operation} references unavailable fields: "
                     + ", ".join(sorted(missing_fields))
+                    + f"; step_index={step_index}; available fields: "
+                    + ", ".join(sorted(available_fields))
                 )
             right_source_operations = {
                 "match_source",
@@ -2502,6 +2525,8 @@ class AnalysisService:
             q for q in plan.queries if q.query_id not in fanout_ids
         ]
 
+        results: List[QueryResult] = []
+
         # 1. Execute universe queries and build the security list
         universe_rows: List[Dict[str, Any]] = []
         for universe_query in universe_queries:
@@ -2512,6 +2537,7 @@ class AnalysisService:
             )
             if universe_result.status != QueryStatus.SUCCESS:
                 return [universe_result]
+            results.append(universe_result)
             if universe_query.operation == "stock_basic":
                 universe_rows.extend(universe_result.rows)
                 continue
@@ -2530,8 +2556,6 @@ class AnalysisService:
         }
         stock_codes = sorted(deduped_universe.keys())
         universe_count = len(stock_codes)
-
-        results: List[QueryResult] = []
 
         # 2. Execute standalone queries
         if standalone_queries:
@@ -2601,7 +2625,8 @@ class AnalysisService:
                         row["ts_code"] = ts_code
                 return result
 
-            with ThreadPoolExecutor(max_workers=20) as pool:
+            failed_codes: List[str] = []
+            with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
                 futures = [pool.submit(_fetch_security, ts_code) for ts_code in stock_codes]
                 for index, future in enumerate(as_completed(futures), start=1):
                     security_result = future.result()
@@ -2624,7 +2649,8 @@ class AnalysisService:
                         if tolerable:
                             missing_count += 1
                         else:
-                            results.append(security_result)
+                            failed_code = security_result.query_id.rsplit("-", 1)[-1]
+                            failed_codes.append(failed_code)
 
                     if index % HOLDER_FANOUT_LOG_INTERVAL == 0:
                         logger.info(
@@ -2640,6 +2666,39 @@ class AnalysisService:
                         or index == universe_count
                     ):
                         progress_callback(index, universe_count)
+
+            remaining_failures: List[QueryResult] = []
+            for _ in range(FANOUT_RECOVERY_ATTEMPTS):
+                if not failed_codes:
+                    break
+                retry_codes = failed_codes
+                failed_codes = []
+                for ts_code in retry_codes:
+                    security_result = _fetch_security(ts_code)
+                    if security_result.status == QueryStatus.SUCCESS:
+                        fanout_rows.extend(security_result.rows)
+                    else:
+                        failed_codes.append(ts_code)
+                        remaining_failures.append(security_result)
+            if failed_codes:
+                first_failure = next(
+                    (
+                        result
+                        for result in reversed(remaining_failures)
+                        if result.query_id.endswith(tuple(failed_codes))
+                    ),
+                    remaining_failures[-1],
+                )
+                results.append(
+                    QueryResult(
+                        query_id=template.query_id,
+                        provider=self._provider.name,
+                        operation=template.operation,
+                        status=QueryStatus.ERROR,
+                        error=first_failure.error,
+                    )
+                )
+                continue
 
             logger.info(
                 "fanout_completed request_id=%s operation=%s "

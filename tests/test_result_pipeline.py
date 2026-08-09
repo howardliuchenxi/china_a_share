@@ -958,6 +958,46 @@ def test_time_series_sort_and_limit_allows_repeated_security_identifiers():
     assert result.row_count == 2
 
 
+@pytest.mark.parametrize(
+    ("comparison", "expected_codes"),
+    [
+        ("contains", ["000001.SZ"]),
+        ("not_contains", ["600000.SH"]),
+    ],
+)
+def test_pipeline_filters_string_substrings(comparison, expected_codes):
+    source = QueryResult(
+        query_id="universe",
+        provider="tushare",
+        operation="stock_basic",
+        status="success",
+        columns=["ts_code", "industry"],
+        rows=[
+            {"ts_code": "000001.SZ", "industry": "汽车零部件"},
+            {"ts_code": "600000.SH", "industry": "银行"},
+        ],
+        row_count=2,
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "universe",
+            "output_query_id": "filtered",
+            "steps": [
+                {
+                    "operation": "filter",
+                    "field": "industry",
+                    "comparison": comparison,
+                    "value": "汽车",
+                }
+            ],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert [row["ts_code"] for row in result.rows] == expected_codes
+
+
 def test_result_pipeline_filters_by_quantile():
     pipeline = ResultPipeline.model_validate(
         {

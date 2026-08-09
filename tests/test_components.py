@@ -26,6 +26,7 @@ from china_a_share.core.contracts import (
     ExecutionNode,
     ExecutionPlan,
     QueryPlan,
+    QueryConstraint,
     QueryResult,
     RequirementCoverage,
     ResultPipeline,
@@ -239,6 +240,60 @@ def test_validator_accepts_universe_constraint_enforced_before_ranking():
     ).validate(plan)
 
     assert validated.constraints[0].field == "area"
+
+
+def test_validator_accepts_universe_constraint_enforced_by_semi_join():
+    plan = make_daily_plan()
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.queries[0].aggregations = []
+    plan.queries.append(
+        DataQuery(
+            query_id="classified-universe",
+            operation="stock_basic",
+            fields=["ts_code", "industry"],
+            purpose="Build the requested classified universe.",
+            filters=[
+                {"field": "industry", "operator": "contains", "value": "汽车"}
+            ],
+        )
+    )
+    plan.constraints = [
+        QueryConstraint(
+            constraint_id="target_industry",
+            scope="universe",
+            field="industry",
+            operator="contains",
+            value="汽车",
+            query_id="classified-universe",
+            enforcement_step_index=0,
+        )
+    ]
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "industry-prices",
+            "steps": [
+                {
+                    "operation": "semi_join",
+                    "right_source_query_id": "classified-universe",
+                    "join_on": ["ts_code"],
+                }
+            ],
+        }
+    )
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "industry-prices",
+            "result_kind": "table",
+            "outputs": [{"field": "ts_code", "description": "Security code."}],
+        }
+    )
+
+    validated = ASharePlanValidator(
+        FakeMarketDataProvider(stock_frame=pd.DataFrame())
+    ).validate(plan)
+
+    assert validated.constraints[0].enforcement_step_index == 0
 
 
 def test_validator_rejects_universe_constraint_enforced_after_ranking():
@@ -1943,12 +1998,24 @@ def test_deepseek_raw_normalization_applies_same_adapter_to_execution_nodes():
     }
 
     DeepSeekQueryPlanner._normalize_raw_query_defaults(raw_plan)
+    normalized_plan = QueryPlan.model_validate(raw_plan)
+    normalized_plan.execution_plan.nodes[1].query.fields = []
+    normalized_plan.execution_plan.nodes[1].query.params["fields"] = [
+        "ts_code",
+        "trade_date",
+    ]
+    DeepSeekQueryPlanner._normalize_fields(normalized_plan)
 
     step = raw_plan["execution_plan"]["nodes"][2]["step"]
     assert raw_plan["execution_plan"]["nodes"][0]["query"]["query_id"] == "left"
     assert step["operation"] == "inner_join"
     assert step["right_source_query_id"] == "right"
     assert step["fields"] == {}
+    assert normalized_plan.execution_plan.nodes[1].query.fields == [
+        "ts_code",
+        "trade_date",
+    ]
+    assert "fields" not in normalized_plan.execution_plan.nodes[1].query.params
 
 
 def test_deepseek_raw_normalization_binds_constraint_alias_to_unique_parameter():

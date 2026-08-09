@@ -23,8 +23,15 @@ COMPARISONS: Dict[str, Callable[[pd.Series, object], pd.Series]] = {
     "gt": lambda series, value: series > value,
     "ge": lambda series, value: series >= value,
     "eq": lambda series, value: series == value,
+    "ne": lambda series, value: series != value,
     "le": lambda series, value: series <= value,
     "lt": lambda series, value: series < value,
+    "contains": lambda series, value: series.astype("string").str.contains(
+        str(value), regex=False, na=False
+    ),
+    "not_contains": lambda series, value: ~series.astype("string").str.contains(
+        str(value), regex=False, na=False
+    ),
 }
 
 

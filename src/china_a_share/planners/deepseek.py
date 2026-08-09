@@ -1152,7 +1152,16 @@ class DeepSeekQueryPlanner:
     @staticmethod
     def _normalize_pipeline_step_syntax(steps: list) -> None:
         """Canonicalize only unambiguous aliases across every pipeline operation."""
-        comparison_operators = {"gt", "ge", "eq", "le", "lt"}
+        comparison_operators = {
+            "gt",
+            "ge",
+            "eq",
+            "ne",
+            "le",
+            "lt",
+            "contains",
+            "not_contains",
+        }
         arithmetic_operators = {
             "add",
             "subtract",
@@ -1236,7 +1245,14 @@ class DeepSeekQueryPlanner:
     @staticmethod
     def _normalize_fields(plan: QueryPlan) -> None:
         """Move a model-generated reserved fields parameter into the contract slot."""
-        for query in plan.queries:
+        queries = list(plan.queries)
+        if plan.execution_plan is not None:
+            queries.extend(
+                node.query
+                for node in plan.execution_plan.nodes
+                if node.kind == "query"
+            )
+        for query in queries:
             misplaced_fields = query.params.pop("fields", None)
             if query.fields or misplaced_fields is None:
                 continue
