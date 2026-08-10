@@ -210,6 +210,7 @@ def test_replayed_event_study_is_normalized_validated_and_executed_end_to_end():
         request_id="quality-event-study",
         request=AnalysisRequest(prompt=EVENT_STUDY_PROMPT),
         api_route="/quality/event-study",
+        progress_callback=lambda completed, total: None,
     )
 
     assert response.status is AnalysisStatus.SUCCESS
