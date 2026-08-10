@@ -192,6 +192,48 @@ def test_research_dataset_requests_only_selected_daily_basic_factors():
     assert result.event_examples[0].future_trade_date == "20260106"
 
 
+def test_research_dataset_requests_sources_for_selected_rolling_factors():
+    trade_dates = ["20260105", "20260106"]
+    executor = FakeQueryExecutor(
+        trade_dates,
+        {
+            date: [{"ts_code": "000001.SZ", "turnover_rate": 2.0}]
+            for date in trade_dates
+        },
+        {
+            date: [
+                {
+                    "ts_code": "000001.SZ",
+                    "close": close,
+                    "vol": 100.0,
+                    "amount": 1000.0,
+                }
+            ]
+            for date, close in zip(trade_dates, [10.0, 11.0])
+        },
+    )
+
+    FactorBacktester(executor).build_dataset(
+        "20260105",
+        "20260105",
+        forward_days=1,
+        factor_fields=[
+            "turnover_to_5d_avg_ratio",
+            "volume_to_5d_avg_ratio",
+            "amount_to_5d_avg_ratio",
+        ],
+    )
+
+    basic_queries = [
+        query for query in executor.queries if query.operation == "daily_basic"
+    ]
+    price_queries = [query for query in executor.queries if query.operation == "daily"]
+    assert all(
+        query.fields == ["ts_code", "turnover_rate"] for query in basic_queries
+    )
+    assert all("vol" in query.fields and "amount" in query.fields for query in price_queries)
+
+
 def test_research_dataset_reports_progress_after_each_bounded_fetch_batch(
     monkeypatch,
 ):
@@ -301,6 +343,9 @@ def test_research_dataset_derives_longer_horizon_and_session_shape_features():
             "low": [117.0] * 21,
             "close": [120.0] * 21,
             "pre_close": [119.0] * 21,
+            "vol": [float(index + 1) for index in trade_dates],
+            "amount": [float((index + 1) * 10) for index in trade_dates],
+            "turnover_rate": [float(index + 1) for index in trade_dates],
         }
     )
 
@@ -319,6 +364,17 @@ def test_research_dataset_derives_longer_horizon_and_session_shape_features():
     assert result["open_gap_pct"] == pytest.approx((118.0 / 119.0 - 1.0) * 100.0)
     assert result["intraday_return_pct"] == pytest.approx((120.0 / 118.0 - 1.0) * 100.0)
     assert result["close_location_pct"] == pytest.approx(75.0)
+    assert result["distance_from_5d_ma_pct"] == pytest.approx((120.0 / 118.0 - 1.0) * 100.0)
+    assert result["distance_from_20d_ma_pct"] == pytest.approx((120.0 / 110.5 - 1.0) * 100.0)
+    assert result["downside_deviation_5d_pct"] == 0.0
+    assert result["downside_deviation_20d_pct"] == 0.0
+    assert result["volume_to_5d_avg_ratio"] == pytest.approx(21.0 / 19.0)
+    assert result["volume_to_20d_avg_ratio"] == pytest.approx(21.0 / 11.5)
+    assert result["volume_5d_to_20d_avg_ratio"] == pytest.approx(19.0 / 11.5)
+    assert result["amount_to_5d_avg_ratio"] == pytest.approx(21.0 / 19.0)
+    assert result["turnover_5d_avg_pct"] == pytest.approx(19.0)
+    assert result["turnover_20d_avg_pct"] == pytest.approx(11.5)
+    assert result["turnover_to_20d_avg_ratio"] == pytest.approx(21.0 / 11.5)
 
 
 def test_sequence_features_reject_non_consecutive_security_history():
@@ -2188,7 +2244,7 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
 
 @pytest.mark.parametrize(
     ("factor_count", "expected_pool_size"),
-    [(10, 40), (20, PAIRING_CANDIDATE_LIMIT)],
+    [(10, 40), (30, PAIRING_CANDIDATE_LIMIT)],
 )
 def test_rule_search_fills_pairing_pool_with_alternate_directions(
     factor_count,

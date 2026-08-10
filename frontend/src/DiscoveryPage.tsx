@@ -14,13 +14,19 @@ interface DiscoveryPageProps {
 
 const terminalStatuses = new Set(["succeeded", "failed"]);
 const discoveryFactorFields = new Set([
-  "amount", "circ_mv", "close", "close_location_pct", "distance_from_5d_peak_pct",
+  "amount", "amount_5d_to_20d_avg_ratio", "amount_to_5d_avg_ratio", "amount_to_20d_avg_ratio",
+  "circ_mv", "close", "close_location_pct", "distance_from_5d_ma_pct", "distance_from_10d_ma_pct",
+  "distance_from_20d_ma_pct", "distance_from_5d_peak_pct",
   "distance_from_10d_peak_pct", "distance_from_20d_peak_pct", "dv_ratio", "dv_ttm", "float_share",
   "free_share", "intraday_range_pct", "intraday_return_pct", "max_drawdown_5d_pct", "open",
   "open_gap_pct", "pb", "pct_chg", "pe", "pe_ttm", "ps", "ps_ttm", "positive_days_3",
+  "downside_deviation_5d_pct", "downside_deviation_10d_pct", "downside_deviation_20d_pct",
   "positive_days_5", "positive_days_10", "return_5d_pct", "return_10d_pct", "return_20d_pct",
-  "total_mv", "total_share", "turnover_rate", "turnover_rate_f", "vol", "volatility_5d_pct",
-  "volatility_10d_pct", "volatility_20d_pct", "volume_ratio",
+  "total_mv", "total_share", "turnover_rate", "turnover_rate_f", "turnover_5d_avg_pct",
+  "turnover_20d_avg_pct", "turnover_5d_to_20d_avg_ratio", "turnover_to_5d_avg_ratio",
+  "turnover_to_20d_avg_ratio", "vol", "volatility_5d_pct", "volatility_10d_pct",
+  "volatility_20d_pct", "volume_ratio", "volume_5d_to_20d_avg_ratio", "volume_to_5d_avg_ratio",
+  "volume_to_20d_avg_ratio",
 ]);
 const discoveryFactorEntries = DATA_DICTIONARY_ENTRIES.filter(entry =>
   discoveryFactorFields.has(entry.field),
@@ -29,12 +35,21 @@ const discoveryFactorLabels = new Map(
   discoveryFactorEntries.map(entry => [entry.field, entry.label]),
 );
 const unsupportedDirectApplicationFields = new Set([
+  "amount_5d_to_20d_avg_ratio",
+  "amount_to_5d_avg_ratio",
+  "amount_to_20d_avg_ratio",
   "close_location_pct",
+  "distance_from_5d_ma_pct",
+  "distance_from_10d_ma_pct",
+  "distance_from_20d_ma_pct",
   "distance_from_10d_peak_pct",
   "distance_from_20d_peak_pct",
   "distance_from_5d_peak_pct",
   "intraday_range_pct",
   "intraday_return_pct",
+  "downside_deviation_5d_pct",
+  "downside_deviation_10d_pct",
+  "downside_deviation_20d_pct",
   "max_drawdown_5d_pct",
   "positive_days_3",
   "positive_days_5",
@@ -42,10 +57,18 @@ const unsupportedDirectApplicationFields = new Set([
   "return_10d_pct",
   "return_20d_pct",
   "return_5d_pct",
+  "turnover_5d_avg_pct",
+  "turnover_20d_avg_pct",
+  "turnover_5d_to_20d_avg_ratio",
+  "turnover_to_5d_avg_ratio",
+  "turnover_to_20d_avg_ratio",
   "open_gap_pct",
   "volatility_10d_pct",
   "volatility_20d_pct",
   "volatility_5d_pct",
+  "volume_5d_to_20d_avg_ratio",
+  "volume_to_5d_avg_ratio",
+  "volume_to_20d_avg_ratio",
 ]);
 const untestedValidationReasons = new Set([
   "not_evaluated",

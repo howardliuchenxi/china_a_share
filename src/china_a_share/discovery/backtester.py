@@ -35,25 +35,55 @@ CALENDAR_EXTENSION_MINIMUM_DAYS = 31
 HISTORICAL_FEATURE_LOOKBACK_SESSIONS = 20
 SHORT_FEATURE_LOOKBACK_SESSIONS = 5
 SEQUENCE_FACTOR_LOOKBACKS = {
+    "amount_5d_to_20d_avg_ratio": 19,
+    "amount_to_5d_avg_ratio": 4,
+    "amount_to_20d_avg_ratio": 19,
+    "distance_from_5d_ma_pct": 4,
+    "distance_from_10d_ma_pct": 9,
+    "distance_from_20d_ma_pct": 19,
     "distance_from_5d_peak_pct": 5,
     "distance_from_10d_peak_pct": 10,
     "distance_from_20d_peak_pct": 20,
     "max_drawdown_5d_pct": 5,
+    "downside_deviation_5d_pct": 5,
+    "downside_deviation_10d_pct": 10,
+    "downside_deviation_20d_pct": 20,
     "positive_days_3": 3,
     "positive_days_5": 5,
     "positive_days_10": 10,
     "return_5d_pct": 5,
     "return_10d_pct": 10,
     "return_20d_pct": 20,
+    "turnover_5d_avg_pct": 4,
+    "turnover_20d_avg_pct": 19,
+    "turnover_5d_to_20d_avg_ratio": 19,
+    "turnover_to_5d_avg_ratio": 4,
+    "turnover_to_20d_avg_ratio": 19,
+    "volume_5d_to_20d_avg_ratio": 19,
+    "volume_to_5d_avg_ratio": 4,
+    "volume_to_20d_avg_ratio": 19,
     "volatility_5d_pct": 5,
     "volatility_10d_pct": 10,
     "volatility_20d_pct": 20,
 }
 SESSION_FACTOR_DEPENDENCIES = {
+    "amount_5d_to_20d_avg_ratio": {"amount"},
+    "amount_to_5d_avg_ratio": {"amount"},
+    "amount_to_20d_avg_ratio": {"amount"},
     "close_location_pct": {"close", "high", "low"},
     "intraday_range_pct": {"high", "low", "pre_close"},
     "intraday_return_pct": {"open", "close"},
     "open_gap_pct": {"open", "pre_close"},
+    "volume_5d_to_20d_avg_ratio": {"vol"},
+    "volume_to_5d_avg_ratio": {"vol"},
+    "volume_to_20d_avg_ratio": {"vol"},
+}
+BASIC_FACTOR_DEPENDENCIES = {
+    "turnover_5d_avg_pct": {"turnover_rate"},
+    "turnover_20d_avg_pct": {"turnover_rate"},
+    "turnover_5d_to_20d_avg_ratio": {"turnover_rate"},
+    "turnover_to_5d_avg_ratio": {"turnover_rate"},
+    "turnover_to_20d_avg_ratio": {"turnover_rate"},
 }
 EVENT_EXAMPLE_LIMIT = 5
 OUTCOME_RULE_FIELDS = frozenset(
@@ -356,6 +386,56 @@ class FactorBacktester:
             ).transform(lambda values: values.rolling(window).sum()).where(
                 has_consecutive_sessions
             )
+
+        for window in (5, 10, 20):
+            prior_rank = grouped_rank.shift(window - 1)
+            has_consecutive_observations = session_rank - prior_rank == window - 1
+            moving_average = grouped_close.transform(
+                lambda values: values.rolling(window).mean()
+            )
+            enriched[f"distance_from_{window}d_ma_pct"] = (
+                (enriched["adjusted_close"] / moving_average - 1.0) * 100.0
+            ).where(has_consecutive_observations & moving_average.gt(0.0))
+
+        downside_squared = daily_return.clip(upper=0.0).pow(2.0)
+        for window in (5, 10, 20):
+            prior_rank = grouped_rank.shift(window)
+            has_consecutive_returns = session_rank - prior_rank == window
+            mean_downside_squared = downside_squared.groupby(
+                enriched["ts_code"], sort=False
+            ).transform(lambda values: values.rolling(window).mean())
+            enriched[f"downside_deviation_{window}d_pct"] = (
+                mean_downside_squared.pow(0.5) * 100.0
+            ).where(has_consecutive_returns)
+
+        rolling_averages = {}
+        for source_field, factor_prefix in (
+            ("vol", "volume"),
+            ("amount", "amount"),
+            ("turnover_rate", "turnover"),
+        ):
+            source = pd.to_numeric(
+                enriched.get(source_field, missing_price), errors="coerce"
+            )
+            grouped_source = source.groupby(enriched["ts_code"], sort=False)
+            for window in (5, 20):
+                prior_rank = grouped_rank.shift(window - 1)
+                has_consecutive_observations = (
+                    session_rank - prior_rank == window - 1
+                )
+                average = grouped_source.transform(
+                    lambda values: values.rolling(window).mean()
+                ).where(has_consecutive_observations)
+                rolling_averages[(source_field, window)] = average
+                if source_field == "turnover_rate":
+                    enriched[f"turnover_{window}d_avg_pct"] = average
+                enriched[f"{factor_prefix}_to_{window}d_avg_ratio"] = (
+                    source / average
+                ).where(average.gt(0.0))
+            enriched[f"{factor_prefix}_5d_to_20d_avg_ratio"] = (
+                rolling_averages[(source_field, 5)]
+                / rolling_averages[(source_field, 20)]
+            ).where(rolling_averages[(source_field, 20)].gt(0.0))
         return enriched
 
     def run_backtest(
@@ -836,6 +916,12 @@ class FactorBacktester:
                     - DISCOVERY_SEQUENCE_FACTOR_FIELDS
                 )
             )
+            if basic_factor_fields is not None:
+                for field in factor_fields or []:
+                    basic_factor_fields.extend(
+                        BASIC_FACTOR_DEPENDENCIES.get(field, set())
+                    )
+                basic_factor_fields = sorted(set(basic_factor_fields))
             basic_result = self._executor.execute(
                 DataQuery(
                     query_id=f"discovery-basic-{trade_date}",
