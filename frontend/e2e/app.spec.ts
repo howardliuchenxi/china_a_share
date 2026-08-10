@@ -911,6 +911,11 @@ test("discovery page submits a bounded study and renders validation evidence", a
   await expect(topWindowComparison).toContainText("可比基准命中率");
   await expect(topWindowComparison).toContainText("可比基准命中率（含规则样本）");
   await expect(topWindowComparison).toContainText("相对可比全体（N=1182）");
+  const baselineLiftHelp = topWindowComparison.getByLabel(/相对可比全体：/).first();
+  await baselineLiftHelp.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(
+    "规则命中率减去可比基准命中率。N 是用于计算可比基准命中率且标签可观测的事件数。",
+  );
   await expect(topWindowComparison).toContainText("52.0%");
   await expect(topWindowComparison).toContainText("51.0%");
   await expect(topWindowComparison).toContainText("信号日复权收盘");

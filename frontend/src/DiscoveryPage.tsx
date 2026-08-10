@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DATA_DICTIONARY_ENTRIES } from "./dataDictionary";
+import { TermHelp } from "./TermHelp";
 import {
   BacktestResult,
   DiscoveryTaskRequest,
@@ -153,19 +154,19 @@ function MetricSet({ result }: { result: BacktestResult }) {
   const hasLift = hasOutcomes && hasBaseline;
   return (
     <div className="rule-metrics">
-      <span><small>收益超过 {percent(result.target_return)}</small><strong>{hasOutcomes ? percent(result.win_rate) : "—"}</strong></span>
-      <span><small>可比基准命中率（含规则样本）</small><strong>{hasBaseline ? percent(result.baseline_win_rate) : "—"}</strong></span>
-      <span><small>相对可比全体（N={result.baseline_sample_count}）</small><strong className={hasLift ? (result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative") : undefined}>{hasLift ? `${result.win_rate_lift >= 0 ? "+" : ""}${percent(result.win_rate_lift)}` : "—"}</strong></span>
-      <span><small>平均收益</small><strong>{hasOutcomes ? percent(result.mean_return, 2) : "—"}</strong></span>
-      <span><small>收益起点</small><strong>信号日复权收盘</strong></span>
-      <span><small>样本 / 交易日 / 证券</small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
-      <span><small>日期集中度折算后有效交易日</small><strong>{result.effective_trading_day_count.toFixed(1)}</strong></span>
-      <span><small>证券集中度折算后有效证券</small><strong>{result.effective_security_count.toFixed(1)}</strong></span>
-      <span><small>最大单股事件占比</small><strong>{percent(result.max_security_event_share)}</strong></span>
-      <span><small>最大单日事件占比</small><strong>{percent(result.max_signal_date_event_share)}</strong></span>
-      <span><small>规则覆盖（可比事件 {result.eligible_sample_count}）</small><strong>{percent(result.rule_support_rate)}</strong></span>
-      <span><small>标签覆盖</small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
-      <span><small>可比基准标签覆盖</small><strong>{percent(result.baseline_outcome_coverage_rate)}</strong></span>
+      <span><small>收益超过 {percent(result.target_return)} <TermHelp label="收益超过目标" description="规则命中事件中，未来收益严格高于目标收益的比例。" /></small><strong>{hasOutcomes ? percent(result.win_rate) : "—"}</strong></span>
+      <span><small>可比基准命中率（含规则样本） <TermHelp label="可比基准命中率" description="同一窗口、相同持有期且未来收益可观测的全部可比事件中，收益超过目标的比例；其中也包含规则命中的事件。" /></small><strong>{hasBaseline ? percent(result.baseline_win_rate) : "—"}</strong></span>
+      <span><small>相对可比全体（N={result.baseline_sample_count}） <TermHelp label="相对可比全体" description="规则命中率减去可比基准命中率。N 是用于计算可比基准命中率且标签可观测的事件数。" /></small><strong className={hasLift ? (result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative") : undefined}>{hasLift ? `${result.win_rate_lift >= 0 ? "+" : ""}${percent(result.win_rate_lift)}` : "—"}</strong></span>
+      <span><small>平均收益 <TermHelp label="平均收益" description="规则命中且未来收益可观测的事件，其未来收益的算术平均值。" /></small><strong>{hasOutcomes ? percent(result.mean_return, 2) : "—"}</strong></span>
+      <span><small>收益起点 <TermHelp label="收益起点" description="未来收益从信号日的后复权收盘价开始计算，用于消除分红送转造成的价格断点。" /></small><strong>信号日复权收盘</strong></span>
+      <span><small>样本 / 交易日 / 证券 <TermHelp label="样本、交易日与证券" description="依次为规则命中事件数、这些事件覆盖的不同信号交易日数和不同证券数。" /></small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
+      <span><small>日期集中度折算后有效交易日 <TermHelp label="有效交易日" description="按各交易日事件占比的集中程度折算出的等效独立交易日数；越接近实际交易日数，日期分布越均匀。" /></small><strong>{result.effective_trading_day_count.toFixed(1)}</strong></span>
+      <span><small>证券集中度折算后有效证券 <TermHelp label="有效证券" description="按各证券事件占比的集中程度折算出的等效独立证券数；越接近实际证券数，样本越不依赖少数个股。" /></small><strong>{result.effective_security_count.toFixed(1)}</strong></span>
+      <span><small>最大单股事件占比 <TermHelp label="最大单股事件占比" description="命中事件最多的一只证券占全部规则命中事件的比例，用于识别单股集中风险。" /></small><strong>{percent(result.max_security_event_share)}</strong></span>
+      <span><small>最大单日事件占比 <TermHelp label="最大单日事件占比" description="命中事件最多的一个信号日占全部规则命中事件的比例，用于识别日期集中风险。" /></small><strong>{percent(result.max_signal_date_event_share)}</strong></span>
+      <span><small>规则覆盖（可比事件 {result.eligible_sample_count}） <TermHelp label="规则覆盖" description="满足规则的事件数占全部可比事件数的比例；括号内是应用规则前的可比事件总数。" /></small><strong>{percent(result.rule_support_rate)}</strong></span>
+      <span><small>标签覆盖 <TermHelp label="标签覆盖" description="规则命中事件中，能够取得完整未来收益标签的比例。" /></small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
+      <span><small>可比基准标签覆盖 <TermHelp label="可比基准标签覆盖" description="全部可比事件中，能够取得完整未来收益标签的比例。" /></small><strong>{percent(result.baseline_outcome_coverage_rate)}</strong></span>
     </div>
   );
 }
