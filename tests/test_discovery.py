@@ -289,6 +289,38 @@ def test_research_dataset_derives_point_in_time_max_drawdown():
     )
 
 
+def test_research_dataset_derives_longer_horizon_and_session_shape_features():
+    trade_dates = list(range(21))
+    panel = pd.DataFrame(
+        {
+            "ts_code": [1] * 21,
+            "trade_date": trade_dates,
+            "adjusted_close": [100.0 + index for index in trade_dates],
+            "open": [118.0] * 21,
+            "high": [121.0] * 21,
+            "low": [117.0] * 21,
+            "close": [120.0] * 21,
+            "pre_close": [119.0] * 21,
+        }
+    )
+
+    enriched = FactorBacktester._add_historical_features(panel, trade_dates)
+    result = enriched.iloc[-1]
+
+    assert result["return_10d_pct"] == pytest.approx((120.0 / 110.0 - 1.0) * 100.0)
+    assert result["return_20d_pct"] == pytest.approx(20.0)
+    assert result["volatility_10d_pct"] > 0.0
+    assert result["volatility_20d_pct"] > 0.0
+    assert result["distance_from_10d_peak_pct"] == 0.0
+    assert result["distance_from_20d_peak_pct"] == 0.0
+    assert result["positive_days_5"] == 5.0
+    assert result["positive_days_10"] == 10.0
+    assert result["intraday_range_pct"] == pytest.approx(4.0 / 119.0 * 100.0)
+    assert result["open_gap_pct"] == pytest.approx((118.0 / 119.0 - 1.0) * 100.0)
+    assert result["intraday_return_pct"] == pytest.approx((120.0 / 118.0 - 1.0) * 100.0)
+    assert result["close_location_pct"] == pytest.approx(75.0)
+
+
 def test_sequence_features_reject_non_consecutive_security_history():
     trade_dates = [f"202601{index:02d}" for index in range(5, 12)]
     prices = {}
@@ -2156,7 +2188,7 @@ def test_rule_search_balances_factors_and_directions_in_the_pairing_pool():
 
 @pytest.mark.parametrize(
     ("factor_count", "expected_pool_size"),
-    [(10, 40), (13, PAIRING_CANDIDATE_LIMIT)],
+    [(10, 40), (20, PAIRING_CANDIDATE_LIMIT)],
 )
 def test_rule_search_fills_pairing_pool_with_alternate_directions(
     factor_count,

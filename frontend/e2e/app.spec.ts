@@ -1189,10 +1189,10 @@ test("discovery page supports broad factor selection and fast reset", async ({ p
   await page.goto("/analysis");
   await page.getByRole("tab", { name: "策略挖掘" }).click();
 
-  await expect(page.getByText("可搜索 25 个", { exact: true })).toBeVisible();
+  await expect(page.getByText("可搜索 37 个", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "全选全部因子" }).click();
-  await expect(page.locator(".factor-selector legend strong")).toHaveText("25");
-  await expect(page.locator(".factor-checkbox.is-selected")).toHaveCount(25);
+  await expect(page.locator(".factor-selector legend strong")).toHaveText("37");
+  await expect(page.locator(".factor-checkbox.is-selected")).toHaveCount(37);
   await expect(page.getByText("自由流通换手率")).toBeVisible();
 
   await page.getByRole("button", { name: "清空重选" }).click();

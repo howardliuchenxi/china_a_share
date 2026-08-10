@@ -24,13 +24,37 @@ from china_a_share.core.contracts import (
 
 DATA_FETCH_WORKERS = 20
 DATA_FETCH_BATCH_SIZE = DATA_FETCH_WORKERS
-SESSION_PRICE_FIELDS = frozenset({"open", "close", "pct_chg", "vol", "amount"})
+SESSION_PRICE_FIELDS = frozenset(
+    {"open", "high", "low", "close", "pre_close", "pct_chg", "vol", "amount"}
+)
 SECURITY_EXCHANGE_OFFSETS = {"SZ": 0, "SH": 1_000_000, "BJ": 2_000_000}
 CALENDAR_EXTENSION_MULTIPLIER = 3
 # A full-month floor covers Spring Festival and exceptional exchange closures
 # when even a one-session forward label can be more than ten calendar days away.
 CALENDAR_EXTENSION_MINIMUM_DAYS = 31
-HISTORICAL_FEATURE_LOOKBACK_SESSIONS = 5
+HISTORICAL_FEATURE_LOOKBACK_SESSIONS = 20
+SHORT_FEATURE_LOOKBACK_SESSIONS = 5
+SEQUENCE_FACTOR_LOOKBACKS = {
+    "distance_from_5d_peak_pct": 5,
+    "distance_from_10d_peak_pct": 10,
+    "distance_from_20d_peak_pct": 20,
+    "max_drawdown_5d_pct": 5,
+    "positive_days_3": 3,
+    "positive_days_5": 5,
+    "positive_days_10": 10,
+    "return_5d_pct": 5,
+    "return_10d_pct": 10,
+    "return_20d_pct": 20,
+    "volatility_5d_pct": 5,
+    "volatility_10d_pct": 10,
+    "volatility_20d_pct": 20,
+}
+SESSION_FACTOR_DEPENDENCIES = {
+    "close_location_pct": {"close", "high", "low"},
+    "intraday_range_pct": {"high", "low", "pre_close"},
+    "intraday_return_pct": {"open", "close"},
+    "open_gap_pct": {"open", "pre_close"},
+}
 EVENT_EXAMPLE_LIMIT = 5
 OUTCOME_RULE_FIELDS = frozenset(
     {"forward_return", "future_adjusted_close", "future_trade_date"}
@@ -65,7 +89,20 @@ class FactorBacktester:
                 CALENDAR_EXTENSION_MINIMUM_DAYS,
             )
         )
-        historical_start = start - timedelta(days=CALENDAR_EXTENSION_MINIMUM_DAYS)
+        historical_lookback = (
+            HISTORICAL_FEATURE_LOOKBACK_SESSIONS
+            if factor_fields is None
+            else max(
+                (SEQUENCE_FACTOR_LOOKBACKS.get(field, 0) for field in factor_fields),
+                default=0,
+            )
+        )
+        historical_start = start - timedelta(
+            days=max(
+                CALENDAR_EXTENSION_MINIMUM_DAYS,
+                historical_lookback * CALENDAR_EXTENSION_MULTIPLIER,
+            )
+        )
         trade_dates = self._load_trade_dates(
             historical_start.strftime("%Y%m%d"),
             extended_end.strftime("%Y%m%d"),
@@ -87,7 +124,7 @@ class FactorBacktester:
             raise ValueError("Forward return window extends beyond available sessions.")
         required_start_index = max(
             0,
-            first_signal_index - HISTORICAL_FEATURE_LOOKBACK_SESSIONS,
+            first_signal_index - historical_lookback,
         )
         required_dates = trade_dates[
             required_start_index : required_end_index + 1
@@ -194,10 +231,36 @@ class FactorBacktester:
         grouped_rank = session_rank.groupby(enriched["ts_code"], sort=False)
         grouped_close = enriched.groupby("ts_code", sort=False)["adjusted_close"]
 
-        prior_rank_5 = grouped_rank.shift(HISTORICAL_FEATURE_LOOKBACK_SESSIONS)
-        prior_close_5 = grouped_close.shift(HISTORICAL_FEATURE_LOOKBACK_SESSIONS)
+        # Same-session ratios remain invariant to split adjustments and are fully
+        # observable after the signal-day close.
+        missing_price = pd.Series(float("nan"), index=enriched.index)
+        open_price = pd.to_numeric(enriched.get("open", missing_price), errors="coerce")
+        high_price = pd.to_numeric(enriched.get("high", missing_price), errors="coerce")
+        low_price = pd.to_numeric(enriched.get("low", missing_price), errors="coerce")
+        close_price = pd.to_numeric(enriched.get("close", missing_price), errors="coerce")
+        previous_close = pd.to_numeric(
+            enriched.get("pre_close", missing_price), errors="coerce"
+        )
+        valid_previous_close = previous_close > 0.0
+        valid_open = open_price > 0.0
+        valid_range = high_price > low_price
+        enriched["intraday_range_pct"] = (
+            (high_price - low_price) / previous_close * 100.0
+        ).where(valid_previous_close)
+        enriched["open_gap_pct"] = (
+            (open_price / previous_close - 1.0) * 100.0
+        ).where(valid_previous_close & valid_open)
+        enriched["intraday_return_pct"] = (
+            (close_price / open_price - 1.0) * 100.0
+        ).where(valid_open)
+        enriched["close_location_pct"] = (
+            (close_price - low_price) / (high_price - low_price) * 100.0
+        ).where(valid_range)
+
+        prior_rank_5 = grouped_rank.shift(SHORT_FEATURE_LOOKBACK_SESSIONS)
+        prior_close_5 = grouped_close.shift(SHORT_FEATURE_LOOKBACK_SESSIONS)
         has_five_consecutive_sessions = (
-            session_rank - prior_rank_5 == HISTORICAL_FEATURE_LOOKBACK_SESSIONS
+            session_rank - prior_rank_5 == SHORT_FEATURE_LOOKBACK_SESSIONS
         ) & prior_close_5.map(math.isfinite)
         enriched["return_5d_pct"] = (
             (enriched["adjusted_close"] / prior_close_5 - 1.0) * 100.0
@@ -260,6 +323,39 @@ class FactorBacktester:
             + prior_close_1.gt(prior_close_2).astype(int)
             + prior_close_2.gt(prior_close_3).astype(int)
         ).where(has_three_consecutive_sessions)
+
+        daily_return = grouped_close.pct_change(fill_method=None)
+        positive_day = daily_return.gt(0.0).astype(float)
+        for window in (10, 20):
+            prior_rank = grouped_rank.shift(window)
+            prior_close = grouped_close.shift(window)
+            has_consecutive_sessions = (
+                (session_rank - prior_rank == window)
+                & prior_close.map(math.isfinite)
+            )
+            enriched[f"return_{window}d_pct"] = (
+                (enriched["adjusted_close"] / prior_close - 1.0) * 100.0
+            ).where(has_consecutive_sessions)
+            enriched[f"volatility_{window}d_pct"] = (
+                daily_return.groupby(enriched["ts_code"], sort=False)
+                .transform(lambda values: values.rolling(window).std(ddof=0))
+                * 100.0
+            ).where(has_consecutive_sessions)
+            rolling_peak = grouped_close.transform(
+                lambda values: values.rolling(window + 1).max()
+            )
+            enriched[f"distance_from_{window}d_peak_pct"] = (
+                (enriched["adjusted_close"] / rolling_peak - 1.0) * 100.0
+            ).where(has_consecutive_sessions)
+
+        for window in (5, 10):
+            prior_rank = grouped_rank.shift(window)
+            has_consecutive_sessions = session_rank - prior_rank == window
+            enriched[f"positive_days_{window}"] = positive_day.groupby(
+                enriched["ts_code"], sort=False
+            ).transform(lambda values: values.rolling(window).sum()).where(
+                has_consecutive_sessions
+            )
         return enriched
 
     def run_backtest(
@@ -726,6 +822,11 @@ class FactorBacktester:
         factor_fields: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         try:
+            required_price_fields = set(factor_fields or SESSION_PRICE_FIELDS)
+            for field in factor_fields or []:
+                required_price_fields.update(
+                    SESSION_FACTOR_DEPENDENCIES.get(field, set())
+                )
             basic_factor_fields = (
                 None
                 if factor_fields is None
@@ -755,7 +856,17 @@ class FactorBacktester:
                     query_id=f"discovery-price-{trade_date}",
                     operation="daily",
                     params={"trade_date": trade_date},
-                    fields=["ts_code", "open", "close", "pct_chg", "vol", "amount"],
+                    fields=[
+                        "ts_code",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "pre_close",
+                        "pct_chg",
+                        "vol",
+                        "amount",
+                    ],
                     purpose="Load signal-date and future close prices.",
                 ),
                 api_route=api_route,
@@ -798,7 +909,7 @@ class FactorBacktester:
                     if field in price
                     and (
                         factor_fields is None
-                        or field in {"ts_code", "close", *factor_fields}
+                        or field in {"ts_code", "close", *required_price_fields}
                     )
                 ]
             ]

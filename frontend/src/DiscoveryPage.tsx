@@ -13,10 +13,13 @@ interface DiscoveryPageProps {
 
 const terminalStatuses = new Set(["succeeded", "failed"]);
 const discoveryFactorFields = new Set([
-  "amount", "circ_mv", "close", "distance_from_5d_peak_pct", "dv_ratio", "dv_ttm", "float_share",
-  "free_share", "max_drawdown_5d_pct", "open", "pb", "pct_chg", "pe", "pe_ttm", "ps",
-  "ps_ttm", "positive_days_3", "return_5d_pct", "total_mv", "total_share", "turnover_rate",
-  "turnover_rate_f", "vol", "volatility_5d_pct", "volume_ratio",
+  "amount", "circ_mv", "close", "close_location_pct", "distance_from_5d_peak_pct",
+  "distance_from_10d_peak_pct", "distance_from_20d_peak_pct", "dv_ratio", "dv_ttm", "float_share",
+  "free_share", "intraday_range_pct", "intraday_return_pct", "max_drawdown_5d_pct", "open",
+  "open_gap_pct", "pb", "pct_chg", "pe", "pe_ttm", "ps", "ps_ttm", "positive_days_3",
+  "positive_days_5", "positive_days_10", "return_5d_pct", "return_10d_pct", "return_20d_pct",
+  "total_mv", "total_share", "turnover_rate", "turnover_rate_f", "vol", "volatility_5d_pct",
+  "volatility_10d_pct", "volatility_20d_pct", "volume_ratio",
 ]);
 const discoveryFactorEntries = DATA_DICTIONARY_ENTRIES.filter(entry =>
   discoveryFactorFields.has(entry.field),
@@ -25,10 +28,22 @@ const discoveryFactorLabels = new Map(
   discoveryFactorEntries.map(entry => [entry.field, entry.label]),
 );
 const unsupportedDirectApplicationFields = new Set([
+  "close_location_pct",
+  "distance_from_10d_peak_pct",
+  "distance_from_20d_peak_pct",
   "distance_from_5d_peak_pct",
+  "intraday_range_pct",
+  "intraday_return_pct",
   "max_drawdown_5d_pct",
   "positive_days_3",
+  "positive_days_5",
+  "positive_days_10",
+  "return_10d_pct",
+  "return_20d_pct",
   "return_5d_pct",
+  "open_gap_pct",
+  "volatility_10d_pct",
+  "volatility_20d_pct",
   "volatility_5d_pct",
 ]);
 const untestedValidationReasons = new Set([

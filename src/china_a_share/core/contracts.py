@@ -36,10 +36,22 @@ AggregationFunction = Literal[
     "last",
 ]
 DISCOVERY_SEQUENCE_FACTOR_FIELDS = {
+    "close_location_pct",
+    "distance_from_10d_peak_pct",
+    "distance_from_20d_peak_pct",
     "distance_from_5d_peak_pct",
+    "intraday_range_pct",
+    "intraday_return_pct",
     "max_drawdown_5d_pct",
+    "open_gap_pct",
     "positive_days_3",
+    "positive_days_5",
+    "positive_days_10",
+    "return_10d_pct",
+    "return_20d_pct",
     "return_5d_pct",
+    "volatility_10d_pct",
+    "volatility_20d_pct",
     "volatility_5d_pct",
 }
 DISCOVERY_FACTOR_FIELDS = {
