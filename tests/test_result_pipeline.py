@@ -3,7 +3,7 @@ import logging
 import pytest
 
 from china_a_share.core.contracts import QueryResult, ResultPipeline
-from china_a_share.result_pipeline import ResultPipelineExecutor
+from china_a_share.result_pipeline import ResultPipelineExecutor, ResultValidationError
 from china_a_share.observability import ANALYSIS_REQUEST_ID
 
 
@@ -52,6 +52,121 @@ def test_pipeline_logs_request_scoped_step_row_counts(caplog):
     assert events[0]["input_row_count"] == 4
     assert events[0]["output_row_count"] == 3
     assert events[0]["eliminated_row_count"] == 1
+
+
+def market_direction_source():
+    """Return one source whose directional categories form a complete partition."""
+    return QueryResult(
+        query_id="market-direction",
+        provider="test",
+        operation="daily",
+        status="success",
+        columns=["change"],
+        rows=[
+            {"change": 2.0},
+            {"change": -1.0},
+            {"change": 0.0},
+            {"change": None},
+        ],
+        row_count=4,
+    )
+
+
+def market_direction_pipeline():
+    """Return a complete conditional-count pipeline for reconciliation tests."""
+    return ResultPipeline.model_validate(
+        {
+            "source_query_id": "market-direction",
+            "output_query_id": "market-direction-summary",
+            "steps": [
+                {
+                    "operation": "compare_scalar",
+                    "field": "change",
+                    "output_field": "is_positive",
+                    "comparison": "gt",
+                    "value": 0,
+                },
+                {
+                    "operation": "compare_scalar",
+                    "field": "change",
+                    "output_field": "is_negative",
+                    "comparison": "lt",
+                    "value": 0,
+                },
+                {
+                    "operation": "compare_scalar",
+                    "field": "change",
+                    "output_field": "is_flat",
+                    "comparison": "eq",
+                    "value": 0,
+                },
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "positive_count",
+                            "field": "is_positive",
+                            "function": "sum",
+                        },
+                        {
+                            "output_field": "negative_count",
+                            "field": "is_negative",
+                            "function": "sum",
+                        },
+                        {
+                            "output_field": "flat_count",
+                            "field": "is_flat",
+                            "function": "sum",
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+
+
+def test_pipeline_reconciles_conditional_summary_independently():
+    result = ResultPipelineExecutor().execute(
+        market_direction_pipeline(), market_direction_source()
+    )
+
+    assert result.rows == [
+        {"positive_count": 1, "negative_count": 1, "flat_count": 1}
+    ]
+
+
+def test_pipeline_rejects_summary_that_disagrees_with_independent_recalculation():
+    class CorruptSummaryExecutor(ResultPipelineExecutor):
+        def _execute_step(self, frame, step, sources):
+            result = super()._execute_step(frame, step, sources)
+            if step.operation == "summarize":
+                result.loc[0, "positive_count"] += 1
+            return result
+
+    with pytest.raises(ResultValidationError, match="Result reconciliation failed"):
+        CorruptSummaryExecutor().execute(
+            market_direction_pipeline(), market_direction_source()
+        )
+
+
+def test_pipeline_rejects_condition_that_disagrees_with_source_values():
+    class CorruptComparisonExecutor(ResultPipelineExecutor):
+        def _execute_step(self, frame, step, sources):
+            result = super()._execute_step(frame, step, sources)
+            if (
+                step.operation == "compare_scalar"
+                and step.output_field == "is_positive"
+            ):
+                result[step.output_field] = True
+            return result
+
+    with pytest.raises(
+        ResultValidationError,
+        match="conditional field 'is_positive'",
+    ):
+        CorruptComparisonExecutor().execute(
+            market_direction_pipeline(), market_direction_source()
+        )
 
 
 def test_pipeline_applies_projection_rename_distinct_and_predicate_operators():

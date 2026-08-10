@@ -35,7 +35,7 @@ from china_a_share.core.contracts import (
 from china_a_share.core.errors import PlannerError
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 from china_a_share.planners.vertex_claude import VertexClaudeQueryPlanner
-from china_a_share.result_pipeline import ResultPipelineExecutor
+from china_a_share.result_pipeline import ResultPipelineExecutor, ResultValidationError
 from china_a_share.registry import TushareOperationCatalog
 from china_a_share.capabilities import build_capability_manifest
 from china_a_share.registry import (
@@ -4626,6 +4626,74 @@ def test_analysis_returns_structured_error_when_result_pipeline_fails():
     assert response.results[0].query_id == "derived"
     assert response.results[0].status == "error"
     assert response.results[0].error.message == "pipeline execution failed"
+
+
+def test_analysis_labels_result_validation_failures():
+    plan = QueryPlan(
+        interpretation="Summarize one validated source.",
+        requirements=[
+            {
+                "requirement": "Return one summary.",
+                "status": "covered",
+                "implementation": "Use a deterministic result pipeline.",
+                "evidence": "The pipeline summarizes the source field.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="source",
+                operation="daily",
+                params={"trade_date": "20260717"},
+                fields=["value"],
+                purpose="Retrieve one numeric value.",
+            )
+        ],
+        result_pipeline={
+            "source_query_id": "source",
+            "output_query_id": "summary",
+            "steps": [
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "value_count",
+                            "field": "value",
+                            "function": "count",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    class StaticPlanner:
+        name = "static"
+
+        def plan(self, request, candidate_operations):
+            return plan
+
+    class FailingValidationExecutor:
+        def execute(self, pipeline, source, sources=None):
+            raise ResultValidationError("independent result check failed")
+
+    provider = FakeMarketDataProvider(frame=pd.DataFrame([{"value": 1.0}]))
+    service = AnalysisService(
+        planner=StaticPlanner(),
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+        result_pipeline_executor=FailingValidationExecutor(),
+    )
+
+    response = service.analyze(
+        "request-validation-failure",
+        AnalysisRequest(prompt="Return one summary."),
+        api_route="/api/analysis",
+    )
+
+    assert response.status == "error"
+    assert response.results[0].error.code == "RESULT_VALIDATION_FAILED"
+    assert response.results[0].error.message == "independent result check failed"
 
 
 def test_analysis_rejects_synchronous_security_fanout_before_provider_calls():

@@ -3,6 +3,7 @@
 import os
 from uuid import uuid4
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -51,8 +52,8 @@ class RecordingTaskDispatcher:
 
 
 @pytest.fixture(scope="module")
-def live_analysis_service() -> AnalysisService:
-    """Build one real service so all cases share only local market-data cache."""
+def live_market_data_provider() -> TushareDataProvider:
+    """Build one real provider so live execution and independent checks share cache."""
     settings = Settings.from_env()
     response_cache = LayeredDataResponseCache(
         memory_store=MemoryDataCacheStore(
@@ -63,15 +64,21 @@ def live_analysis_service() -> AnalysisService:
         persistent_store=NoopDataCacheStore(),
         expiration_policy=TushareCacheExpirationPolicy(),
     )
-    provider = TushareDataProvider(
+    return TushareDataProvider(
         token=settings.tushare_token,
         response_cache=response_cache,
     )
+
+
+@pytest.fixture(scope="module")
+def live_analysis_service(live_market_data_provider) -> AnalysisService:
+    """Build one real service so all cases share only local market-data cache."""
+    settings = Settings.from_env()
     return AnalysisService(
         planner=DeepSeekQueryPlanner(settings.deepseek_api_key),
-        provider=provider,
-        validator=ASharePlanValidator(provider),
-        executor=DataQueryExecutor(provider),
+        provider=live_market_data_provider,
+        validator=ASharePlanValidator(live_market_data_provider),
+        executor=DataQueryExecutor(live_market_data_provider),
     )
 
 
@@ -122,7 +129,12 @@ def _planned_operations(plan) -> set[str]:
     return operations
 
 
-def _assert_quality_invariants(response, prompt, invariants) -> None:
+def _assert_quality_invariants(
+    response,
+    prompt,
+    invariants,
+    live_market_data_provider=None,
+) -> None:
     """Check stable business meaning without binding exact planner JSON."""
     plan = response.plan
     operations = _planned_operations(plan)
@@ -175,6 +187,51 @@ def _assert_quality_invariants(response, prompt, invariants) -> None:
             {step.output_field for step in comparisons}
         )
         assert all(item.function == "sum" for item in summary.aggregations)
+        assert live_market_data_provider is not None
+        source_query = next(
+            query
+            for query in plan.queries
+            if query.query_id == plan.result_pipeline.source_query_id
+        )
+        source_frame = live_market_data_provider.query(
+            source_query.operation,
+            source_query.params,
+            source_query.fields,
+            api_route="/local-live-independent-validation",
+            request_id=f"live-oracle-{uuid4()}",
+            query_id=f"{source_query.query_id}-independent-validation",
+        )
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.result_pipeline.output_query_id
+        )
+        result_row = result.rows[0]
+        comparisons_by_output = {
+            step.output_field: step for step in comparisons
+        }
+        for aggregation in summary.aggregations:
+            comparison = comparisons_by_output[aggregation.field]
+            series = pd.to_numeric(
+                source_frame[comparison.field], errors="coerce"
+            )
+            if comparison.comparison == "gt":
+                expected = int((series > comparison.value).sum())
+            elif comparison.comparison == "ge":
+                expected = int((series >= comparison.value).sum())
+            elif comparison.comparison == "eq":
+                expected = int((series == comparison.value).sum())
+            elif comparison.comparison == "le":
+                expected = int((series <= comparison.value).sum())
+            else:
+                expected = int((series < comparison.value).sum())
+            assert result_row[aggregation.output_field] == expected
+        operator_set = {step.comparison for step in comparisons}
+        if operator_set in ({"lt", "eq", "gt"}, {"le", "gt"}, {"lt", "ge"}):
+            assert sum(
+                result_row[aggregation.output_field]
+                for aggregation in summary.aggregations
+            ) == int(source_frame[comparisons[0].field].notna().sum())
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:
@@ -211,6 +268,7 @@ def test_live_regression_matrix_contains_unique_prompts() -> None:
 )
 def test_live_analysis_question(
     live_analysis_service,
+    live_market_data_provider,
     case,
 ) -> None:
     """Run one curated question through real planning, data, and result execution."""
@@ -251,6 +309,7 @@ def test_live_analysis_question(
         response,
         case["prompt"],
         set(case.get("quality_invariants", [])),
+        live_market_data_provider,
     )
 
 

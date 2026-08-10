@@ -32,7 +32,7 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.core.errors import DataProviderError, PlannerError, VisionError
 from china_a_share.core.ports import MarketDataProvider, QueryPlanner, VisionAnalyzer
-from china_a_share.result_pipeline import ResultPipelineExecutor
+from china_a_share.result_pipeline import ResultPipelineExecutor, ResultValidationError
 from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
 from china_a_share.observability import ANALYSIS_REQUEST_ID, log_event
 from china_a_share.time_range import (
@@ -2295,7 +2295,15 @@ class AnalysisService:
                         provider=self._provider.name,
                         operation="result_pipeline",
                         status=QueryStatus.ERROR,
-                        error=ServiceError(source="system", message=str(exc)),
+                        error=ServiceError(
+                            source="system",
+                            code=(
+                                "RESULT_VALIDATION_FAILED"
+                                if isinstance(exc, ResultValidationError)
+                                else None
+                            ),
+                            message=str(exc),
+                        ),
                     )
                 finally:
                     ANALYSIS_REQUEST_ID.reset(execution_context_token)
@@ -2494,7 +2502,15 @@ class AnalysisService:
                                 provider=self._provider.name,
                                 operation="execution_node",
                                 status=QueryStatus.ERROR,
-                                error=ServiceError(source="system", message=str(exc)),
+                                error=ServiceError(
+                                    source="system",
+                                    code=(
+                                        "RESULT_VALIDATION_FAILED"
+                                        if isinstance(exc, ResultValidationError)
+                                        else None
+                                    ),
+                                    message=str(exc),
+                                ),
                             )
                 results_by_id[node.node_id] = result
                 logger.info(

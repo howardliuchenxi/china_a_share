@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Callable, Dict, Mapping, Optional, Set, Tuple
 
 import pandas as pd
@@ -38,6 +39,10 @@ COMPARISONS: Dict[str, Callable[[pd.Series, object], pd.Series]] = {
 logger = logging.getLogger(__name__)
 
 
+class ResultValidationError(ValueError):
+    """Report a deterministic mismatch found by independent result checks."""
+
+
 class ResultPipelineExecutor:
     """Apply a linear allowlisted plan to one in-memory query result."""
 
@@ -58,6 +63,13 @@ class ResultPipelineExecutor:
                 summary_input_frame = frame.copy()
             input_row_count = len(frame)
             frame = self._execute_step(frame, step, source_results)
+            if step.operation == "summarize":
+                self._validate_summary_result(
+                    summary_input_frame,
+                    frame,
+                    step,
+                    pipeline.steps[:step_index],
+                )
             log_event(
                 logger,
                 logging.INFO,
@@ -151,6 +163,172 @@ class ResultPipelineExecutor:
             summary_metadata=summary_metadata,
             column_metadata=column_metadata,
         )
+
+    @classmethod
+    def _validate_summary_result(
+        cls,
+        input_frame: pd.DataFrame,
+        output_frame: pd.DataFrame,
+        summary_step: ResultPipelineStep,
+        prior_steps: list[ResultPipelineStep],
+    ) -> None:
+        """Reconcile summary outputs and verify complete conditional partitions."""
+        if len(output_frame) != 1:
+            raise ResultValidationError(
+                "Result validation failed: summarize must produce exactly one row."
+            )
+        for aggregation in summary_step.aggregations:
+            expected = cls._independent_aggregate(
+                input_frame[aggregation.field],
+                aggregation.function,
+                aggregation.quantile,
+            )
+            actual = output_frame.iloc[0][aggregation.output_field]
+            if not cls._values_match(actual, expected):
+                raise ResultValidationError(
+                    "Result reconciliation failed for "
+                    f"'{aggregation.output_field}': computed={actual!r}, "
+                    f"independent={expected!r}."
+                )
+
+        summarized_fields = {
+            aggregation.field: aggregation
+            for aggregation in summary_step.aggregations
+            if aggregation.function == "sum"
+        }
+        comparisons_by_partition: dict[tuple[str, Any], list[ResultPipelineStep]] = {}
+        for step in prior_steps:
+            if (
+                step.operation != "compare_scalar"
+                or step.output_field not in summarized_fields
+                or step.field not in input_frame.columns
+            ):
+                continue
+            expected_indicator = cls._independent_comparison(
+                input_frame[step.field], step.comparison, step.value
+            )
+            actual_indicator = (
+                input_frame[step.output_field].fillna(False).astype(bool)
+            )
+            if not actual_indicator.equals(expected_indicator):
+                raise ResultValidationError(
+                    "Result reconciliation failed for conditional field "
+                    f"'{step.output_field}'."
+                )
+            comparisons_by_partition.setdefault((step.field, step.value), []).append(
+                step
+            )
+
+        complete_operator_sets = [
+            {"lt", "eq", "gt"},
+            {"le", "gt"},
+            {"lt", "ge"},
+        ]
+        for (field, _), comparisons in comparisons_by_partition.items():
+            operators = {step.comparison for step in comparisons}
+            if operators not in complete_operator_sets:
+                continue
+            category_total = sum(
+                int(
+                    output_frame.iloc[0][
+                        summarized_fields[step.output_field].output_field
+                    ]
+                )
+                for step in comparisons
+            )
+            valid_sample_count = int(input_frame[field].notna().sum())
+            if category_total != valid_sample_count:
+                raise ResultValidationError(
+                    "Result invariant failed for complete conditional partition "
+                    f"on '{field}': categories={category_total}, "
+                    f"valid_samples={valid_sample_count}."
+                )
+
+        log_event(
+            logger,
+            logging.INFO,
+            "result_validation_completed",
+            request_id=ANALYSIS_REQUEST_ID.get(),
+            output_fields=[
+                aggregation.output_field
+                for aggregation in summary_step.aggregations
+            ],
+            reconciliation="passed",
+        )
+
+    @staticmethod
+    def _independent_aggregate(
+        series: pd.Series,
+        function: str,
+        quantile: Optional[float],
+    ) -> Any:
+        """Recalculate one aggregate without using the pipeline aggregation helper."""
+        if function == "count":
+            return int(series.notna().sum())
+        if function == "count_distinct":
+            return int(series.dropna().nunique())
+        if function in {"first", "last"}:
+            non_null = series.dropna()
+            if non_null.empty:
+                return None
+            return non_null.iloc[0 if function == "first" else -1]
+        numeric = pd.to_numeric(series, errors="coerce")
+        if function == "quantile":
+            return numeric.quantile(quantile)
+        if function == "sum":
+            return numeric.sum()
+        if function == "mean":
+            return numeric.mean()
+        if function == "median":
+            return numeric.median()
+        if function == "min":
+            return numeric.min()
+        if function == "max":
+            return numeric.max()
+        if function == "std":
+            return numeric.std()
+        raise ResultValidationError(
+            f"Result validation does not support aggregation function '{function}'."
+        )
+
+    @staticmethod
+    def _independent_comparison(
+        series: pd.Series,
+        comparison: str,
+        value: Any,
+    ) -> pd.Series:
+        """Recalculate one scalar predicate independently from pipeline dispatch."""
+        if comparison == "gt":
+            result = series > value
+        elif comparison == "ge":
+            result = series >= value
+        elif comparison == "eq":
+            result = series == value
+        elif comparison == "ne":
+            result = series != value
+        elif comparison == "le":
+            result = series <= value
+        elif comparison == "lt":
+            result = series < value
+        else:
+            raise ResultValidationError(
+                f"Result validation does not support comparison '{comparison}'."
+            )
+        return result.fillna(False).astype(bool)
+
+    @staticmethod
+    def _values_match(actual: Any, expected: Any) -> bool:
+        """Compare independently calculated values with explicit null semantics."""
+        if pd.isna(actual) and pd.isna(expected):
+            return True
+        if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+            return math.isclose(
+                float(actual),
+                float(expected),
+                rel_tol=1e-9,
+                abs_tol=1e-12,
+            )
+        return bool(actual == expected)
 
     @staticmethod
     def _result_frame(result: QueryResult) -> pd.DataFrame:
