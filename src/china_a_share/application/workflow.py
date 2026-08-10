@@ -1985,6 +1985,250 @@ class AnalysisService:
                 )
             ],
         )
+        if (
+            any(term in prompt for term in ("上涨", "下跌", "平盘", "红盘", "绿盘", "涨跌家数"))
+            and any(term in prompt for term in ("全市场", "A股", "大A"))
+        ):
+            date_match = re.search(r"event_end_date=(20\d{6})", prompt)
+            if date_match is None:
+                return None
+            query = DataQuery(
+                query_id="market_breadth_snapshot",
+                operation="daily",
+                params={"trade_date": date_match.group(1)},
+                fields=["ts_code", "trade_date", "pct_chg"],
+                purpose="Retrieve one market-wide daily return snapshot.",
+            )
+            comparisons = []
+            if any(term in prompt for term in ("上涨", "红盘", "涨跌家数")):
+                comparisons.append(
+                    {
+                        "operation": "compare_scalar",
+                        "field": "pct_chg",
+                        "output_field": "up_count",
+                        "comparison": "gt",
+                        "value": 0,
+                    }
+                )
+            if any(term in prompt for term in ("下跌", "绿盘", "涨跌家数")):
+                comparisons.append(
+                    {
+                        "operation": "compare_scalar",
+                        "field": "pct_chg",
+                        "output_field": "down_count",
+                        "comparison": "lt",
+                        "value": 0,
+                    }
+                )
+            if "平盘" in prompt:
+                comparisons.append(
+                    {
+                        "operation": "compare_scalar",
+                        "field": "pct_chg",
+                        "output_field": "flat_count",
+                        "comparison": "eq",
+                        "value": 0,
+                    }
+                )
+            plan.intent = None
+            plan.queries = [query]
+            plan.requirements = [
+                RequirementCoverage(
+                    requirement="Count securities by daily price direction.",
+                    status="covered",
+                    implementation=(
+                        "Classify each non-missing daily return by its sign and sum "
+                        "the mutually exclusive category indicators."
+                    ),
+                    evidence="daily pct_chg provides the market-wide price direction.",
+                )
+            ]
+            plan.result_pipeline = ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": "market_breadth_summary",
+                    "steps": comparisons
+                    + [
+                        {
+                            "operation": "summarize",
+                            "aggregations": [
+                                {
+                                    "output_field": comparison["output_field"],
+                                    "field": comparison["output_field"],
+                                    "function": "sum",
+                                }
+                                for comparison in comparisons
+                            ],
+                        }
+                    ],
+                }
+            )
+            plan.answer_contract = AnswerContract(
+                result_query_id="market_breadth_summary",
+                result_kind="summary",
+                outputs=[
+                    {
+                        "field": comparison["output_field"],
+                        "description": (
+                            "Number of securities in this price direction."
+                        ),
+                    }
+                    for comparison in comparisons
+                ],
+            )
+            return plan
+        if "大宗交易" in prompt and "成交金额" in prompt and any(
+            term in prompt for term in ("最多", "排名", "排行")
+        ):
+            start_match = re.search(r"event_start_date=(20\d{6})", prompt)
+            end_match = re.search(r"event_end_date=(20\d{6})", prompt)
+            if start_match is None or end_match is None:
+                return None
+            limit_match = re.search(r"(\d+)\s*只", prompt)
+            ranking_limit = int(limit_match.group(1)) if limit_match else 10
+            query = DataQuery(
+                query_id="block_trade_period",
+                operation="block_trade",
+                params={
+                    "start_date": start_match.group(1),
+                    "end_date": end_match.group(1),
+                },
+                fields=["ts_code", "trade_date", "amount"],
+                purpose="Retrieve block-trade amounts over the requested period.",
+            )
+            plan.intent = None
+            plan.queries = [query]
+            plan.requirements = [
+                RequirementCoverage(
+                    requirement="Rank securities by total block-trade amount.",
+                    status="covered",
+                    implementation=(
+                        "Sum native transaction amounts by security before ranking."
+                    ),
+                    evidence="block_trade provides transaction-level amount values.",
+                )
+            ]
+            plan.result_pipeline = ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": "block_trade_amount_ranking",
+                    "steps": [
+                        {"operation": "drop_missing", "fields": ["amount"]},
+                        {
+                            "operation": "aggregate",
+                            "group_by": ["ts_code"],
+                            "aggregations": [
+                                {
+                                    "output_field": "total_amount",
+                                    "field": "amount",
+                                    "function": "sum",
+                                }
+                            ],
+                        },
+                        {
+                            "operation": "sort",
+                            "field": "total_amount",
+                            "direction": "desc",
+                        },
+                        {"operation": "limit", "count": ranking_limit},
+                    ],
+                }
+            )
+            plan.answer_contract = AnswerContract(
+                result_query_id="block_trade_amount_ranking",
+                result_kind="table",
+                outputs=[
+                    {"field": "ts_code", "description": "A-share security code."},
+                    {
+                        "field": "total_amount",
+                        "description": "Total block-trade amount in the period.",
+                    },
+                ],
+            )
+            return plan
+        if (
+            "大单" in prompt
+            and "买入金额" in prompt
+            and any(term in prompt for term in ("排名", "排行"))
+            and "小单" not in prompt
+        ):
+            date_match = re.search(r"event_end_date=(20\d{6})", prompt)
+            if date_match is None:
+                return None
+            limit_match = re.search(r"(?:前|top\s*)(\d+)", prompt, re.IGNORECASE)
+            ranking_limit = int(limit_match.group(1)) if limit_match else 10
+            query = DataQuery(
+                query_id="large_order_buy_snapshot",
+                operation="moneyflow",
+                params={"trade_date": date_match.group(1)},
+                fields=["ts_code", "trade_date", "buy_lg_amount", "buy_elg_amount"],
+                purpose="Retrieve native large-order buy components for one date.",
+            )
+            plan.intent = None
+            plan.queries = [query]
+            plan.requirements = [
+                RequirementCoverage(
+                    requirement="Rank securities by large-order buy amount.",
+                    status="covered",
+                    implementation=(
+                        "Add large and extra-large native buy amounts before ranking."
+                    ),
+                    evidence="moneyflow provides buy_lg_amount and buy_elg_amount.",
+                )
+            ]
+            plan.result_pipeline = ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": "large_order_buy_ranking",
+                    "steps": [
+                        {
+                            "operation": "derive",
+                            "field": "buy_lg_amount",
+                            "right_field": "buy_elg_amount",
+                            "output_field": "large_buy_amount",
+                            "arithmetic_operator": "add",
+                        },
+                        {
+                            "operation": "drop_missing",
+                            "fields": ["large_buy_amount"],
+                        },
+                        {
+                            "operation": "sort",
+                            "field": "large_buy_amount",
+                            "direction": "desc",
+                        },
+                        {"operation": "limit", "count": ranking_limit},
+                    ],
+                }
+            )
+            plan.answer_contract = AnswerContract(
+                result_query_id="large_order_buy_ranking",
+                result_kind="table",
+                outputs=[
+                    {"field": "ts_code", "description": "A-share security code."},
+                    {
+                        "field": "large_buy_amount",
+                        "description": (
+                            "Combined large and extra-large order buy amount."
+                        ),
+                    },
+                ],
+            )
+            return plan
+        streak_length = resolve_consecutive_session_count(prompt)
+        if (
+            streak_length is not None
+            and any(term in prompt for term in ("涨停", "连板"))
+            and resolve_explicit_time_range(prompt) is not None
+        ):
+            plan.feasibility = "unsupported"
+            AnalysisService._compile_limit_up_streak_pipeline(
+                plan,
+                prompt,
+                streak_length,
+            )
+            if plan.result_pipeline is not None:
+                return plan
         AnalysisService._compile_valuation_period_return(plan, prompt)
         if plan.result_pipeline is None:
             normalized = prompt.casefold()
@@ -2331,7 +2575,14 @@ class AnalysisService:
                 return plan
             requests_suspension = any(
                 term in normalized
-                for term in ("suspended", "suspension", "\u505c\u724c")
+                for term in (
+                    "suspended",
+                    "suspension",
+                    "resumed",
+                    "resumption",
+                    "\u505c\u724c",
+                    "\u590d\u724c",
+                )
             )
             if requests_suspension:
                 resolved = resolve_explicit_time_range(prompt)
@@ -2723,6 +2974,25 @@ class AnalysisService:
                         {"field": "bz_sales", "description": "Segment revenue."},
                     ],
                 )
+                return plan
+            AnalysisService._compile_industry_valuation_dividend(plan, prompt)
+            if plan.result_pipeline is not None:
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement=(
+                            "Return valuation and dividend data for an industry."
+                        ),
+                        status="covered",
+                        implementation=(
+                            "Join the industry universe to a valuation snapshot and "
+                            "the latest dividend disclosure in the requested year."
+                        ),
+                        evidence=(
+                            "stock_basic, daily_basic, and dividend provide the "
+                            "required public fields."
+                        ),
+                    )
+                ]
                 return plan
             return None
         return plan
@@ -4388,6 +4658,24 @@ class AnalysisService:
         AnalysisService._compile_industry_valuation_dividend(plan, prompt)
         AnalysisService._compile_holder_concentration_ranking(plan, prompt)
         AnalysisService._compile_valuation_period_return(plan, prompt)
+        unlock_window = resolve_explicit_time_range(prompt)
+        if unlock_window is not None and any(
+            term in prompt.casefold()
+            for term in ("unlock", "unlocks", "\u89e3\u7981", "\u9650\u552e\u80a1")
+        ):
+            planned_queries = list(plan.queries)
+            if plan.execution_plan is not None:
+                planned_queries.extend(
+                    node.query
+                    for node in plan.execution_plan.nodes
+                    if node.kind == "query"
+                )
+            for query in planned_queries:
+                if query.operation == "share_float" and not query.params.get("ts_code"):
+                    query.params = {
+                        "start_date": unlock_window[0].strftime("%Y%m%d"),
+                        "end_date": unlock_window[1].strftime("%Y%m%d"),
+                    }
         if plan.execution_plan is not None:
             # The planner owns DAG business semantics; local code only validates and
             # executes the declared nodes without applying prompt-specific compilers.
@@ -4924,6 +5212,13 @@ class AnalysisService:
             "fina_mainbz": {"ts_code", "period", "type", "start_date", "end_date"},
         }[operation]
         query.params = {key: value for key, value in query.params.items() if key in allowed_params}
+        if operation == "share_float" and security_code is None:
+            resolved_window = resolve_explicit_time_range(prompt)
+            if resolved_window is not None:
+                query.params = {
+                    "start_date": resolved_window[0].strftime("%Y%m%d"),
+                    "end_date": resolved_window[1].strftime("%Y%m%d"),
+                }
         query.fields = fields
         query.filters = []
         query.aggregations = []
@@ -4953,16 +5248,31 @@ class AnalysisService:
         query.aggregations = []
         plan.queries = [query]
         if plan.result_pipeline is not None:
-            required_fields: set[str] = set()
+            available_fields = set(query.fields)
             for step in plan.result_pipeline.steps:
+                required_fields: set[str] = set()
                 required_fields.update(step.fields)
                 required_fields.update(step.group_by)
                 if step.field is not None:
                     required_fields.add(step.field)
+                if step.right_field is not None:
+                    required_fields.add(step.right_field)
                 if step.order_by is not None:
                     required_fields.add(step.order_by)
-            if not required_fields.issubset(set(query.fields)):
-                plan.result_pipeline = None
+                required_fields.update(
+                    aggregation.field for aggregation in step.aggregations
+                )
+                if not required_fields.issubset(available_fields):
+                    plan.result_pipeline = None
+                    break
+                if step.operation == "aggregate":
+                    available_fields = set(step.group_by)
+                if step.output_field is not None:
+                    available_fields.add(step.output_field)
+                available_fields.update(
+                    aggregation.output_field
+                    for aggregation in step.aggregations
+                )
         plan.feasibility = "supported"
         plan.limitations = []
         for requirement in plan.requirements:

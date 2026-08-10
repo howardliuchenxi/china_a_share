@@ -1350,35 +1350,50 @@ class ResultPipelineExecutor:
                     "year": pd.DateOffset(years=step.offset_value),
                 }
                 requested_dates = ordered_dates + offsets[step.offset_unit]
-                ordered["_target_date"] = requested_dates.map(
-                    lambda value: next(
-                        (candidate for candidate in market_dates if candidate >= value),
-                        pd.NaT,
-                    )
+                target_dates = pd.Series(
+                    pd.NaT,
+                    index=ordered.index,
+                    dtype="datetime64[ns]",
                 )
-            matched_values = [None] * len(ordered)
-            matched_dates = [None] * len(ordered)
-            for _, indexes in ordered.groupby(
-                step.group_by,
+                valid_requests = requested_dates.notna()
+                target_positions = market_dates.get_indexer(
+                    requested_dates.loc[valid_requests],
+                    method="backfill",
+                )
+                matched_requests = target_positions >= 0
+                target_dates.loc[
+                    requested_dates.loc[valid_requests].index[matched_requests]
+                ] = market_dates.take(target_positions[matched_requests]).to_numpy()
+                ordered["_target_date"] = target_dates
+            lookup_columns = step.group_by + [step.order_by, step.field]
+            lookup = ordered[lookup_columns].copy()
+            lookup["_matched_date"] = pd.to_datetime(
+                lookup[step.order_by],
+                format="%Y%m%d",
+                errors="coerce",
+            )
+            lookup = lookup.drop_duplicates(
+                subset=step.group_by + ["_matched_date"],
+                keep="last",
+            ).rename(columns={step.field: step.output_field})
+            lookup = lookup.drop(columns=[step.order_by])
+            # A vectorized self-join preserves the per-security date match while
+            # avoiding a Python loop over every market-wide event row.
+            ordered["_source_order"] = range(len(ordered))
+            ordered = ordered.merge(
+                lookup,
+                how="left",
+                left_on=step.group_by + ["_target_date"],
+                right_on=step.group_by + ["_matched_date"],
                 sort=False,
-                dropna=False,
-            ).groups.items():
-                group_indexes = list(indexes)
-                group_date_indexes = {
-                    value: index
-                    for index, value in ordered_dates.loc[group_indexes].items()
-                }
-                for row_index in group_indexes:
-                    target = ordered.at[row_index, "_target_date"]
-                    match_index = group_date_indexes.get(target)
-                    if match_index is not None:
-                        matched_values[row_index] = ordered.at[match_index, step.field]
-                        matched_dates[row_index] = target.strftime("%Y%m%d")
-            # Assign complete columns once. Repeated scalar writes force pandas to
-            # rebuild object blocks and become prohibitively slow on market-wide data.
-            ordered[step.output_field] = matched_values
-            ordered[step.matched_date_output_field] = matched_dates
-            return ordered.drop(columns=["_target_date"]).reset_index(drop=True)
+                validate="many_to_one",
+            ).sort_values("_source_order", kind="mergesort")
+            ordered[step.matched_date_output_field] = ordered[
+                "_matched_date"
+            ].dt.strftime("%Y%m%d")
+            return ordered.drop(
+                columns=["_target_date", "_matched_date", "_source_order"]
+            ).reset_index(drop=True)
         if step.operation == "compare_fields":
             result = frame.copy()
             left = pd.to_numeric(result[step.field], errors="coerce")

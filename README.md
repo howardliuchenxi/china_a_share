@@ -369,7 +369,8 @@ This opt-in check validates planning semantics, provider operations, result
 pipelines, business invariants, unsupported capability boundaries, and prompts
 reported from production rather than exact model JSON. It loads
 `DEEPSEEK_API_KEY` and `TUSHARE_TOKEN` from `.env`, uses an in-process cache
-without Google Cloud credentials, and consumes real upstream API quota. The
+without Google Cloud credentials, runs independent matrix cases with two
+bounded worker threads, and consumes real upstream API quota. The
 100 fixed cases require at least 100 DeepSeek planning requests; bounded retries
 can raise that total to 500, and production regressions add their own calls. The
 default test suite skips the external cases so routine tests remain deterministic

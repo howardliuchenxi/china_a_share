@@ -43,7 +43,7 @@ check:
 	.venv/bin/python -m pytest
 
 live-check:
-	RUN_LIVE_ANALYSIS=1 .venv/bin/python -m pytest tests/test_live_analysis.py -v -s
+	RUN_LIVE_ANALYSIS=1 LIVE_ANALYSIS_PARALLEL=1 .venv/bin/python -m pytest tests/test_live_analysis.py -v -s
 
 deploy: check
 	test -n "$(GCLOUD)" || { echo "Google Cloud CLI was not found. Install gcloud or place it at ~/google-cloud-sdk/bin/gcloud." >&2; exit 1; }

@@ -34,6 +34,7 @@ interface LegacyBrowserCase {
 }
 
 const LEGACY_CASE_STORAGE_KEY = "china-a-share.end-to-end-cases.v1";
+const LIVE_CASE_MAX_CONCURRENCY = 4;
 
 function loadLegacyCases(): LegacyBrowserCase[] {
   try {
@@ -217,33 +218,45 @@ export function EndToEndCasesPage() {
     setCompletedCount(0);
     setResults([]);
     setMessage("");
-    const nextResults: EndToEndRunResult[] = [];
-    for (const testCase of selectedCases) {
-      const startedAt = performance.now();
-      try {
-        const response = await submitAnalysis({ prompt: testCase.prompt });
-        const failureReason = failureFromResponse(response);
-        nextResults.push({
-          testCase,
-          passed: failureReason === "",
-          durationMs: Math.round(performance.now() - startedAt),
-          requestId: response.request_id,
-          failureReason,
-          runtime: `${response.planner} / ${response.data_provider}`,
-        });
-      } catch (caught) {
-        nextResults.push({
-          testCase,
-          passed: false,
-          durationMs: Math.round(performance.now() - startedAt),
-          requestId: "",
-          failureReason: caught instanceof Error ? caught.message : "Unknown browser execution failure.",
-          runtime: "",
-        });
+    const orderedResults: Array<EndToEndRunResult | undefined> = new Array(selectedCases.length);
+    let nextCaseIndex = 0;
+    let finishedCount = 0;
+
+    async function runWorker() {
+      while (nextCaseIndex < selectedCases.length) {
+        const caseIndex = nextCaseIndex;
+        nextCaseIndex += 1;
+        const testCase = selectedCases[caseIndex];
+        const startedAt = performance.now();
+        try {
+          const response = await submitAnalysis({ prompt: testCase.prompt });
+          const failureReason = failureFromResponse(response);
+          orderedResults[caseIndex] = {
+            testCase,
+            passed: failureReason === "",
+            durationMs: Math.round(performance.now() - startedAt),
+            requestId: response.request_id,
+            failureReason,
+            runtime: `${response.planner} / ${response.data_provider}`,
+          };
+        } catch (caught) {
+          orderedResults[caseIndex] = {
+            testCase,
+            passed: false,
+            durationMs: Math.round(performance.now() - startedAt),
+            requestId: "",
+            failureReason: caught instanceof Error ? caught.message : "Unknown browser execution failure.",
+            runtime: "",
+          };
+        }
+        finishedCount += 1;
+        setResults(orderedResults.filter((result): result is EndToEndRunResult => result !== undefined));
+        setCompletedCount(finishedCount);
       }
-      setResults([...nextResults]);
-      setCompletedCount(nextResults.length);
     }
+
+    const workerCount = Math.min(LIVE_CASE_MAX_CONCURRENCY, selectedCases.length);
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
     setIsRunning(false);
   }
 

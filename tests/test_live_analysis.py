@@ -1,6 +1,7 @@
 """Opt-in quality coverage against the real DeepSeek and Tushare APIs."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from uuid import uuid4
 
 import pandas as pd
@@ -37,6 +38,8 @@ from live_analysis_cases import LIVE_ANALYSIS_CASES, LIVE_REGRESSION_CASES
 
 
 LIVE_ANALYSIS_ENVIRONMENT_VARIABLE = "RUN_LIVE_ANALYSIS"
+LIVE_ANALYSIS_PARALLEL_ENVIRONMENT_VARIABLE = "LIVE_ANALYSIS_PARALLEL"
+LIVE_ANALYSIS_MAX_WORKERS = 2
 BACKGROUND_FANOUT_REPORTED_PROMPT = "A股2026年汽车行业，市盈率和分红数据"
 
 
@@ -250,28 +253,12 @@ def test_live_regression_matrix_contains_unique_prompts() -> None:
     assert len(set(prompts)) == len(prompts)
 
 
-@pytest.mark.parametrize(
-    "case",
-    LIVE_ANALYSIS_CASES,
-    ids=[
-        f"{case['family']}-{index + 1}"
-        for index, case in enumerate(LIVE_ANALYSIS_CASES)
-    ],
-)
-@pytest.mark.live
-@pytest.mark.skipif(
-    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
-    reason=(
-        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
-        "DeepSeek and Tushare APIs."
-    ),
-)
-def test_live_analysis_question(
+def _run_live_analysis_question(
     live_analysis_service,
     live_market_data_provider,
     case,
 ) -> None:
-    """Run one curated question through real planning, data, and result execution."""
+    """Run and validate one curated question against both real providers."""
     response = live_analysis_service.analyze(
         request_id=f"live-{case['family']}-{uuid4()}",
         request=AnalysisRequest(prompt=case["prompt"]),
@@ -311,6 +298,75 @@ def test_live_analysis_question(
         set(case.get("quality_invariants", [])),
         live_market_data_provider,
     )
+
+
+@pytest.mark.parametrize(
+    "case",
+    LIVE_ANALYSIS_CASES,
+    ids=[
+        f"{case['family']}-{index + 1}"
+        for index, case in enumerate(LIVE_ANALYSIS_CASES)
+    ],
+)
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1"
+    or os.getenv(LIVE_ANALYSIS_PARALLEL_ENVIRONMENT_VARIABLE) == "1",
+    reason="Sequential live cases are disabled or replaced by the parallel matrix.",
+)
+def test_live_analysis_question(
+    live_analysis_service,
+    live_market_data_provider,
+    case,
+) -> None:
+    """Run one curated question when the parallel matrix is not selected."""
+    _run_live_analysis_question(
+        live_analysis_service,
+        live_market_data_provider,
+        case,
+    )
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1"
+    or os.getenv(LIVE_ANALYSIS_PARALLEL_ENVIRONMENT_VARIABLE) != "1",
+    reason="Set both live-analysis flags to run the bounded parallel matrix.",
+)
+def test_live_analysis_questions_in_parallel(
+    live_analysis_service,
+    live_market_data_provider,
+) -> None:
+    """Run independent paid live cases concurrently with bounded provider load."""
+    failures = []
+    completed_count = 0
+    with ThreadPoolExecutor(max_workers=LIVE_ANALYSIS_MAX_WORKERS) as pool:
+        futures = {
+            pool.submit(
+                _run_live_analysis_question,
+                live_analysis_service,
+                live_market_data_provider,
+                case,
+            ): case
+            for case in LIVE_ANALYSIS_CASES
+        }
+        for future in as_completed(futures):
+            case = futures[future]
+            completed_count += 1
+            try:
+                future.result()
+                outcome = "PASS"
+            except Exception as exc:
+                outcome = "FAIL"
+                failures.append(
+                    f"{case['family']} — {case['prompt']}: {exc}"
+                )
+            print(
+                f"LIVE {completed_count}/{len(LIVE_ANALYSIS_CASES)} "
+                f"{outcome} — {case['family']}",
+                flush=True,
+            )
+    assert not failures, "\n".join(sorted(failures))
 
 
 @pytest.mark.parametrize(

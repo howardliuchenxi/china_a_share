@@ -3677,6 +3677,86 @@ def test_workflow_precompiles_suspension_count_ranking():
     assert result.result_pipeline.steps[0].group_by == ["ts_code"]
 
 
+def test_workflow_precompiles_english_resumption_request():
+    result = AnalysisService._compile_known_request(
+        "Which stocks resumed trading on 2026-05-08?\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260508\n"
+        "event_end_date=20260508\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.queries[0].operation == "suspend_d"
+    assert result.queries[0].params == {"trade_date": "20260508"}
+
+
+def test_workflow_precompiles_limit_up_streak_before_model_planning():
+    result = AnalysisService._compile_known_request(
+        "统计20250101至20251231三连板事件未来三个月的收益表现\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20250101\n"
+        "event_end_date=20251231\n"
+        "outcome_offset_value=3\n"
+        "outcome_offset_unit=month\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert {query.operation for query in result.queries} == {
+        "daily",
+        "limit_list_d",
+    }
+    assert any(
+        step.operation == "match_at_offset"
+        and step.offset_value == 3
+        and step.offset_unit == "month"
+        for step in result.result_pipeline.steps
+    )
+
+
+def test_workflow_precompiles_industry_valuation_and_dividend_view():
+    result = AnalysisService._compile_known_request(
+        "A股2026年电池行业，市盈率和分红数据\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260101\n"
+        "event_end_date=20260807\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert {query.operation for query in result.queries} == {
+        "stock_basic",
+        "daily_basic",
+        "dividend",
+    }
+    assert result.result_pipeline.output_query_id == (
+        "industry_valuation_dividend_result"
+    )
+
+
+def test_workflow_binds_market_wide_unlocks_to_the_resolved_window():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "share_float"
+    plan.queries[0].params = {}
+    plan.queries[0].fields = ["ts_code", "float_date", "float_ratio"]
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "列出2026年解禁股数占总股本比例最高的10只股票\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260101\n"
+        "event_end_date=20261231\n"
+        "</trusted_analysis_window>",
+    )
+
+    assert result.queries[0].params == {
+        "start_date": "20260101",
+        "end_date": "20261231",
+    }
+    assert ASharePlanValidator._uses_bounded_date_fanout(result.queries[0])
+
+
 def test_workflow_precompiles_repurchase_ranking_at_security_grain():
     result = AnalysisService._compile_known_request(
         "Rank 2026 A-share repurchase plans by announced upper amount."
@@ -3783,6 +3863,75 @@ def test_full_market_event_horizon_requires_background_execution():
     )
 
     assert AnalysisService._requires_background_execution(plan) is True
+
+
+def test_workflow_precompiles_market_breadth_categories():
+    result = AnalysisService._compile_known_request(
+        "昨天全市场红盘和绿盘股票数量\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260807\n"
+        "event_end_date=20260807\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.intent is None
+    assert result.queries[0].operation == "daily"
+    assert result.queries[0].params == {"trade_date": "20260807"}
+    assert [step.output_field for step in result.result_pipeline.steps[:-1]] == [
+        "up_count",
+        "down_count",
+    ]
+    assert {
+        aggregation.output_field
+        for aggregation in result.result_pipeline.steps[-1].aggregations
+    } == {"up_count", "down_count"}
+
+
+def test_workflow_precompiles_block_trade_amount_ranking():
+    result = AnalysisService._compile_known_request(
+        "本月大宗交易成交金额最多的20只股票\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260801\n"
+        "event_end_date=20260810\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.queries[0].operation == "block_trade"
+    assert result.queries[0].params == {
+        "start_date": "20260801",
+        "end_date": "20260810",
+    }
+    assert result.result_pipeline.steps[1].aggregations[0].output_field == (
+        "total_amount"
+    )
+    assert result.result_pipeline.steps[-1].count == 20
+
+
+def test_workflow_precompiles_large_order_buy_ranking():
+    result = AnalysisService._compile_known_request(
+        "最近交易日A股大单买入金额排名\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260807\n"
+        "event_end_date=20260807\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.queries[0].operation == "moneyflow"
+    assert result.queries[0].fields == [
+        "ts_code",
+        "trade_date",
+        "buy_lg_amount",
+        "buy_elg_amount",
+    ]
+    derive = result.result_pipeline.steps[0]
+    assert (derive.field, derive.right_field, derive.output_field) == (
+        "buy_lg_amount",
+        "buy_elg_amount",
+        "large_buy_amount",
+    )
 
 
 def test_workflow_uses_daily_volume_and_joins_same_day_turnover():
