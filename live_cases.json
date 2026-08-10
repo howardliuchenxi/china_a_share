@@ -1383,6 +1383,17 @@
       "operations": [],
       "quality_invariants": [],
       "source": "reported_regression"
+    },
+    {
+      "id": "holder-concentration-derived-field-contract-repair",
+      "name": "holder_concentration_derived_field_contract_repair",
+      "family": "reported_regression",
+      "prompt": "A股2026年最新披露数据，筹码集中度top10公司",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "reported_regression"
     }
   ]
 }

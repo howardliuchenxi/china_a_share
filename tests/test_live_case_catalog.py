@@ -94,11 +94,11 @@ def test_canonical_catalog_contains_all_live_cases():
     catalog = load_live_case_catalog()
 
     assert catalog.version == 1
-    assert len(catalog.cases) == 102
-    assert len({case.id for case in catalog.cases}) == 102
-    assert len({case.prompt for case in catalog.cases}) == 102
+    assert len(catalog.cases) == 103
+    assert len({case.id for case in catalog.cases}) == 103
+    assert len({case.prompt for case in catalog.cases}) == 103
     assert sum(case.source == "matrix" for case in catalog.cases) == 100
-    assert sum(case.source == "reported_regression" for case in catalog.cases) == 2
+    assert sum(case.source == "reported_regression" for case in catalog.cases) == 3
 
 
 def test_catalog_rejects_duplicate_prompts():

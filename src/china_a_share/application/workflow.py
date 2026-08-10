@@ -73,6 +73,7 @@ FANOUT_OPERATIONS = {
 }
 DATE_FANOUT_PARAMETERS = {
     "share_float": "float_date",
+    "stk_holdernumber": "ann_date",
     "stk_holdertrade": "ann_date",
     "forecast": "ann_date",
 }
@@ -3505,6 +3506,7 @@ class AnalysisService:
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
         AnalysisService._compile_industry_valuation_dividend(plan, prompt)
+        AnalysisService._compile_holder_concentration_ranking(plan, prompt)
         if plan.execution_plan is not None:
             # The planner owns DAG business semantics; local code only validates and
             # executes the declared nodes without applying prompt-specific compilers.
@@ -3572,6 +3574,109 @@ class AnalysisService:
         # accidentally revive a request for unavailable private or order-level data.
         AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         return plan
+
+    @staticmethod
+    def _compile_holder_concentration_ranking(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> None:
+        """Compile shareholder-count contraction as the chip-concentration proxy."""
+        normalized = prompt.casefold()
+        if not (
+            "筹码集中度" in prompt
+            and any(term in normalized for term in ("top", "前", "最高"))
+        ):
+            return
+
+        limit_match = re.search(r"(?:top|前)\s*(\d+)", normalized)
+        result_limit = int(limit_match.group(1)) if limit_match else 10
+        year_match = re.search(r"(20\d{2})年", prompt)
+        holder_params: Dict[str, Any] = {}
+        if year_match is not None:
+            year = year_match.group(1)
+            holder_params = {
+                "start_date": f"{year}0101",
+                "end_date": f"{year}1231",
+            }
+
+        universe_query = DataQuery(
+            query_id="holder_concentration_universe",
+            operation="stock_basic",
+            fields=["ts_code", "name"],
+            purpose="Retrieve the listed A-share universe and company names.",
+        )
+        holder_query = DataQuery(
+            query_id="holder_concentration_history",
+            operation="stk_holdernumber",
+            params=holder_params,
+            fields=["ts_code", "ann_date", "end_date", "holder_num"],
+            purpose=(
+                "Retrieve shareholder-count disclosures used to measure changes in "
+                "ownership concentration."
+            ),
+        )
+        output_query_id = "holder_concentration_ranking"
+        plan.intent = None
+        plan.execution_plan = None
+        plan.queries = [universe_query, holder_query]
+        AnalysisService._compile_composed_result(
+            plan,
+            source_query=holder_query,
+            output_query_id=output_query_id,
+            steps=[
+                {
+                    "operation": "pct_change",
+                    "field": "holder_num",
+                    "output_field": "holder_change_ratio",
+                    "group_by": ["ts_code"],
+                    "order_by": "end_date",
+                    "periods": 1,
+                },
+                {
+                    "operation": "derive",
+                    "field": "holder_change_ratio",
+                    "output_field": "holder_change_pct",
+                    "arithmetic_operator": "multiply",
+                    "value": 100,
+                },
+                {
+                    "operation": "latest_by_group",
+                    "group_by": ["ts_code"],
+                    "order_by": "ann_date",
+                },
+                {"operation": "drop_missing", "fields": ["holder_change_pct"]},
+                {
+                    "operation": "sort",
+                    "field": "holder_change_pct",
+                    "direction": "asc",
+                },
+                {"operation": "limit", "count": result_limit},
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": universe_query.query_id,
+                    "join_on": ["ts_code"],
+                    "fields": {"name": "name"},
+                    "cardinality": "many_to_one",
+                },
+            ],
+            output_descriptions={
+                "ts_code": "A-share security code.",
+                "name": "A-share company name.",
+                "ann_date": "Announcement date of the latest shareholder disclosure.",
+                "end_date": "Reporting date of the latest shareholder disclosure.",
+                "holder_num": "Shareholder count in the latest disclosure.",
+                "holder_change_pct": (
+                    "Percentage change in shareholder count from the previous "
+                    "reporting period; a more negative value indicates stronger "
+                    "concentration under this proxy."
+                ),
+            },
+        )
+        plan.feasibility = "supported"
+        plan.limitations = [
+            "Chip concentration is proxied by the reporting-period percentage "
+            "decrease in shareholder count; it is not account-level position data."
+        ]
 
     @staticmethod
     def _compile_industry_valuation_dividend(plan: QueryPlan, prompt: str) -> None:

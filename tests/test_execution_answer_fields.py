@@ -219,6 +219,59 @@ def test_industry_valuation_dividend_request_compiles_deterministically(
     assert ASharePlanValidator(_CatalogProvider()).validate(plan) is plan
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected_limit"),
+    [
+        ("A股2026年最新披露数据，筹码集中度top10公司", 10),
+        ("A股2025年筹码集中度前20家公司", 20),
+    ],
+)
+def test_holder_concentration_ranking_compiles_derived_change_contract(
+    prompt,
+    expected_limit,
+):
+    plan = _execution_plan(
+        label_field="name",
+        detail_field="holder_change_pct",
+    )
+
+    AnalysisService._normalize_plan_for_request(plan, prompt)
+
+    assert plan.execution_plan is None
+    assert [query.operation for query in plan.queries] == [
+        "stock_basic",
+        "stk_holdernumber",
+    ]
+    assert plan.queries[1].fields == [
+        "ts_code",
+        "ann_date",
+        "end_date",
+        "holder_num",
+    ]
+    assert ASharePlanValidator._uses_bounded_date_fanout(plan.queries[1]) is True
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "pct_change",
+        "derive",
+        "latest_by_group",
+        "drop_missing",
+        "sort",
+        "limit",
+        "join_fields",
+    ]
+    assert plan.result_pipeline.steps[0].output_field == "holder_change_ratio"
+    assert plan.result_pipeline.steps[1].output_field == "holder_change_pct"
+    assert plan.result_pipeline.steps[4].direction == "asc"
+    assert plan.result_pipeline.steps[5].count == expected_limit
+    assert {output.field for output in plan.answer_contract.outputs} == {
+        "ts_code",
+        "name",
+        "ann_date",
+        "end_date",
+        "holder_num",
+        "holder_change_pct",
+    }
+
+
 def test_trusted_snapshot_date_compiles_without_model_query_nodes():
     plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
     plan.execution_plan = None
