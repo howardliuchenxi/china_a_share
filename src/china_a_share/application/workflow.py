@@ -1126,6 +1126,35 @@ class ASharePlanValidator:
 
         steps = pipeline.steps
 
+        for step in steps:
+            if step.operation != "summarize":
+                continue
+            aggregation_outputs: dict[tuple[str, str, Optional[float]], list[str]] = {}
+            for aggregation in step.aggregations:
+                signature = (
+                    aggregation.field,
+                    aggregation.function,
+                    aggregation.quantile,
+                )
+                aggregation_outputs.setdefault(signature, []).append(
+                    aggregation.output_field
+                )
+            duplicate_outputs = [
+                outputs
+                for outputs in aggregation_outputs.values()
+                if len(outputs) > 1
+            ]
+            if duplicate_outputs:
+                rendered_outputs = "; ".join(
+                    ", ".join(outputs) for outputs in duplicate_outputs
+                )
+                raise PlanValidationError(
+                    "Semantic violation: distinct summary outputs use identical "
+                    "unconditional aggregations and will necessarily return the same "
+                    f"value: {rendered_outputs}. Add an explicit condition to each "
+                    "category aggregation."
+                )
+
         # Prevent deriving multiple closes (start/end close) from the same source query's field close
         # unless different snapshots are merged using join_fields.
         has_join = any(s.operation == "join_fields" for s in steps)

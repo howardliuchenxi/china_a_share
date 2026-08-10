@@ -163,6 +163,18 @@ def _assert_quality_invariants(response, prompt, invariants) -> None:
     if "sort_before_limit" in invariants:
         operations = [step.operation for step in steps]
         assert operations.index("sort") < operations.index("limit")
+    if "conditional_category_counts" in invariants:
+        comparisons = [step for step in steps if step.operation == "compare_scalar"]
+        summary = next(step for step in steps if step.operation == "summarize")
+        summary_fields = {item.field for item in summary.aggregations}
+        assert len(comparisons) >= 2
+        assert len(
+            {(step.field, step.comparison, step.value) for step in comparisons}
+        ) == len(comparisons)
+        assert summary_fields.issubset(
+            {step.output_field for step in comparisons}
+        )
+        assert all(item.function == "sum" for item in summary.aggregations)
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:

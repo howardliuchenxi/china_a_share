@@ -1390,6 +1390,80 @@ def test_planner_normalizes_event_summary_syntax():
     assert summary_step.aggregations[1].function == "mean"
 
 
+def test_validator_rejects_distinct_outputs_with_identical_summaries():
+    plan = make_daily_plan()
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": "market_direction",
+            "output_query_id": "market-direction-summary",
+            "steps": [
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "positive_count",
+                            "field": "change",
+                            "function": "count",
+                        },
+                        {
+                            "output_field": "negative_count",
+                            "field": "change",
+                            "function": "count",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="distinct summary outputs use identical unconditional aggregations",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
+def test_planner_compiles_materially_different_conditional_counts():
+    plan = make_daily_plan().model_dump(mode="json")
+    plan["queries"][0]["fields"] = ["ts_code", "change"]
+    plan["result_pipeline"] = {
+        "source_query_id": "market_direction",
+        "output_query_id": "market-direction-summary",
+        "steps": [
+            {
+                "operation": "summarize",
+                "aggregations": [
+                    {
+                        "output_field": "positive_count",
+                        "field": "change",
+                        "function": "count",
+                        "condition": {"operator": "gt", "value": 1},
+                    },
+                    {
+                        "output_field": "negative_count",
+                        "field": "change",
+                        "function": "count",
+                        "condition": {"operator": "lt", "value": -2},
+                    },
+                ],
+            }
+        ],
+    }
+
+    normalized = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+        json.dumps(plan)
+    )
+
+    assert [step.operation for step in normalized.result_pipeline.steps] == [
+        "compare_scalar",
+        "compare_scalar",
+        "summarize",
+    ]
+    summary = normalized.result_pipeline.steps[-1]
+    assert [item.function for item in summary.aggregations] == ["sum", "sum"]
+    assert summary.aggregations[0].field != summary.aggregations[1].field
+
+
 def test_planner_preserves_a_valid_event_study_aggregation():
     plan = make_daily_plan().model_dump(mode="json")
     plan["queries"][0]["params"] = {

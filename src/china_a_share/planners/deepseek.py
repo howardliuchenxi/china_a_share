@@ -147,7 +147,12 @@ def build_query_plan_system_prompt(
         "match_at_offset for calendar outcome horizons; never replace a month or year "
         "horizon with a one-row shift. A summarize step accepts aggregations only; "
         "put each output_field, optional label, source field, and function inside the "
-        "aggregations array. For an event study, use the dense time-series query as "
+        "aggregations array. A conditional aggregation must include condition with "
+        "operator and value on that aggregation; count(field) without condition only "
+        "counts non-null values and must never represent a filtered category. Distinct "
+        "category outputs must have distinct explicit conditions. The trusted local "
+        "normalizer compiles conditional counts into comparison fields and sums. For "
+        "an event study, use the dense time-series query as "
         "the pipeline source, mark event rows with match_source, detect the ordered "
         "event sequence before filtering rows, match the future value with "
         "match_at_offset, calculate field-to-field returns with derive, and summarize "
@@ -1128,53 +1133,6 @@ class DeepSeekQueryPlanner:
                 if isinstance(requirement, dict):
                     requirement["status"] = "unsupported"
             return
-        if "\u6da8\u8dcc\u5bb6\u6570" in interpretation:
-            breadth_query = next(
-                (
-                    query
-                    for query in queries
-                    if isinstance(query, dict)
-                    and query.get("operation") == "daily"
-                ),
-                None,
-            )
-            if breadth_query is not None:
-                breadth_query["fields"] = ["ts_code", "trade_date", "pct_chg"]
-                raw_plan["result_pipeline"] = {
-                    "source_query_id": breadth_query["query_id"],
-                    "output_query_id": "market_breadth_summary",
-                    "steps": [
-                        {
-                            "operation": "compare_scalar",
-                            "field": "pct_chg",
-                            "output_field": "is_up",
-                            "comparison": "gt",
-                            "value": 0,
-                        },
-                        {
-                            "operation": "compare_scalar",
-                            "field": "pct_chg",
-                            "output_field": "is_down",
-                            "comparison": "lt",
-                            "value": 0,
-                        },
-                        {
-                            "operation": "compare_scalar",
-                            "field": "pct_chg",
-                            "output_field": "is_flat",
-                            "comparison": "eq",
-                            "value": 0,
-                        },
-                        {
-                            "operation": "summarize",
-                            "aggregations": [
-                                {"output_field": "up_count", "field": "is_up", "function": "sum"},
-                                {"output_field": "down_count", "field": "is_down", "function": "sum"},
-                                {"output_field": "flat_count", "field": "is_flat", "function": "sum"},
-                            ],
-                        },
-                    ],
-                }
         valuation_query = next(
             (
                 query
