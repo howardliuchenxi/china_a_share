@@ -177,19 +177,19 @@ function MetricSet({ result }: { result: BacktestResult }) {
   const hasLift = hasOutcomes && hasBaseline;
   return (
     <div className="rule-metrics">
-      <span><small>收益超过 {percent(result.target_return)} <TermHelp label="收益超过目标" description="规则命中事件中，未来收益严格高于目标收益的比例。" /></small><strong>{hasOutcomes ? percent(result.win_rate) : "—"}</strong></span>
-      <span><small>可比基准命中率（含规则样本） <TermHelp label="可比基准命中率" description="同一窗口、相同持有期且未来收益可观测的全部可比事件中，收益超过目标的比例；其中也包含规则命中的事件。" /></small><strong>{hasBaseline ? percent(result.baseline_win_rate) : "—"}</strong></span>
-      <span><small>相对可比全体（N={result.baseline_sample_count}） <TermHelp label="相对可比全体" description="规则命中率减去可比基准命中率。N 是用于计算可比基准命中率且标签可观测的事件数。" /></small><strong className={hasLift ? (result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative") : undefined}>{hasLift ? `${result.win_rate_lift >= 0 ? "+" : ""}${percent(result.win_rate_lift)}` : "—"}</strong></span>
-      <span><small>平均收益 <TermHelp label="平均收益" description="规则命中且未来收益可观测的事件，其未来收益的算术平均值。" /></small><strong>{hasOutcomes ? percent(result.mean_return, 2) : "—"}</strong></span>
-      <span><small>收益起点 <TermHelp label="收益起点" description="未来收益从信号日的后复权收盘价开始计算，用于消除分红送转造成的价格断点。" /></small><strong>信号日复权收盘</strong></span>
-      <span><small>样本 / 交易日 / 证券 <TermHelp label="样本、交易日与证券" description="依次为规则命中事件数、这些事件覆盖的不同信号交易日数和不同证券数。" /></small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
-      <span><small>日期集中度折算后有效交易日 <TermHelp label="有效交易日" description="按各交易日事件占比的集中程度折算出的等效独立交易日数；越接近实际交易日数，日期分布越均匀。" /></small><strong>{result.effective_trading_day_count.toFixed(1)}</strong></span>
-      <span><small>证券集中度折算后有效证券 <TermHelp label="有效证券" description="按各证券事件占比的集中程度折算出的等效独立证券数；越接近实际证券数，样本越不依赖少数个股。" /></small><strong>{result.effective_security_count.toFixed(1)}</strong></span>
-      <span><small>最大单股事件占比 <TermHelp label="最大单股事件占比" description="命中事件最多的一只证券占全部规则命中事件的比例，用于识别单股集中风险。" /></small><strong>{percent(result.max_security_event_share)}</strong></span>
-      <span><small>最大单日事件占比 <TermHelp label="最大单日事件占比" description="命中事件最多的一个信号日占全部规则命中事件的比例，用于识别日期集中风险。" /></small><strong>{percent(result.max_signal_date_event_share)}</strong></span>
-      <span><small>规则覆盖（可比事件 {result.eligible_sample_count}） <TermHelp label="规则覆盖" description="满足规则的事件数占全部可比事件数的比例；括号内是应用规则前的可比事件总数。" /></small><strong>{percent(result.rule_support_rate)}</strong></span>
-      <span><small>标签覆盖 <TermHelp label="标签覆盖" description="规则命中事件中，能够取得完整未来收益标签的比例。" /></small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
-      <span><small>可比基准标签覆盖 <TermHelp label="可比基准标签覆盖" description="全部可比事件中，能够取得完整未来收益标签的比例。" /></small><strong>{percent(result.baseline_outcome_coverage_rate)}</strong></span>
+      <span><small>收益超过 {percent(result.target_return)} <TermHelp label="收益超过目标" description="规则每发出 100 次信号，大约有多少次最终赚过右边写的目标。比如显示 42%，就是约 42 次赚钱、58 次没有赚钱。" /></small><strong>{hasOutcomes ? percent(result.win_rate) : "—"}</strong></span>
+      <span><small>可比基准命中率（含规则样本） <TermHelp label="可比基准命中率" description="如果不使用这条规则，在同一时间范围内用所有可比较的数据，赚钱的比例是多少。它是用来判断这条规则是否真的比整体市场机会更好。" /></small><strong>{hasBaseline ? percent(result.baseline_win_rate) : "—"}</strong></span>
+      <span><small>相对可比全体（N={result.baseline_sample_count}） <TermHelp label="相对可比全体" description="这条规则的赚钱比例比对照数据高多少。比如规则是 55%、对照是 50%，这里就是 +5%。N 表示参与对照计算的数据条数，数量越多，结果通常越不容易被少数偶然情况左右。" /></small><strong className={hasLift ? (result.win_rate_lift >= 0 ? "metric-positive" : "metric-negative") : undefined}>{hasLift ? `${result.win_rate_lift >= 0 ? "+" : ""}${percent(result.win_rate_lift)}` : "—"}</strong></span>
+      <span><small>平均收益 <TermHelp label="平均收益" description="把每次信号之后的涨跌幅加起来再取平均。负数表示这些信号合在一起平均亏钱；即使赚钱次数较多，也可能因为少数几次大跌而出现负数。" /></small><strong>{hasOutcomes ? percent(result.mean_return, 2) : "—"}</strong></span>
+      <span><small>收益起点 <TermHelp label="收益起点" description="假设在信号出现当天的收盘价买入，并从这个价格开始计算之后的涨跌。价格已经调整过分红和送股的影响，前后更容易公平比较。" /></small><strong>信号日复权收盘</strong></span>
+      <span><small>样本 / 交易日 / 证券 <TermHelp label="样本、交易日与证券" description="三个数字依次表示：规则一共出现多少次、分布在多少个交易日、涉及多少只股票。覆盖的日期和股票越多，结果越不容易只代表某几天或某几只股票。" /></small><strong>{result.sample_count} / {result.trading_day_count} / {result.security_count}</strong></span>
+      <span><small>日期集中度折算后有效交易日 <TermHelp label="有效交易日" description="用来检查信号是否扎堆在少数几天。如果大部分信号都挤在几天里，有效天数就会明显低于上方显示的实际交易日数；两者越接近越好。" /></small><strong>{result.effective_trading_day_count.toFixed(1)}</strong></span>
+      <span><small>证券集中度折算后有效证券 <TermHelp label="有效证券" description="用来检查信号是否主要来自少数股票。如果大部分信号都来自少数几只，有效证券数就会明显低于上方显示的实际证券数；两者越接近越好。" /></small><strong>{result.effective_security_count.toFixed(1)}</strong></span>
+      <span><small>最大单股事件占比 <TermHelp label="最大单股事件占比" description="出现信号最多的那只股票，占全部信号的比例。数值越小，说明结果越不依赖某一只股票；数值很大时要小心单只股票造成的偶然效果。" /></small><strong>{percent(result.max_security_event_share)}</strong></span>
+      <span><small>最大单日事件占比 <TermHelp label="最大单日事件占比" description="信号最多的那一天，占全部信号的比例。数值越小，说明信号在时间上越分散；数值很大时，结果可能主要来自某一天的特殊行情。" /></small><strong>{percent(result.max_signal_date_event_share)}</strong></span>
+      <span><small>规则覆盖（可比事件 {result.eligible_sample_count}） <TermHelp label="规则覆盖" description="全部可以检查的数据中，有多少符合这条规则。比如 9.5% 表示每 100 条可比较的数据约有 9.5 条会触发信号；括号内是检查前的数据总数。" /></small><strong>{percent(result.rule_support_rate)}</strong></span>
+      <span><small>标签覆盖 <TermHelp label="标签覆盖" description="规则触发后，有多少信号能查到完整的后续价格并算出收益。越接近 100% 越好；太低时，缺失的数据可能让结果失真。" /></small><strong>{percent(result.outcome_coverage_rate)}</strong></span>
+      <span><small>可比基准标签覆盖 <TermHelp label="可比基准标签覆盖" description="对照数据中，有多少能查到完整的后续价格并算出收益。越接近 100% 越好，说明拿来比较的数据基本完整。" /></small><strong>{percent(result.baseline_outcome_coverage_rate)}</strong></span>
     </div>
   );
 }

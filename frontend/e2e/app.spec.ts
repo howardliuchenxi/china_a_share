@@ -914,7 +914,7 @@ test("discovery page submits a bounded study and renders validation evidence", a
   const baselineLiftHelp = topWindowComparison.getByLabel(/相对可比全体：/).first();
   await baselineLiftHelp.hover();
   await expect(page.getByRole("tooltip")).toHaveText(
-    "规则命中率减去可比基准命中率。N 是用于计算可比基准命中率且标签可观测的事件数。",
+    "这条规则的赚钱比例比对照数据高多少。比如规则是 55%、对照是 50%，这里就是 +5%。N 表示参与对照计算的数据条数，数量越多，结果通常越不容易被少数偶然情况左右。",
   );
   await expect(topWindowComparison).toContainText("52.0%");
   await expect(topWindowComparison).toContainText("51.0%");
