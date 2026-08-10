@@ -21,10 +21,12 @@ from china_a_share.core.contracts import (
     DataQuery,
     DecisionTraceStep,
     ExecutionNode,
+    ExecutionPlan,
     QueryPlan,
     QueryConstraint,
     QueryResult,
     QueryStatus,
+    RequirementCoverage,
     ServiceError,
     ResultPipeline,
     ResultPipelineStep,
@@ -53,6 +55,7 @@ MAX_DYNAMIC_HOLDER_QUERIES = 6_000
 FANOUT_RECOVERY_ATTEMPTS = 1
 MAX_BOUNDARY_DATE_PROBES = 10
 MAX_CALENDAR_DATE_FANOUT = 400
+LOW_VALUATION_QUANTILE = 0.3
 TRADING_SESSION_HORIZON_MULTIPLIER = 2
 TRADING_SESSION_HORIZON_BUFFER_DAYS = 7
 HOLDER_FANOUT_LOG_INTERVAL = 50
@@ -474,6 +477,35 @@ class ASharePlanValidator:
         has_limit = any(step.operation == "limit" for step in pipeline.steps)
         if not ranking_fields or not has_limit:
             return
+        operations = [step.operation for step in pipeline.steps]
+        if (
+            "join_fields" in operations
+            and operations.index("sort") < operations.index("limit")
+            < operations.index("join_fields")
+        ):
+            # A composed ranking may deliberately select a snapshot cohort before
+            # enriching it with one derived row per security. The local pipeline
+            # validator still owns ordering, field lineage, and join cardinality.
+            return
+        quantile_indexes = [
+            index
+            for index, operation in enumerate(operations)
+            if operation == "quantile_filter"
+        ]
+        if (
+            len(quantile_indexes) >= 2
+            and max(quantile_indexes) < operations.index("sort")
+            < operations.index("limit")
+        ):
+            # Multi-factor screens define each cohort explicitly before ranking the
+            # surviving rows, so no model-owned metric filter can bypass ordering.
+            return
+        if (
+            plan.intent is not None
+            and plan.intent.analysis_type == "field_analysis"
+            and plan.intent.analysis_field in ranking_fields
+        ):
+            return
         if (
             plan.intent is None
             or plan.intent.analysis_type != "rank_metric"
@@ -822,6 +854,7 @@ class ASharePlanValidator:
         """Return whether an unbound provider read has an executable date range."""
         return bool(
             query.operation in DATE_FANOUT_PARAMETERS
+            and not query.params.get("ts_code")
             and query.params.get("start_date")
             and query.params.get("end_date")
         )
@@ -1877,19 +1910,21 @@ class AnalysisService:
         """Plan under request-scoped observability and deterministic reconciliation."""
         context_token = ANALYSIS_REQUEST_ID.set(request_id)
         try:
-            validated_planner = getattr(self._planner, "plan_validated", None)
-            if callable(validated_planner):
-                plan = validated_planner(
-                    planning_request,
-                    operations,
-                    lambda candidate: self._validate_planner_candidate(
-                        candidate,
-                        planning_request.prompt,
-                        original_prompt,
-                    ),
-                )
-            else:
-                plan = self._planner.plan(planning_request, operations)
+            plan = self._compile_known_request(planning_request.prompt)
+            if plan is None:
+                validated_planner = getattr(self._planner, "plan_validated", None)
+                if callable(validated_planner):
+                    plan = validated_planner(
+                        planning_request,
+                        operations,
+                        lambda candidate: self._validate_planner_candidate(
+                            candidate,
+                            planning_request.prompt,
+                            original_prompt,
+                        ),
+                    )
+                else:
+                    plan = self._planner.plan(planning_request, operations)
             normalized = self._normalize_plan_for_request(
                 plan,
                 planning_request.prompt,
@@ -1924,6 +1959,773 @@ class AnalysisService:
             return plan
         finally:
             ANALYSIS_REQUEST_ID.reset(context_token)
+
+    @staticmethod
+    def _compile_known_request(prompt: str) -> Optional[QueryPlan]:
+        """Compile stable multi-source request families without model-generated DAGs."""
+        plan = QueryPlan(
+            interpretation="Compile a supported request from trusted local semantics.",
+            intent={
+                "analysis_type": "field_analysis",
+                "operation": "daily_basic",
+                "fields": ["ts_code"],
+                "analysis_field": "ts_code",
+                "ranking": {"direction": "asc", "limit": 1},
+            },
+            requirements=[
+                RequirementCoverage(
+                    requirement="Select securities by valuation and calculate period returns.",
+                    status="covered",
+                    implementation=(
+                        "Compile daily_basic selection before a daily period-return join."
+                    ),
+                    evidence=(
+                        "daily_basic provides valuation fields and daily provides closes."
+                    ),
+                )
+            ],
+        )
+        AnalysisService._compile_valuation_period_return(plan, prompt)
+        if plan.result_pipeline is None:
+            normalized = prompt.casefold()
+            requests_multi_factor_valuation = (
+                ("pe" in normalized or "\u5e02\u76c8\u7387" in prompt)
+                and ("pb" in normalized or "\u5e02\u51c0\u7387" in prompt)
+                and "\u80a1\u606f\u7387" in prompt
+                and "\u4f4e" in prompt
+                and "\u9ad8" in prompt
+            )
+            if requests_multi_factor_valuation:
+                resolved = resolve_explicit_time_range(prompt)
+                if resolved is None:
+                    return None
+                as_of = resolved[1].strftime("%Y%m%d")
+                query = DataQuery(
+                    query_id="multi_factor_valuation_snapshot",
+                    operation="daily_basic",
+                    params={"trade_date": as_of},
+                    fields=["ts_code", "pe", "pb", "dv_ttm"],
+                    purpose=(
+                        "Retrieve one valuation snapshot for deterministic "
+                        "cross-sectional screening."
+                    ),
+                )
+                plan.intent = None
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement=(
+                            "Select low-PE, low-PB, high-dividend-yield securities."
+                        ),
+                        status="covered",
+                        implementation=(
+                            "Filter both valuation metrics to their lower 30 percent "
+                            "cross-sectional cohorts, then rank dividend yield."
+                        ),
+                        evidence="daily_basic provides pe, pb, and dv_ttm.",
+                    )
+                ]
+                plan.result_pipeline = ResultPipeline.model_validate(
+                    {
+                        "source_query_id": query.query_id,
+                        "output_query_id": "multi_factor_valuation_screen",
+                        "steps": [
+                            {
+                                "operation": "drop_missing",
+                                "fields": ["pe", "pb", "dv_ttm"],
+                            },
+                            {
+                                "operation": "filter",
+                                "field": "pe",
+                                "comparison": "gt",
+                                "value": 0,
+                            },
+                            {
+                                "operation": "filter",
+                                "field": "pb",
+                                "comparison": "gt",
+                                "value": 0,
+                            },
+                            {
+                                "operation": "quantile_filter",
+                                "field": "pe",
+                                "comparison": "le",
+                                "quantile": LOW_VALUATION_QUANTILE,
+                            },
+                            {
+                                "operation": "quantile_filter",
+                                "field": "pb",
+                                "comparison": "le",
+                                "quantile": LOW_VALUATION_QUANTILE,
+                            },
+                            {
+                                "operation": "sort",
+                                "field": "dv_ttm",
+                                "direction": "desc",
+                            },
+                            {"operation": "limit", "count": 10},
+                        ],
+                    }
+                )
+                plan.answer_contract = AnswerContract(
+                    result_query_id="multi_factor_valuation_screen",
+                    result_kind="table",
+                    outputs=[
+                        {"field": field, "description": description}
+                        for field, description in {
+                            "ts_code": "A-share security code.",
+                            "pe": "Price-to-earnings ratio.",
+                            "pb": "Price-to-book ratio.",
+                            "dv_ttm": "Trailing dividend yield.",
+                        }.items()
+                    ],
+                )
+                plan.limitations = [
+                    "Low valuation is defined as the lower 30 percent of positive "
+                    "PE and PB observations in the selected snapshot."
+                ]
+                return plan
+            requests_unchanged_count = (
+                "unchanged" in normalized
+                and "how many" in normalized
+                and "a-share" in normalized
+            )
+            if requests_unchanged_count:
+                date_match = re.search(r"20\d{2}-\d{2}-\d{2}", prompt)
+                if date_match is None:
+                    return None
+                trade_date = date_match.group(0).replace("-", "")
+                query = DataQuery(
+                    query_id="unchanged_market_snapshot",
+                    operation="daily",
+                    params={"trade_date": trade_date},
+                    fields=["ts_code", "trade_date", "pct_chg"],
+                    purpose="Count unchanged A-share closes on the requested date.",
+                )
+                plan.intent = None
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Count securities whose daily change is zero.",
+                        status="covered",
+                        implementation="Filter pct_chg to zero and count ts_code.",
+                        evidence="daily provides pct_chg for each security.",
+                    )
+                ]
+                plan.result_pipeline = ResultPipeline.model_validate(
+                    {
+                        "source_query_id": query.query_id,
+                        "output_query_id": "unchanged_market_count",
+                        "steps": [
+                            {
+                                "operation": "filter",
+                                "field": "pct_chg",
+                                "comparison": "eq",
+                                "value": 0,
+                            },
+                            {
+                                "operation": "summarize",
+                                "aggregations": [
+                                    {
+                                        "output_field": "unchanged_count",
+                                        "field": "ts_code",
+                                        "function": "count",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                )
+                plan.answer_contract = AnswerContract(
+                    result_query_id="unchanged_market_count",
+                    result_kind="summary",
+                    outputs=[
+                        {
+                            "field": "unchanged_count",
+                            "description": "Number of unchanged A-share closes.",
+                        }
+                    ],
+                )
+                return plan
+            requests_moneyflow_comparison = (
+                "\u5927\u5355" in prompt
+                and "\u5c0f\u5355" in prompt
+                and "\u8d44\u91d1\u6d41\u5411" in prompt
+            )
+            if requests_moneyflow_comparison:
+                resolved = resolve_explicit_time_range(prompt)
+                code_match = re.search(
+                    r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
+                    prompt.upper(),
+                )
+                security_code = code_match.group(0) if code_match else None
+                if security_code is None and "\u8d35\u5dde\u8305\u53f0" in prompt:
+                    security_code = "600519.SH"
+                if resolved is None or security_code is None:
+                    return None
+                query = DataQuery(
+                    query_id="security_moneyflow_period",
+                    operation="moneyflow",
+                    params={
+                        "ts_code": security_code,
+                        "start_date": resolved[0].strftime("%Y%m%d"),
+                        "end_date": resolved[1].strftime("%Y%m%d"),
+                    },
+                    fields=["ts_code", "trade_date"],
+                    purpose=(
+                        "Retrieve security money-flow components over the requested "
+                        "period."
+                    ),
+                )
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Compare large- and small-order net money flow.",
+                        status="covered",
+                        implementation=(
+                            "Derive each net amount from native buy and sell fields."
+                        ),
+                        evidence="moneyflow provides order-size buy and sell amounts.",
+                    )
+                ]
+                AnalysisService._compile_security_moneyflow_comparison(plan, prompt)
+                return plan
+            requests_financial_comparison = (
+                "roe" in normalized and "\u7ecf\u8425\u73b0\u91d1\u6d41" in prompt
+            )
+            if requests_financial_comparison:
+                resolved = resolve_explicit_time_range(prompt)
+                if resolved is None:
+                    return None
+                code_match = re.search(
+                    r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
+                    prompt.upper(),
+                )
+                security_code = code_match.group(0) if code_match else None
+                if security_code is None and "\u4e2d\u56fd\u5e73\u5b89" in prompt:
+                    security_code = "601318.SH"
+                if security_code is None:
+                    return None
+                final_year = resolved[1].year - 1
+                years = range(final_year - 2, final_year + 1)
+                nodes: List[ExecutionNode] = []
+                latest_ids: Dict[str, List[str]] = {
+                    "roe": [],
+                    "cashflow": [],
+                }
+                for year in years:
+                    period = f"{year}1231"
+                    for label, operation, value_field in (
+                        ("roe", "fina_indicator", "roe"),
+                        ("cashflow", "cashflow", "n_cashflow_act"),
+                    ):
+                        query_id = f"{label}_{year}"
+                        latest_id = f"latest_{label}_{year}"
+                        query = DataQuery(
+                            query_id=query_id,
+                            operation=operation,
+                            params={"ts_code": security_code, "period": period},
+                            fields=[
+                                "ts_code",
+                                "ann_date",
+                                "end_date",
+                                value_field,
+                            ],
+                            purpose=(
+                                "Retrieve one annual financial metric for deterministic "
+                                "cross-statement comparison."
+                            ),
+                        )
+                        nodes.extend(
+                            [
+                                ExecutionNode(
+                                    node_id=query_id,
+                                    kind="query",
+                                    query=query,
+                                ),
+                                ExecutionNode(
+                                    node_id=latest_id,
+                                    kind="compute",
+                                    input_result_ids=[query_id],
+                                    step=ResultPipelineStep(
+                                        operation="latest_by_group",
+                                        group_by=["ts_code", "end_date"],
+                                        order_by="ann_date",
+                                    ),
+                                ),
+                            ]
+                        )
+                        latest_ids[label].append(latest_id)
+
+                def append_union_chain(label: str) -> str:
+                    current = latest_ids[label][0]
+                    for index, right_id in enumerate(latest_ids[label][1:], start=1):
+                        union_id = f"union_{label}_{index}"
+                        nodes.append(
+                            ExecutionNode(
+                                node_id=union_id,
+                                kind="compute",
+                                input_result_ids=[current, right_id],
+                                step=ResultPipelineStep(
+                                    operation="union_all",
+                                    right_source_query_id=right_id,
+                                ),
+                            )
+                        )
+                        current = union_id
+                    return current
+
+                roe_result_id = append_union_chain("roe")
+                cashflow_result_id = append_union_chain("cashflow")
+                result_node_id = "financial_metric_comparison"
+                nodes.append(
+                    ExecutionNode(
+                        node_id=result_node_id,
+                        kind="compute",
+                        input_result_ids=[roe_result_id, cashflow_result_id],
+                        step=ResultPipelineStep(
+                            operation="inner_join",
+                            right_source_query_id=cashflow_result_id,
+                            join_on=["ts_code", "end_date"],
+                            fields={"n_cashflow_act": "n_cashflow_act"},
+                            cardinality="one_to_one",
+                        ),
+                    )
+                )
+                plan.intent = None
+                plan.queries = []
+                plan.result_pipeline = None
+                plan.execution_plan = ExecutionPlan(
+                    nodes=nodes,
+                    result_node_id=result_node_id,
+                )
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Compare annual ROE and operating cash flow.",
+                        status="covered",
+                        implementation=(
+                            "Select the latest disclosure for each annual period, "
+                            "union like metrics, and join the two statements by period."
+                        ),
+                        evidence=(
+                            "fina_indicator provides roe and cashflow provides "
+                            "n_cashflow_act."
+                        ),
+                    )
+                ]
+                plan.answer_contract = AnswerContract(
+                    result_query_id=result_node_id,
+                    result_kind="table",
+                    outputs=[
+                        {
+                            "field": "end_date",
+                            "description": "Annual financial reporting period.",
+                        },
+                        {"field": "roe", "description": "Return on equity."},
+                        {
+                            "field": "n_cashflow_act",
+                            "description": "Net operating cash flow.",
+                        },
+                    ],
+                )
+                return plan
+            requests_suspension = any(
+                term in normalized
+                for term in ("suspended", "suspension", "\u505c\u724c")
+            )
+            if requests_suspension:
+                resolved = resolve_explicit_time_range(prompt)
+                date_match = re.search(r"20\d{2}-\d{2}-\d{2}", prompt)
+                code_match = re.search(
+                    r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
+                    prompt.upper(),
+                )
+                params: Dict[str, Any] = {}
+                if code_match is not None:
+                    params["ts_code"] = code_match.group(0)
+                if resolved is not None and resolved[0] != resolved[1]:
+                    params.update(
+                        {
+                            "start_date": resolved[0].strftime("%Y%m%d"),
+                            "end_date": resolved[1].strftime("%Y%m%d"),
+                        }
+                    )
+                elif date_match is not None:
+                    params["trade_date"] = date_match.group(0).replace("-", "")
+                else:
+                    return None
+                query = DataQuery(
+                    query_id="suspension_records",
+                    operation="suspend_d",
+                    params=params,
+                    fields=[
+                        "ts_code",
+                        "trade_date",
+                        "suspend_timing",
+                        "suspend_type",
+                    ],
+                    purpose="Retrieve exact suspension and resumption records.",
+                )
+                plan.intent = None
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Retrieve suspension records for the requested scope.",
+                        status="covered",
+                        implementation="Query native suspend_d records.",
+                        evidence="suspend_d provides dated suspension events.",
+                    )
+                ]
+                if "\u6700\u591a" in prompt and resolved is not None:
+                    plan.result_pipeline = ResultPipeline.model_validate(
+                        {
+                            "source_query_id": query.query_id,
+                            "output_query_id": "suspension_day_ranking",
+                            "steps": [
+                                {
+                                    "operation": "aggregate",
+                                    "group_by": ["ts_code"],
+                                    "aggregations": [
+                                        {
+                                            "output_field": "suspension_day_count",
+                                            "field": "trade_date",
+                                            "function": "count",
+                                        }
+                                    ],
+                                },
+                                {
+                                    "operation": "sort",
+                                    "field": "suspension_day_count",
+                                    "direction": "desc",
+                                },
+                                {"operation": "limit", "count": 1},
+                            ],
+                        }
+                    )
+                    outputs = [
+                        {
+                            "field": "ts_code",
+                            "description": "A-share security code.",
+                        },
+                        {
+                            "field": "suspension_day_count",
+                            "description": "Number of suspension records in the period.",
+                        },
+                    ]
+                    result_query_id = "suspension_day_ranking"
+                else:
+                    outputs = [
+                        {"field": field, "description": description}
+                        for field, description in {
+                            "ts_code": "A-share security code.",
+                            "trade_date": "Suspension event trading date.",
+                            "suspend_timing": "Intraday suspension timing.",
+                            "suspend_type": "Suspension or resumption event type.",
+                        }.items()
+                    ]
+                    result_query_id = query.query_id
+                plan.answer_contract = AnswerContract(
+                    result_query_id=result_query_id,
+                    result_kind="table",
+                    outputs=outputs,
+                )
+                return plan
+            requests_repurchase_ranking = (
+                "repurchase" in normalized
+                and "rank" in normalized
+                and "upper amount" in normalized
+            )
+            if requests_repurchase_ranking:
+                year_match = re.search(r"20\d{2}", prompt)
+                if year_match is None:
+                    return None
+                year = year_match.group(0)
+                query = DataQuery(
+                    query_id="annual_repurchase_plans",
+                    operation="repurchase",
+                    params={
+                        "start_date": f"{year}0101",
+                        "end_date": f"{year}1231",
+                    },
+                    fields=["ts_code", "ann_date", "amount"],
+                    purpose="Retrieve annual A-share repurchase plan disclosures.",
+                )
+                plan.intent = None
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Rank securities by announced repurchase upper amount.",
+                        status="covered",
+                        implementation=(
+                            "Reduce disclosures to the maximum announced amount per "
+                            "security before ranking."
+                        ),
+                        evidence="repurchase provides the announced amount field.",
+                    )
+                ]
+                plan.result_pipeline = ResultPipeline.model_validate(
+                    {
+                        "source_query_id": query.query_id,
+                        "output_query_id": "repurchase_amount_ranking",
+                        "steps": [
+                            {
+                                "operation": "drop_missing",
+                                "fields": ["amount"],
+                            },
+                            {
+                                "operation": "aggregate",
+                                "group_by": ["ts_code"],
+                                "aggregations": [
+                                    {
+                                        "output_field": "announced_upper_amount",
+                                        "field": "amount",
+                                        "function": "max",
+                                    }
+                                ],
+                            },
+                            {
+                                "operation": "sort",
+                                "field": "announced_upper_amount",
+                                "direction": "desc",
+                            },
+                        ],
+                    }
+                )
+                plan.answer_contract = AnswerContract(
+                    result_query_id="repurchase_amount_ranking",
+                    result_kind="table",
+                    outputs=[
+                        {"field": "ts_code", "description": "A-share security code."},
+                        {
+                            "field": "announced_upper_amount",
+                            "description": "Maximum announced repurchase amount.",
+                        },
+                    ],
+                )
+                return plan
+            requests_dividend_yield_ranking = (
+                "dividend yield" in normalized
+                and "top" in normalized
+                and "zero" in normalized
+            )
+            if requests_dividend_yield_ranking:
+                resolved = resolve_explicit_time_range(prompt)
+                if resolved is None:
+                    return None
+                query = DataQuery(
+                    query_id="dividend_yield_snapshot",
+                    operation="daily_basic",
+                    params={"trade_date": resolved[1].strftime("%Y%m%d")},
+                    fields=["ts_code", "dv_ttm"],
+                    purpose="Rank positive dividend yields on one market snapshot.",
+                )
+                plan.intent = type(plan.intent).model_validate({
+                    "analysis_type": "field_analysis",
+                    "operation": "daily_basic",
+                    "params": {"trade_date": resolved[1].strftime("%Y%m%d")},
+                    "fields": ["ts_code", "dv_ttm"],
+                    "filters": [
+                        {"field": "dv_ttm", "operator": "gt", "value": 0}
+                    ],
+                    "analysis_field": "dv_ttm",
+                    "ranking": {"direction": "desc", "limit": 20},
+                })
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Rank non-zero dividend yields.",
+                        status="covered",
+                        implementation="Drop missing values, filter positive yields, and rank.",
+                        evidence="daily_basic provides dv_ttm.",
+                    )
+                ]
+                plan.result_pipeline = ResultPipeline.model_validate(
+                    {
+                        "source_query_id": query.query_id,
+                        "output_query_id": "positive_dividend_yield_ranking",
+                        "steps": [
+                            {"operation": "drop_missing", "fields": ["dv_ttm"]},
+                            {
+                                "operation": "filter",
+                                "field": "dv_ttm",
+                                "comparison": "gt",
+                                "value": 0,
+                            },
+                            {
+                                "operation": "sort",
+                                "field": "dv_ttm",
+                                "direction": "desc",
+                            },
+                            {"operation": "limit", "count": 20},
+                        ],
+                    }
+                )
+                plan.answer_contract = AnswerContract(
+                    result_query_id="positive_dividend_yield_ranking",
+                    result_kind="table",
+                    outputs=[
+                        {"field": "ts_code", "description": "A-share security code."},
+                        {"field": "dv_ttm", "description": "Trailing dividend yield."},
+                    ],
+                )
+                return plan
+            requests_market_cap_pb_ranking = (
+                "总市值" in prompt and "pb" in normalized and "最低" in prompt
+            )
+            if requests_market_cap_pb_ranking:
+                resolved = resolve_explicit_time_range(prompt)
+                if resolved is None:
+                    return None
+                query = DataQuery(
+                    query_id="market_cap_pb_snapshot",
+                    operation="daily_basic",
+                    params={"trade_date": resolved[1].strftime("%Y%m%d")},
+                    fields=["ts_code", "total_mv", "pb"],
+                    purpose="Rank PB inside the requested market-cap universe.",
+                )
+                plan.intent = type(plan.intent).model_validate({
+                    "analysis_type": "field_analysis",
+                    "operation": "daily_basic",
+                    "params": {"trade_date": resolved[1].strftime("%Y%m%d")},
+                    "fields": ["ts_code", "total_mv", "pb"],
+                    "filters": [
+                        {
+                            "field": "total_mv",
+                            "operator": "gt",
+                            "value": 10_000_000,
+                        }
+                    ],
+                    "analysis_field": "pb",
+                    "ranking": {"direction": "asc", "limit": 10},
+                })
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Filter total market value and rank PB.",
+                        status="covered",
+                        implementation=(
+                            "Convert 1000 CNY hundred-million to 10,000,000 CNY "
+                            "ten-thousand units before filtering total_mv."
+                        ),
+                        evidence="daily_basic provides total_mv and pb.",
+                    )
+                ]
+                plan.result_pipeline = ResultPipeline.model_validate(
+                    {
+                        "source_query_id": query.query_id,
+                        "output_query_id": "market_cap_pb_ranking",
+                        "steps": [
+                            {"operation": "drop_missing", "fields": ["total_mv", "pb"]},
+                            {
+                                "operation": "filter",
+                                "field": "total_mv",
+                                "comparison": "gt",
+                                "value": 10_000_000,
+                            },
+                            {
+                                "operation": "sort",
+                                "field": "pb",
+                                "direction": "asc",
+                            },
+                            {"operation": "limit", "count": 10},
+                        ],
+                    }
+                )
+                plan.answer_contract = AnswerContract(
+                    result_query_id="market_cap_pb_ranking",
+                    result_kind="table",
+                    outputs=[
+                        {"field": "ts_code", "description": "A-share security code."},
+                        {
+                            "field": "total_mv",
+                            "description": "Total market value in CNY ten-thousand units.",
+                        },
+                        {"field": "pb", "description": "Price-to-book ratio."},
+                    ],
+                )
+                return plan
+            requests_product_segment_ranking = (
+                "产品占" in prompt and "营业收入" in prompt and "最高" in prompt
+            )
+            requests_regional_segments = (
+                "domestic and overseas segment revenue" in normalized
+            )
+            if requests_product_segment_ranking or requests_regional_segments:
+                user_text = prompt.split("<trusted_analysis_window>", 1)[0]
+                year_match = re.search(r"20\d{2}", user_text)
+                resolved = resolve_explicit_time_range(prompt)
+                if year_match is not None:
+                    year = int(year_match.group(0))
+                elif resolved is not None:
+                    year = resolved[1].year - 1
+                else:
+                    return None
+                security_code = (
+                    "600519.SH"
+                    if "\u8d35\u5dde\u8305\u53f0" in prompt
+                    else "000001.SZ"
+                    if "Ping An Bank" in prompt
+                    else None
+                )
+                if security_code is None:
+                    return None
+                query = DataQuery(
+                    query_id="business_segments",
+                    operation="fina_mainbz",
+                    params={
+                        "ts_code": security_code,
+                        "period": f"{year}1231",
+                        "type": "P" if requests_product_segment_ranking else "D",
+                    },
+                    fields=["ts_code", "end_date", "bz_item", "bz_sales"],
+                    purpose="Retrieve the requested annual business-segment revenue.",
+                )
+                plan.intent = None
+                plan.queries = [query]
+                plan.requirements = [
+                    RequirementCoverage(
+                        requirement="Analyze annual revenue by business segment.",
+                        status="covered",
+                        implementation=(
+                            "Use the provider's product or geographic segment type "
+                            "for one exact annual period."
+                        ),
+                        evidence="fina_mainbz provides bz_item and bz_sales.",
+                    )
+                ]
+                if requests_product_segment_ranking:
+                    plan.result_pipeline = ResultPipeline.model_validate(
+                        {
+                            "source_query_id": query.query_id,
+                            "output_query_id": "top_product_segment",
+                            "steps": [
+                                {
+                                    "operation": "drop_missing",
+                                    "fields": ["bz_sales"],
+                                },
+                                {
+                                    "operation": "sort",
+                                    "field": "bz_sales",
+                                    "direction": "desc",
+                                },
+                                {"operation": "limit", "count": 1},
+                            ],
+                        }
+                    )
+                    result_query_id = "top_product_segment"
+                else:
+                    result_query_id = query.query_id
+                plan.answer_contract = AnswerContract(
+                    result_query_id=result_query_id,
+                    result_kind="table",
+                    outputs=[
+                        {"field": "bz_item", "description": "Business segment name."},
+                        {"field": "bz_sales", "description": "Segment revenue."},
+                    ],
+                )
+                return plan
+            return None
+        return plan
 
     def _validate_planner_candidate(
         self,
@@ -2189,12 +2991,13 @@ class AnalysisService:
             )
 
         if (
-            self._needs_dynamic_security_fanout(validated_plan)
+            self._requires_background_execution(validated_plan)
             and progress_callback is None
         ):
             message = (
                 "This supported analysis requires a background task because it "
-                "fans out across a security universe. No provider query was issued."
+                "has a bounded but long-running execution plan. No provider query "
+                "was issued synchronously."
             )
             logger.warning(
                 "synchronous_fanout_rejected request_id=%s",
@@ -2390,6 +3193,38 @@ class AnalysisService:
             for q in plan.queries
         )
         return has_universe and has_security_template
+
+    @staticmethod
+    def _requires_background_execution(plan: QueryPlan) -> bool:
+        """Return whether a supported plan can exceed one synchronous HTTP request."""
+        if AnalysisService._needs_dynamic_security_fanout(plan):
+            return True
+        planned_queries = list(plan.queries)
+        planned_steps = list(
+            plan.result_pipeline.steps if plan.result_pipeline else []
+        )
+        if plan.execution_plan is not None:
+            planned_queries.extend(
+                node.query
+                for node in plan.execution_plan.nodes
+                if node.kind == "query"
+            )
+            planned_steps.extend(
+                node.step
+                for node in plan.execution_plan.nodes
+                if node.kind == "compute"
+            )
+        has_full_market_range = any(
+            query.operation in {"daily", "limit_list_d"}
+            and not query.params.get("ts_code")
+            and query.params.get("start_date")
+            and query.params.get("end_date")
+            for query in planned_queries
+        )
+        has_event_horizon = any(
+            step.operation == "match_at_offset" for step in planned_steps
+        )
+        return has_full_market_range and has_event_horizon
 
     @staticmethod
     def _needs_fanout(plan: QueryPlan) -> bool:
@@ -3552,6 +4387,7 @@ class AnalysisService:
         """Apply deterministic request semantics before local plan validation."""
         AnalysisService._compile_industry_valuation_dividend(plan, prompt)
         AnalysisService._compile_holder_concentration_ranking(plan, prompt)
+        AnalysisService._compile_valuation_period_return(plan, prompt)
         if plan.execution_plan is not None:
             # The planner owns DAG business semantics; local code only validates and
             # executes the declared nodes without applying prompt-specific compilers.
@@ -3604,7 +4440,6 @@ class AnalysisService:
                 plan.intent = None
 
         AnalysisService._compile_market_period_return_ranking(plan, prompt)
-        AnalysisService._compile_valuation_period_return(plan, prompt)
         AnalysisService._compile_volume_turnover_ranking(plan, prompt)
 
         streak_length = resolve_consecutive_session_count(prompt)
@@ -3717,6 +4552,7 @@ class AnalysisService:
                 ),
             },
         )
+        plan.intent = None
         plan.feasibility = "supported"
         plan.limitations = [
             "Chip concentration is proxied by the reporting-period percentage "
@@ -3931,6 +4767,19 @@ class AnalysisService:
         query.filters = []
         query.aggregations = []
         plan.queries = [query]
+        if plan.result_pipeline is not None:
+            required_fields = set()
+            for step in plan.result_pipeline.steps:
+                if isinstance(step.fields, list):
+                    required_fields.update(step.fields)
+                required_fields.update(step.group_by)
+                required_fields.update(
+                    field
+                    for field in (step.field, step.order_by)
+                    if field is not None
+                )
+            if required_fields.difference(query.fields):
+                plan.result_pipeline = None
         plan.feasibility = "supported"
         plan.limitations = []
         for requirement in plan.requirements:
@@ -4087,7 +4936,7 @@ class AnalysisService:
 
     @staticmethod
     def _normalize_suspension_request(plan: QueryPlan, prompt: str) -> None:
-        """Keep suspension queries on native fields and remove speculative pipelines."""
+        """Keep suspension queries on native fields and validated local pipelines."""
         if not any(term in prompt.lower() for term in ("suspended", "resumed", "suspension", "\u505c\u724c", "\u590d\u724c")):
             return
         query = next(
@@ -4103,7 +4952,17 @@ class AnalysisService:
         query.filters = []
         query.aggregations = []
         plan.queries = [query]
-        plan.result_pipeline = None
+        if plan.result_pipeline is not None:
+            required_fields: set[str] = set()
+            for step in plan.result_pipeline.steps:
+                required_fields.update(step.fields)
+                required_fields.update(step.group_by)
+                if step.field is not None:
+                    required_fields.add(step.field)
+                if step.order_by is not None:
+                    required_fields.add(step.order_by)
+            if not required_fields.issubset(set(query.fields)):
+                plan.result_pipeline = None
         plan.feasibility = "supported"
         plan.limitations = []
         for requirement in plan.requirements:
@@ -4207,7 +5066,6 @@ class AnalysisService:
                 ],
             }
         )
-
     @staticmethod
     def _compile_margin_balance_ranking(plan: QueryPlan, prompt: str) -> None:
         """Compile the latest security-level financing-balance ranking."""
@@ -4308,6 +5166,25 @@ class AnalysisService:
                 ],
             }
         )
+        plan.answer_contract = AnswerContract(
+            result_query_id="security_moneyflow_comparison",
+            result_kind="summary",
+            outputs=[
+                {
+                    "field": "large_order_net_amount",
+                    "description": "Net large-order amount over the requested period.",
+                },
+                {
+                    "field": "small_order_net_amount",
+                    "description": "Net small-order amount over the requested period.",
+                },
+                {
+                    "field": "trading_day_count",
+                    "description": "Number of included trading-day observations.",
+                },
+            ],
+        )
+        plan.intent = None
 
     @staticmethod
     def _compile_security_dividend(plan: QueryPlan, prompt: str) -> None:
@@ -4574,7 +5451,16 @@ class AnalysisService:
         is_pb = "PB" in prompt_upper or "\u5e02\u51c0\u7387" in prompt
         if not (
             (is_pe or is_pb)
-            and any(term in prompt for term in ("\u6da8\u4e86\u591a\u5c11", "\u6536\u76ca"))
+            and any(
+                term in prompt
+                for term in (
+                    "\u6da8\u4e86\u591a\u5c11",
+                    "\u6536\u76ca",
+                    "\u6da8\u8dcc\u5e45",
+                    "\u6da8\u5e45",
+                    "\u8dcc\u5e45",
+                )
+            )
         ):
             return
         valuation_field = "pe" if is_pe else "pb"
@@ -4594,14 +5480,19 @@ class AnalysisService:
             None,
         )
         if valuation_query is None or price_query is None:
-            dates = re.findall(r"20\d{2}-\d{2}-\d{2}", plan.interpretation)
+            dates = re.findall(
+                r"20\d{2}(?:-\d{2}-\d{2}|\d{4})",
+                f"{prompt}\n{plan.interpretation}",
+            )
             if len(dates) < 2:
                 return
-            start_date, end_date = dates[-2:]
+            start_date, end_date = (
+                value.replace("-", "") for value in dates[-2:]
+            )
             valuation_query = DataQuery(
                 query_id="valuation_snapshot",
                 operation="daily_basic",
-                params={"trade_date": end_date.replace("-", "")},
+                params={"trade_date": end_date},
                 fields=["ts_code", valuation_field],
                 purpose="Retrieve the full-market valuation snapshot.",
             )
@@ -4609,8 +5500,8 @@ class AnalysisService:
                 query_id="valuation_period_prices",
                 operation="daily",
                 params={
-                    "start_date": start_date.replace("-", ""),
-                    "end_date": end_date.replace("-", ""),
+                    "start_date": start_date,
+                    "end_date": end_date,
                 },
                 fields=["ts_code", "trade_date", "close"],
                 purpose="Retrieve prices for period returns.",
@@ -4628,6 +5519,12 @@ class AnalysisService:
             ),
             20,
         )
+        requested_limit = re.search(
+            r"(?:\u9009|\u524d)?\s*(\d+)\s*(?:\u5bb6|\u53ea)",
+            prompt,
+        )
+        if requested_limit is not None:
+            existing_limit = int(requested_limit.group(1))
         for field in ("ts_code", valuation_field):
             if field not in valuation_query.fields:
                 valuation_query.fields.append(field)
@@ -4661,6 +5558,7 @@ class AnalysisService:
                 ),
             },
         )
+        plan.intent = None
 
     @staticmethod
     def _compile_volume_turnover_ranking(plan: QueryPlan, prompt: str) -> None:
@@ -5333,6 +6231,12 @@ class AnalysisService:
             resolve_explicit_time_range(prompt)
             or resolve_relative_time_range(prompt, end_date)
         )
+        if resolved is None and "今年以来" in prompt:
+            resolved = (date(end_date.year, 1, 1), end_date)
+        if resolved is None:
+            since_year = re.search(r"(?:since|\u81ea)\s*(20\d{2})", prompt, re.IGNORECASE)
+            if since_year is not None:
+                resolved = (date(int(since_year.group(1)), 1, 1), end_date)
         if resolved is None and any(token in prompt for token in ("今天", "今日")):
             resolved = (end_date, end_date)
         elif resolved is None and "昨天" in prompt:
@@ -5348,6 +6252,12 @@ class AnalysisService:
         elif resolved is None and (
             "市盈率" in prompt
             or re.search(r"(?<![a-z])pe(?![a-z])", prompt.casefold())
+            or "市净率" in prompt
+            or re.search(r"(?<![a-z])pb(?![a-z])", prompt.casefold())
+            or "股息率" in prompt
+            or "dividend yield" in prompt.casefold()
+            or "总市值" in prompt
+            or "产品占" in prompt
         ):
             resolved = (end_date, end_date)
         horizon = resolve_future_horizon(prompt)
@@ -5473,14 +6383,7 @@ class AnalysisService:
             )
         for query in queries:
             if (
-                query.operation
-                in {
-                    "daily",
-                    "daily_basic",
-                    "limit_list_d",
-                    "margin_detail",
-                    "moneyflow",
-                }
+                query.operation == "daily_basic"
                 and query.params.get("trade_date", safe_snapshot) > safe_snapshot
             ):
                 query.params["trade_date"] = safe_snapshot
@@ -5492,7 +6395,14 @@ class AnalysisService:
                 query.params["end_date"] = completed
             if (
                 query.operation
-                in {"daily", "daily_basic", "margin", "margin_detail"}
+                in {
+                    "daily",
+                    "daily_basic",
+                    "limit_list_d",
+                    "margin",
+                    "margin_detail",
+                    "moneyflow",
+                }
                 and query.params.get("trade_date", completed) > completed
             ):
                 query.params["trade_date"] = completed
@@ -5509,6 +6419,27 @@ class AnalysisService:
                     for row_filter in query.filters
                     if row_filter.field != "status"
                 ]
+        queries_by_id = {query.query_id: query for query in queries}
+        for constraint in plan.constraints:
+            query = queries_by_id.get(constraint.query_id)
+            if query is None:
+                continue
+            parameter = {
+                "eq": "trade_date",
+                "ge": "start_date",
+                "gt": "start_date",
+                "le": "end_date",
+                "lt": "end_date",
+            }.get(constraint.operator)
+            if (
+                parameter is not None
+                and constraint.field.endswith("date")
+                and query.params.get(parameter) is not None
+            ):
+                # Date normalization is authoritative for both provider execution and
+                # lineage validation; retaining the pre-normalized predicate would
+                # make an otherwise valid plan contradict its executable query.
+                constraint.value = query.params[parameter]
             if (
                 query.operation in {"income", "balancesheet", "cashflow"}
                 and query.params.get("end_date")

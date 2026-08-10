@@ -792,6 +792,25 @@ def test_current_day_prompt_receives_a_trusted_completed_trading_date():
     assert start.group(1) == end.group(1)
 
 
+def test_year_to_date_prompt_uses_the_completed_trading_year():
+    provider = FakeMarketDataProvider(frame=pd.DataFrame())
+    service = AnalysisService(
+        Mock(),
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+    service._latest_completed_trading_date = Mock(return_value=date(2026, 8, 7))
+
+    enriched = service._append_resolved_time_range(
+        "request-year-to-date",
+        "市净率最低的50家公司今年以来的收益率",
+    )
+
+    assert "event_start_date=20260101" in enriched
+    assert "event_end_date=20260807" in enriched
+
+
 def test_dividend_rejects_non_native_provider_parameters():
     validator = ASharePlanValidator(FakeMarketDataProvider())
 
@@ -1910,6 +1929,72 @@ def test_workflow_clamps_snapshot_intent_and_compiled_query_together():
 
     assert compiled.intent.metric.as_of == "20260806"
     assert compiled.queries[0].params["trade_date"] == "20260806"
+
+
+def test_workflow_uses_completed_date_for_natively_published_daily_operations():
+    plan = make_daily_plan()
+    plan.queries[0].params["trade_date"] = "20260809"
+    plan.queries.extend(
+        [
+            DataQuery(
+                query_id="limit-ups",
+                operation="limit_list_d",
+                params={"trade_date": "20260809"},
+                fields=["ts_code", "trade_date"],
+                purpose="Retrieve the latest limit-up list.",
+            ),
+            DataQuery(
+                query_id="money-flow",
+                operation="moneyflow",
+                params={"trade_date": "20260809"},
+                fields=["ts_code", "trade_date"],
+                purpose="Retrieve the latest security money flow.",
+            ),
+        ]
+    )
+
+    AnalysisService._normalize_latest_plan_dates(plan, date(2026, 8, 7))
+
+    assert plan.queries[0].params["trade_date"] == "20260807"
+    assert plan.queries[1].params["trade_date"] == "20260807"
+    assert plan.queries[2].params["trade_date"] == "20260807"
+
+
+def test_workflow_normalizes_date_constraint_with_executable_query():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "daily_basic"
+    plan.queries[0].params["trade_date"] = "20260809"
+    plan.constraints = [
+        QueryConstraint(
+            constraint_id="valuation_date",
+            scope="universe",
+            query_id=plan.queries[0].query_id,
+            field="trade_date",
+            operator="eq",
+            value="20260809",
+        )
+    ]
+
+    AnalysisService._normalize_latest_plan_dates(plan, date(2026, 8, 7))
+
+    assert plan.queries[0].params["trade_date"] == "20260806"
+    assert plan.constraints[0].value == "20260806"
+
+
+def test_security_scoped_disclosure_range_uses_native_provider_query():
+    query = DataQuery(
+        query_id="holder-history",
+        operation="stk_holdernumber",
+        params={
+            "ts_code": "000001.SZ",
+            "start_date": "20240101",
+            "end_date": "20261231",
+        },
+        fields=["ts_code", "ann_date", "end_date", "holder_num"],
+        purpose="Retrieve one security's shareholder-count history.",
+    )
+
+    assert ASharePlanValidator._uses_bounded_date_fanout(query) is False
 
 
 def test_workflow_marks_explicit_dividend_total_boundary_unsupported():
@@ -3412,6 +3497,292 @@ def test_workflow_compiles_valuation_selection_before_period_return_join():
         "pe",
         "period_return_pct",
     }
+
+
+def test_workflow_completes_valuation_return_plan_from_trusted_window():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "daily_basic"
+    plan.queries[0].fields = ["ts_code", "pe"]
+    plan.queries[0].params = {"trade_date": "20260807"}
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        (
+            "市盈率p90线上的选10家公司，看看最近半年的涨跌幅\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260207\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        ),
+    )
+
+    assert [query.operation for query in result.queries] == ["daily_basic", "daily"]
+    assert result.queries[1].params == {
+        "start_date": "20260207",
+        "end_date": "20260807",
+    }
+    assert result.queries[1].transform == "period_return_by_ts_code"
+    assert result.answer_contract.result_query_id == "valuation_period_return"
+
+
+def test_workflow_precompiles_known_valuation_return_family():
+    result = AnalysisService._compile_known_request(
+        (
+            "市净率最低的50家公司今年以来的收益率\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260101\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert [query.operation for query in result.queries] == ["daily_basic", "daily"]
+    sort_step, limit_step, join_step = result.result_pipeline.steps
+    assert (sort_step.field, sort_step.direction) == ("pb", "asc")
+    assert limit_step.count == 50
+    assert join_step.cardinality == "many_to_one"
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
+def test_workflow_precompiles_multi_factor_valuation_screen():
+    result = AnalysisService._compile_known_request(
+        (
+            "找低PE、低PB、高股息率的十只股票\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260807\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert [query.operation for query in result.queries] == ["daily_basic"]
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "drop_missing",
+        "filter",
+        "filter",
+        "quantile_filter",
+        "quantile_filter",
+        "sort",
+        "limit",
+    ]
+    assert result.result_pipeline.steps[-1].count == 10
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
+def test_workflow_precompiles_unchanged_market_count():
+    result = AnalysisService._compile_known_request(
+        "How many A-shares closed unchanged on 2026-04-30?"
+    )
+
+    assert result is not None
+    assert result.queries[0].params == {"trade_date": "20260430"}
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "filter",
+        "summarize",
+    ]
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
+def test_workflow_aligns_moneyflow_summary_answer_contract():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "moneyflow"
+    plan.queries[0].fields = ["ts_code", "trade_date"]
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "贵州茅台近一月大单小单资金流向",
+    )
+
+    assert result.answer_contract.result_query_id == (
+        "security_moneyflow_comparison"
+    )
+    assert {output.field for output in result.answer_contract.outputs} == {
+        "large_order_net_amount",
+        "small_order_net_amount",
+        "trading_day_count",
+    }
+
+
+def test_workflow_precompiles_security_moneyflow_comparison():
+    result = AnalysisService._compile_known_request(
+        (
+            "贵州茅台近一月大单小单资金流向\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260707\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert result.queries[0].params == {
+        "ts_code": "600519.SH",
+        "start_date": "20260707",
+        "end_date": "20260807",
+    }
+    assert result.answer_contract.result_query_id == (
+        "security_moneyflow_comparison"
+    )
+
+
+def test_workflow_precompiles_cross_statement_financial_comparison():
+    class FinancialProvider(FakeMarketDataProvider):
+        def supports(self, operation):
+            return operation in {"fina_indicator", "cashflow"}
+
+    result = AnalysisService._compile_known_request(
+        (
+            "比较中国平安近三年ROE和经营现金流\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20230807\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert result.execution_plan is not None
+    query_nodes = [
+        node for node in result.execution_plan.nodes if node.kind == "query"
+    ]
+    assert len(query_nodes) == 6
+    assert {node.query.operation for node in query_nodes} == {
+        "fina_indicator",
+        "cashflow",
+    }
+    assert result.execution_plan.result_node_id == "financial_metric_comparison"
+    ASharePlanValidator(FinancialProvider()).validate(result)
+
+
+def test_workflow_precompiles_suspension_count_ranking():
+    result = AnalysisService._compile_known_request(
+        (
+            "过去一个月停牌天数最多的股票\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260707\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert result.queries[0].operation == "suspend_d"
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "aggregate",
+        "sort",
+        "limit",
+    ]
+    assert result.result_pipeline.steps[0].group_by == ["ts_code"]
+
+
+def test_workflow_precompiles_repurchase_ranking_at_security_grain():
+    result = AnalysisService._compile_known_request(
+        "Rank 2026 A-share repurchase plans by announced upper amount."
+    )
+
+    assert result is not None
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "drop_missing",
+        "aggregate",
+        "sort",
+    ]
+    assert result.result_pipeline.steps[1].group_by == ["ts_code"]
+
+
+def test_workflow_precompiles_positive_dividend_yield_ranking():
+    result = AnalysisService._compile_known_request(
+        (
+            "Top 20 A-shares by dividend yield, excluding missing or zero yields.\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260807\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert result.intent.analysis_type == "field_analysis"
+    assert result.intent.filters[0].field == "dv_ttm"
+    assert result.intent.ranking.limit == 20
+
+
+def test_workflow_precompiles_market_cap_filtered_pb_ranking():
+    result = AnalysisService._compile_known_request(
+        (
+            "找出总市值超过1000亿且PB最低的前10只\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260807\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert result.intent.analysis_type == "field_analysis"
+    assert result.intent.filters[0].value == 10_000_000
+    assert result.intent.analysis_field == "pb"
+
+
+def test_workflow_precompiles_product_segment_ranking():
+    result = AnalysisService._compile_known_request(
+        (
+            "哪个产品占贵州茅台营业收入比例最高\n"
+            "<trusted_analysis_window>\n"
+            "event_start_date=20260807\n"
+            "event_end_date=20260807\n"
+            "</trusted_analysis_window>"
+        )
+    )
+
+    assert result is not None
+    assert result.queries[0].params == {
+        "ts_code": "600519.SH",
+        "period": "20251231",
+        "type": "P",
+    }
+    assert result.result_pipeline.steps[-1].count == 1
+
+
+def test_workflow_precompiles_geographic_business_segments():
+    result = AnalysisService._compile_known_request(
+        "List Ping An Bank's domestic and overseas segment revenue for 2025."
+    )
+
+    assert result is not None
+    assert result.queries[0].params == {
+        "ts_code": "000001.SZ",
+        "period": "20251231",
+        "type": "D",
+    }
+
+
+def test_full_market_event_horizon_requires_background_execution():
+    plan = make_daily_plan()
+    plan.queries[0].params = {
+        "start_date": "20250101",
+        "end_date": "20251231",
+    }
+    plan.queries[0].fields = ["ts_code", "trade_date", "close"]
+    plan.result_pipeline = ResultPipeline(
+        source_query_id=plan.queries[0].query_id,
+        output_query_id="event_outcome",
+        steps=[
+            ResultPipelineStep(
+                operation="match_at_offset",
+                field="close",
+                output_field="future_close",
+                matched_date_output_field="future_trade_date",
+                group_by=["ts_code"],
+                order_by="trade_date",
+                offset_value=1,
+                offset_unit="month",
+            )
+        ],
+    )
+
+    assert AnalysisService._requires_background_execution(plan) is True
 
 
 def test_workflow_uses_daily_volume_and_joins_same_day_turnover():
