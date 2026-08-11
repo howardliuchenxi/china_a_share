@@ -2281,11 +2281,32 @@ class AnalysisService:
             )
             if (position := normalized_prompt.find(token)) >= 0
         ]
+        requests_return_ranking = re.search(
+            r"(?:\u6da8\u5e45|\u8dcc\u5e45|\u6da8\u8dcc\u5e45|\u6536\u76ca\u7387|\u4e0a\u6da8|\u4e0b\u8dcc)"
+            r".{0,8}(?:\u6700\u5927|\u6700\u591a|\u6700\u9ad8|\u6700\u4f4e|\u524d\s*\d+|top\s*\d+)",
+            normalized_prompt,
+        )
+        requests_valuation_annotation = any(
+            term in normalized_prompt
+            for term in (
+                "\u6807\u6ce8",
+                "\u6807\u8bb0",
+                "\u9644\u4e0a",
+                "\u5c55\u793a",
+                "\u5bf9\u5e94",
+            )
+        )
         resolved_range = resolve_explicit_time_range(prompt)
         if (
             valuation_positions
             and return_positions
-            and min(return_positions) < min(valuation_positions)
+            and (
+                min(return_positions) < min(valuation_positions)
+                or (
+                    requests_return_ranking is not None
+                    and requests_valuation_annotation
+                )
+            )
             and resolved_range is not None
         ):
             ranking_limit_match = re.search(
