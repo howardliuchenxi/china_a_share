@@ -235,6 +235,35 @@ def _assert_quality_invariants(
                 result_row[aggregation.output_field]
                 for aggregation in summary.aggregations
             ) == int(source_frame[comparisons[0].field].notna().sum())
+    if "complete_share_float_result" in invariants:
+        share_float_results = [
+            result
+            for result in response.results
+            if result.operation in {"share_float", "result_pipeline"}
+        ]
+        assert share_float_results
+        assert all(
+            result.completeness == "complete" for result in share_float_results
+        )
+        assert any(
+            any(
+                evidence.startswith("query_shape=")
+                for evidence in result.completeness_evidence
+            )
+            for result in share_float_results
+        )
+    if "distinct_security_count" in invariants:
+        assert plan.result_pipeline is not None
+        summary = next(
+            step
+            for step in plan.result_pipeline.steps
+            if step.operation == "summarize"
+        )
+        assert any(
+            aggregation.field == "ts_code"
+            and aggregation.function == "count_distinct"
+            for aggregation in summary.aggregations
+        )
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:

@@ -1025,7 +1025,9 @@
       "operations": [
         "share_float"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "complete_share_float_result"
+      ],
       "source": "matrix"
     },
     {
@@ -1038,7 +1040,9 @@
       "operations": [
         "share_float"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "complete_share_float_result"
+      ],
       "source": "matrix"
     },
     {
@@ -1064,7 +1068,9 @@
       "operations": [
         "share_float"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "complete_share_float_result"
+      ],
       "source": "matrix"
     },
     {
@@ -1077,8 +1083,27 @@
       "operations": [
         "share_float"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "complete_share_float_result",
+        "distinct_security_count"
+      ],
       "source": "matrix"
+    },
+    {
+      "id": "share-unlock-q4-distinct-company-reported-regression",
+      "name": "share_unlock_q4_distinct_company_reported_regression",
+      "family": "reported_regression",
+      "prompt": "Q4 有多少家公司有限售股解禁？",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "share_float"
+      ],
+      "quality_invariants": [
+        "complete_share_float_result",
+        "distinct_security_count"
+      ],
+      "source": "reported_regression"
     },
     {
       "id": "repurchase_detail-01",

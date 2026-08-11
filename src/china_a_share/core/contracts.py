@@ -1769,6 +1769,25 @@ class QueryResult(BaseModel):
         ge=0,
         description="Number of rows returned for this query.",
     )
+    completeness: Literal["complete", "partial", "unknown"] = Field(
+        default="unknown",
+        description=(
+            "Whether the executor proved that the result covers the complete "
+            "validated provider request."
+        ),
+    )
+    completeness_evidence: List[str] = Field(
+        default_factory=list,
+        description="Machine-generated evidence supporting the completeness status.",
+    )
+    retrieval_partition_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Known number of deterministic retrieval partitions assembled into this "
+            "result; null means the execution was not partitioned or is unknown."
+        ),
+    )
     summary: Dict[str, Optional[Union[int, float]]] = Field(
         default_factory=dict,
         description=(

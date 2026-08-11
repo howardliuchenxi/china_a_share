@@ -44,7 +44,10 @@ from china_a_share.time_range import (
     resolve_future_horizon,
     resolve_relative_time_range,
 )
-from china_a_share.capabilities import build_capability_manifest
+from china_a_share.capabilities import (
+    build_capability_manifest,
+    resolve_query_shape,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -223,6 +226,13 @@ class ASharePlanValidator:
             self._validate_rank_metric_semantics(plan)
         if plan.answer_contract:
             self._validate_answer_contract(plan, pipeline_fields)
+        # Registered capability shapes are field-level contracts, so reject them
+        # before deriving broader fan-out topology requirements.
+        for query in plan.queries:
+            try:
+                resolve_query_shape(query.operation, query.params)
+            except ValueError as exc:
+                raise PlanValidationError(str(exc)) from exc
         orphaned_fanout_templates = [
             query.operation
             for query in plan.queries
@@ -1327,6 +1337,10 @@ class ASharePlanValidator:
         """Reject parameters that escape the A-share market boundary."""
         if not isinstance(params, dict):
             raise PlanValidationError("Provider parameters must be a JSON object.")
+        try:
+            resolve_query_shape(operation, params)
+        except ValueError as exc:
+            raise PlanValidationError(str(exc)) from exc
         if operation == "dividend":
             invalid_params = set(params).difference(
                 {"ts_code", "ann_date", "record_date", "ex_date", "imp_ann_date"}
@@ -1341,14 +1355,6 @@ class ASharePlanValidator:
         ):
             raise PlanValidationError(
                 f"{operation} requires ts_code or trade_date."
-            )
-        if operation in {"daily", "daily_basic"} and not (
-            params.get("ts_code")
-            or params.get("trade_date")
-            or (params.get("start_date") and params.get("end_date"))
-        ):
-            raise PlanValidationError(
-                f"{operation} requires ts_code, trade_date, or a complete date range."
             )
         for name in DATE_PARAM_NAMES.intersection(params):
             value = params[name]
@@ -1454,6 +1460,19 @@ class DataQueryExecutor:
                 query_id=query.query_id,
             )
             frame = frame.loc[:, ~frame.columns.duplicated()]
+            describe_completeness = getattr(
+                self._provider,
+                "describe_result_completeness",
+                None,
+            )
+            completeness = (
+                describe_completeness(query.operation, query.params)
+                if callable(describe_completeness)
+                else {
+                    "completeness": "unknown",
+                    "completeness_evidence": [],
+                }
+            )
             # Object dtype converts missing numeric values to JSON null instead of NaN.
             safe_frame = frame.astype(object).where(pd.notnull(frame), None)
             return QueryResult(
@@ -1464,6 +1483,7 @@ class DataQueryExecutor:
                 columns=list(safe_frame.columns),
                 rows=safe_frame.to_dict(orient="records"),
                 row_count=len(safe_frame),
+                **completeness,
                 summary=summary,
                 summary_metadata={
                     aggregation.label: SummaryMetricMetadata(
@@ -4155,6 +4175,14 @@ class AnalysisService:
                 if result.status != QueryStatus.SUCCESS:
                     return result
                 rows.extend(result.rows)
+        audited_shape = resolve_query_shape(query.operation, query.params)
+        completeness_evidence = [
+            f"execution_strategy=exact_{parameter}_fanout",
+            f"covered_dates={dates[0]}..{dates[-1]}",
+            "completeness_policy=all_dates_complete",
+        ]
+        if audited_shape is not None:
+            completeness_evidence.insert(0, f"query_shape={audited_shape.shape_id}")
         return QueryResult(
             query_id=query.query_id,
             provider=self._provider.name,
@@ -4163,6 +4191,9 @@ class AnalysisService:
             columns=list(query.fields),
             rows=rows,
             row_count=len(rows),
+            completeness="complete",
+            completeness_evidence=completeness_evidence,
+            retrieval_partition_count=day_count,
         )
 
     def _execute_full_market_range_by_date(

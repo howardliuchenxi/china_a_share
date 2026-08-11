@@ -3,9 +3,210 @@
 import hashlib
 import json
 import os
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from china_a_share.registry import READ_ONLY_API_NAMES, TUSHARE_API_CATEGORIES
+
+
+class ProviderQueryShape(BaseModel):
+    """One provider request shape whose execution semantics are locally audited."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    shape_id: str = Field(description="Stable identifier for the audited request shape.")
+    required_params: Tuple[str, ...] = Field(
+        description="Provider parameters that must all be present for this shape."
+    )
+    execution_strategy: str = Field(
+        description="Deterministic execution strategy used for this request shape."
+    )
+    completeness_policy: str = Field(
+        description="Rule used to prove that successful retrieval is complete."
+    )
+
+
+class ProviderOperationCapability(BaseModel):
+    """Machine-verifiable provider contract for one connected operation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operation: str = Field(description="Provider-native operation name.")
+    allowed_params: Tuple[str, ...] = Field(
+        description="Complete allowlist of provider parameters accepted by the planner."
+    )
+    date_pair: Optional[Tuple[str, str]] = Field(
+        default=None,
+        description="Date parameters that must be supplied together when either is used.",
+    )
+    query_shapes: Tuple[ProviderQueryShape, ...] = Field(
+        description="Audited parameter shapes accepted for execution."
+    )
+    page_size: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Documented provider row limit used by fail-closed pagination.",
+    )
+    unique_key: Tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Fields that identify one logical provider row when known.",
+    )
+
+
+COMMON_PAGINATION_PARAMS = ("limit", "offset")
+
+
+PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
+    "daily": ProviderOperationCapability(
+        operation="daily",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "daily_basic": ProviderOperationCapability(
+        operation="daily_basic",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "share_float": ProviderOperationCapability(
+        operation="share_float",
+        allowed_params=(
+            "ts_code",
+            "ann_date",
+            "float_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="announcement_date",
+                required_params=("ann_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="unlock_date",
+                required_params=("float_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_unlock_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="exact_float_date_fanout",
+                completeness_policy="all_dates_complete",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "float_date", "holder_name", "share_type"),
+    ),
+}
+
+
+def get_operation_capability(
+    operation: str,
+) -> Optional[ProviderOperationCapability]:
+    """Return the audited provider contract for an operation when registered."""
+    return PROVIDER_OPERATION_CAPABILITIES.get(operation)
+
+
+def resolve_query_shape(
+    operation: str,
+    params: Dict[str, Any],
+) -> Optional[ProviderQueryShape]:
+    """Resolve one audited request shape or reject an invalid registered request."""
+    capability = get_operation_capability(operation)
+    if capability is None:
+        return None
+    invalid_params = sorted(set(params).difference(capability.allowed_params))
+    if invalid_params:
+        raise ValueError(
+            f"{operation} uses unsupported provider parameters: "
+            + ", ".join(invalid_params)
+        )
+    if capability.date_pair is not None:
+        start_param, end_param = capability.date_pair
+        has_start = bool(params.get(start_param))
+        has_end = bool(params.get(end_param))
+        if has_start != has_end:
+            raise ValueError(
+                f"{operation} requires {start_param} and {end_param} together."
+            )
+    matching = [
+        shape
+        for shape in capability.query_shapes
+        if all(params.get(name) not in (None, "") for name in shape.required_params)
+    ]
+    if not matching:
+        expected = " or ".join(
+            "+".join(shape.required_params) for shape in capability.query_shapes
+        )
+        raise ValueError(f"{operation} requires one audited query shape: {expected}.")
+    return matching[0]
 
 
 ANALYSIS_CAPABILITIES: Tuple[Dict[str, Any], ...] = (
@@ -94,6 +295,11 @@ def build_capability_manifest(
                 ),
             }
             for category, operations in TUSHARE_API_CATEGORIES.items()
+        },
+        "provider_operation_capabilities": {
+            operation: capability.model_dump(mode="json")
+            for operation, capability in PROVIDER_OPERATION_CAPABILITIES.items()
+            if operation in provider_operations
         },
         "capabilities": capability_rows,
     }

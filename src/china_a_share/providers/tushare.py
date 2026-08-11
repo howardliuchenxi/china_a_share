@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from china_a_share.capabilities import resolve_query_shape
 from china_a_share.client import TushareTransport
 from china_a_share.core.contracts import DataOperation
 from china_a_share.core.ports import DataResponseCache
@@ -236,6 +237,35 @@ class TushareDataProvider:
     def supports(self, operation: str) -> bool:
         """Return whether the Tushare stock catalog contains the operation."""
         return self._catalog.contains(operation)
+
+    def describe_result_completeness(
+        self,
+        operation: str,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Describe completeness guaranteed by one successful audited request."""
+        shape = resolve_query_shape(operation, params)
+        if shape is None:
+            return {
+                "completeness": "unknown",
+                "completeness_evidence": [],
+            }
+        if shape.execution_strategy != "provider_query":
+            return {
+                "completeness": "unknown",
+                "completeness_evidence": [
+                    f"query_shape={shape.shape_id}",
+                    f"required_strategy={shape.execution_strategy}",
+                ],
+            }
+        return {
+            "completeness": "complete",
+            "completeness_evidence": [
+                f"query_shape={shape.shape_id}",
+                f"execution_strategy={shape.execution_strategy}",
+                f"completeness_policy={shape.completeness_policy}",
+            ],
+        }
 
     def query(
         self,

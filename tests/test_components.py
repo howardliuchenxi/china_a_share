@@ -4810,6 +4810,19 @@ def test_validator_accepts_year_constraint_as_complete_date_range():
     assert ASharePlanValidator._constraint_enforced_by_query(constraint, query)
 
 
+def test_validator_rejects_registered_operation_with_partial_date_range():
+    plan = make_daily_plan()
+    plan.queries[0].operation = "share_float"
+    plan.queries[0].params = {"start_date": "20261001"}
+    plan.queries[0].fields = ["ts_code", "float_date"]
+
+    with pytest.raises(
+        PlanValidationError,
+        match="share_float requires start_date and end_date together",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
 def test_deepseek_drops_non_numeric_query_aggregation_thresholds():
     raw_plan = {
         "queries": [
@@ -5247,7 +5260,11 @@ def test_validator_rejects_security_fanout_template_without_universe(operation):
             DataQuery(
                 query_id="retail-proxy",
                 operation=operation,
-                params={"end_date": "20260727"},
+                params=(
+                    {"ann_date": "20260727"}
+                    if operation == "share_float"
+                    else {"end_date": "20260727"}
+                ),
                 fields=[
                     "ts_code",
                     "ann_date",
@@ -5703,6 +5720,10 @@ def test_disclosure_range_uses_exact_calendar_date_queries():
 
     assert result.status == "success"
     assert result.row_count == 3
+    assert result.completeness == "complete"
+    assert result.retrieval_partition_count == 3
+    assert "query_shape=bounded_unlock_range" in result.completeness_evidence
+    assert "covered_dates=20261001..20261003" in result.completeness_evidence
     assert provider.calls == [
         ("share_float", {"float_date": "20261001"}),
         ("share_float", {"float_date": "20261002"}),

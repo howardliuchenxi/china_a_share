@@ -143,13 +143,13 @@ def test_inner_join_without_uniqueness_evidence_uses_unrestricted_cardinality():
     assert steps[0]["cardinality"] == "many_to_many"
 
 
-def test_supported_requirement_with_implementation_normalizes_to_covered():
+def test_supported_requirement_with_unsupported_status_is_not_rewritten():
     plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
     plan.requirements[0].status = "unsupported"
 
-    DeepSeekQueryPlanner._normalize_requirement_statuses(plan)
+    DeepSeekQueryPlanner("test-key")._finalize_plan(plan)
 
-    assert plan.requirements[0].status == "covered"
+    assert plan.requirements[0].status == "unsupported"
 
 
 def test_requirement_without_implementation_remains_unsupported():
@@ -157,7 +157,7 @@ def test_requirement_without_implementation_remains_unsupported():
     plan.requirements[0].status = "unsupported"
     plan.requirements[0].implementation = None
 
-    DeepSeekQueryPlanner._normalize_requirement_statuses(plan)
+    DeepSeekQueryPlanner("test-key")._finalize_plan(plan)
 
     assert plan.requirements[0].status == "unsupported"
 

@@ -54,6 +54,29 @@ def test_pipeline_logs_request_scoped_step_row_counts(caplog):
     assert events[0]["eliminated_row_count"] == 1
 
 
+def test_pipeline_preserves_complete_source_retrieval_evidence():
+    source = source_result().model_copy(
+        update={
+            "completeness": "complete",
+            "completeness_evidence": ["query_shape=security"],
+            "retrieval_partition_count": 3,
+        }
+    )
+    pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": source.query_id,
+            "output_query_id": "limited",
+            "steps": [{"operation": "limit", "count": 2}],
+        }
+    )
+
+    result = ResultPipelineExecutor().execute(pipeline, source)
+
+    assert result.completeness == "complete"
+    assert result.completeness_evidence == ["query_shape=security"]
+    assert result.retrieval_partition_count == 3
+
+
 def market_direction_source():
     """Return one source whose directional categories form a complete partition."""
     return QueryResult(

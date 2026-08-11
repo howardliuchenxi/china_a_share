@@ -151,6 +151,32 @@ class ResultPipelineExecutor:
             for column in frame.columns
             if column in formulas
         }
+        consumed_result_ids = {source.query_id}
+        consumed_result_ids.update(
+            step.right_source_query_id
+            for step in pipeline.steps
+            if step.right_source_query_id is not None
+        )
+        consumed_results = [
+            source_results[result_id]
+            for result_id in consumed_result_ids
+            if result_id in source_results
+        ]
+        completeness_values = {result.completeness for result in consumed_results}
+        if "partial" in completeness_values:
+            completeness = "partial"
+        elif completeness_values == {"complete"}:
+            completeness = "complete"
+        else:
+            completeness = "unknown"
+        partition_counts = [
+            result.retrieval_partition_count for result in consumed_results
+        ]
+        retrieval_partition_count = (
+            sum(partition_counts)
+            if partition_counts and all(count is not None for count in partition_counts)
+            else None
+        )
         return QueryResult(
             query_id=pipeline.output_query_id,
             provider=source.provider,
@@ -159,6 +185,15 @@ class ResultPipelineExecutor:
             columns=list(frame.columns),
             rows=rows,
             row_count=len(rows),
+            completeness=completeness,
+            completeness_evidence=list(
+                dict.fromkeys(
+                    evidence
+                    for result in consumed_results
+                    for evidence in result.completeness_evidence
+                )
+            ),
+            retrieval_partition_count=retrieval_partition_count,
             summary=summary,
             summary_metadata=summary_metadata,
             column_metadata=column_metadata,

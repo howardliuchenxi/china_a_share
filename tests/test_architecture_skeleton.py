@@ -8,6 +8,10 @@ from china_a_share.application.workflow import (
     AnalysisService,
     DataQueryExecutor,
 )
+from china_a_share.capabilities import (
+    build_capability_manifest,
+    resolve_query_shape,
+)
 from china_a_share.bootstrap import create_analysis_service
 from china_a_share.config import ConfigurationError, Settings
 from china_a_share.core.contracts import (
@@ -149,6 +153,63 @@ def test_tushare_provider_exposes_catalog_through_generic_operations():
     assert any(
         operation.name == "daily"
         for operation in provider.search_operations("Retrieve daily data.")
+    )
+
+
+def test_share_float_capability_resolves_bounded_range_to_exact_date_fanout():
+    shape = resolve_query_shape(
+        "share_float",
+        {"start_date": "20261001", "end_date": "20261231"},
+    )
+
+    assert shape is not None
+    assert shape.shape_id == "bounded_unlock_range"
+    assert shape.execution_strategy == "exact_float_date_fanout"
+    assert shape.completeness_policy == "all_dates_complete"
+
+
+def test_registered_capability_rejects_partial_date_range():
+    with pytest.raises(ValueError, match="start_date and end_date together"):
+        resolve_query_shape("share_float", {"start_date": "20261001"})
+
+
+def test_tushare_completeness_requires_the_audited_execution_strategy():
+    provider = TushareDataProvider("test-token", FakeCache())
+
+    exact_date = provider.describe_result_completeness(
+        "share_float",
+        {"float_date": "20261001"},
+    )
+    bounded_range = provider.describe_result_completeness(
+        "share_float",
+        {"start_date": "20261001", "end_date": "20261231"},
+    )
+
+    assert exact_date["completeness"] == "complete"
+    assert bounded_range["completeness"] == "unknown"
+    assert "required_strategy=exact_float_date_fanout" in bounded_range[
+        "completeness_evidence"
+    ]
+
+
+def test_capability_manifest_exposes_machine_verifiable_operation_contracts():
+    provider = TushareDataProvider("test-token", FakeCache())
+    manifest = build_capability_manifest(
+        provider,
+        {"limit_up_streak": lambda *args, **kwargs: None},
+    )
+
+    capability = manifest["provider_operation_capabilities"]["share_float"]
+    assert capability["page_size"] == 6000
+    assert capability["unique_key"] == [
+        "ts_code",
+        "float_date",
+        "holder_name",
+        "share_type",
+    ]
+    assert any(
+        shape["execution_strategy"] == "exact_float_date_fanout"
+        for shape in capability["query_shapes"]
     )
 
 

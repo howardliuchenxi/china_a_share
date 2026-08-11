@@ -640,7 +640,6 @@ class DeepSeekQueryPlanner:
         self._normalize_fields(plan)
         self._normalize_join_field_mappings(plan)
         self._normalize_execution_answer_fields(plan)
-        self._normalize_requirement_statuses(plan)
         self._normalize_limit_list_queries(plan)
         self._normalize_event_study_source(plan)
         self._normalize_pipeline_query_windows(plan)
@@ -774,17 +773,6 @@ class DeepSeekQueryPlanner:
             return fields
 
         resolve(execution_plan.result_node_id)
-
-    @staticmethod
-    def _normalize_requirement_statuses(plan: QueryPlan) -> None:
-        """Resolve a covered implementation that contradicts its status label."""
-        if plan.feasibility != "supported":
-            return
-        for requirement in plan.requirements:
-            if requirement.status == "unsupported" and requirement.implementation:
-                # A concrete implementation on a supported plan is an explicit
-                # coverage claim; the status label is the only contradictory value.
-                requirement.status = "covered"
 
     def _decode_plan_response(self, response: Any) -> QueryPlan:
         """Validate one planner response before any deterministic normalization."""
