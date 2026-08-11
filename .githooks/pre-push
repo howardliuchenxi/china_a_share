@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+repository_root=$(git rev-parse --show-toplevel)
+validated_shas=""
+
+cleanup_gate() {
+    gate_dir=$1
+    gate_parent=$2
+    git -C "$repository_root" worktree remove --force "$gate_dir" >/dev/null 2>&1 || true
+    rmdir "$gate_parent" >/dev/null 2>&1 || true
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_sha" in
+        0000000000000000000000000000000000000000) continue ;;
+    esac
+    case " $validated_shas " in
+        *" $local_sha "*) continue ;;
+    esac
+
+    gate_parent=$(mktemp -d "${TMPDIR:-/tmp}/china-a-share-pre-push.XXXXXX")
+    gate_dir="$gate_parent/worktree"
+    trap 'cleanup_gate "$gate_dir" "$gate_parent"' EXIT HUP INT TERM
+    git -C "$repository_root" worktree add --quiet --detach "$gate_dir" "$local_sha"
+    ln -s "$repository_root/.venv" "$gate_dir/.venv"
+    if [ -d "$repository_root/frontend/node_modules" ]; then
+        ln -s "$repository_root/frontend/node_modules" "$gate_dir/frontend/node_modules"
+    fi
+
+    printf 'Running complete pre-push gate for %s (%s).\n' "$local_ref" "$local_sha"
+    make -C "$gate_dir" pre-push
+    cleanup_gate "$gate_dir" "$gate_parent"
+    trap - EXIT HUP INT TERM
+    validated_shas="$validated_shas $local_sha"
+done

@@ -28,12 +28,14 @@ CLOUDSDK_PYTHON := $(shell \
 			&& { command -v "$$candidate" 2>/dev/null || printf '%s' "$$candidate"; break; }; \
 	done)
 
-.PHONY: help check live-check deploy merge release
+.PHONY: help check install-hooks live-check pre-push deploy merge release
 
 help:
 	printf '%s\n' \
 		'make check   Build the frontend and run backend tests.' \
+		'make install-hooks  Enable the repository-managed Git hooks.' \
 		'make live-check  Run the unified 100-case live matrix and regressions.' \
+		'make pre-push  Run the complete local release gate.' \
 		'make deploy  Deploy the clean, pushed main commit and update the GCP inventory.' \
 		'make merge   Validate, merge the current clean branch into main, and push main.' \
 		'make release Merge the current branch into main, then deploy that exact commit.'
@@ -41,6 +43,11 @@ help:
 check:
 	npm --prefix frontend run build
 	.venv/bin/python -m pytest
+
+install-hooks:
+	git config core.hooksPath .githooks
+
+pre-push: check
 
 live-check:
 	RUN_LIVE_ANALYSIS=1 LIVE_ANALYSIS_PARALLEL=1 .venv/bin/python -m pytest tests/test_live_analysis.py -v -s

@@ -53,8 +53,14 @@
 
 ## Local delivery workflow
 
-- After making changes, limit automated validation to fast, relevant code
-  checks such as compilation, type checking, linting, or targeted unit tests.
+- During implementation, use fast, relevant checks such as compilation, type
+  checking, linting, or targeted unit tests for feedback.
+- Before every push, run `make pre-push` against the exact commit being pushed.
+  The repository-managed `.githooks/pre-push` hook enforces this in an isolated
+  worktree so unrelated local changes cannot alter the result. Never use
+  `--no-verify` for an automatic delivery.
+- Run `make install-hooks` when preparing a clone so the versioned Git hooks are
+  active. A targeted test run never replaces the complete pre-push gate.
 - When a code change fixes a production-reported user prompt, add that exact
   prompt to the live end-to-end regression suite and run that specific live
   case against the real configured model and data provider before handoff.
