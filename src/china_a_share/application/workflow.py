@@ -2276,6 +2276,8 @@ class AnalysisService:
                 "\u8dcc\u5e45",
                 "\u6da8\u8dcc\u5e45",
                 "\u6536\u76ca\u7387",
+                "\u4e0a\u6da8",
+                "\u4e0b\u8dcc",
             )
             if (position := normalized_prompt.find(token)) >= 0
         ]
@@ -5869,6 +5871,8 @@ class AnalysisService:
                     "\u6da8\u8dcc\u5e45",
                     "\u6da8\u5e45",
                     "\u8dcc\u5e45",
+                    "\u4e0a\u6da8",
+                    "\u4e0b\u8dcc",
                 )
             )
         ):
@@ -6685,7 +6689,7 @@ class AnalysisService:
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
         end_date = self._latest_completed_trading_date(request_id, now)
         resolved = (
-            resolve_explicit_time_range(prompt)
+            resolve_explicit_time_range(prompt, end_date)
             or resolve_relative_time_range(prompt, end_date)
         )
         if resolved is None and "今年以来" in prompt:

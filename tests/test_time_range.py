@@ -104,6 +104,24 @@ def test_explicit_calendar_month_expands_to_its_full_date_range():
     )
 
 
+def test_partial_month_uses_most_recent_started_calendar_month():
+    assert resolve_explicit_time_range(
+        "大A在6月上涨最多的股票前十",
+        date(2026, 8, 10),
+    ) == (date(2026, 6, 1), date(2026, 6, 30))
+    assert resolve_explicit_time_range(
+        "查看11月份的数据",
+        date(2026, 2, 10),
+    ) == (date(2025, 11, 1), date(2025, 11, 30))
+
+
+def test_partial_current_month_stops_at_reference_date():
+    assert resolve_explicit_time_range(
+        "查看8月的数据",
+        date(2026, 8, 10),
+    ) == (date(2026, 8, 1), date(2026, 8, 10))
+
+
 def test_trading_day_lookback_is_not_misrepresented_as_calendar_days():
     assert resolve_relative_time_range(
         "过去30个交易日",

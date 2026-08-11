@@ -3579,7 +3579,11 @@ def test_workflow_preserves_valuation_annotation_after_period_return_ranking():
 
     result = AnalysisService._normalize_plan_for_request(
         plan,
-        "2026年6月A股涨幅最大的前10只股票，并标注对应的市盈率（PE）。",
+        "大A在6月上涨最多的股票前十，对应的市盈率也标记下\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260601\n"
+        "event_end_date=20260630\n"
+        "</trusted_analysis_window>",
     )
 
     assert [query.operation for query in result.queries] == ["daily", "daily_basic"]
@@ -3604,7 +3608,11 @@ def test_workflow_preserves_valuation_annotation_after_period_return_ranking():
 
 def test_workflow_precompiles_period_return_ranking_before_valuation_annotation():
     result = AnalysisService._compile_known_request(
-        "2026年6月A股涨幅最大的前10只股票，并标注对应的市盈率（PE）。"
+        "大A在6月上涨最多的股票前十，对应的市盈率也标记下\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260601\n"
+        "event_end_date=20260630\n"
+        "</trusted_analysis_window>"
     )
 
     assert result is not None

@@ -34,6 +34,9 @@ TRUSTED_RANGE_PATTERN = re.compile(
 EXPLICIT_MONTH_PATTERN = re.compile(
     r"(?P<year>20\d{2})\s*\u5e74\s*(?P<month>1[0-2]|0?[1-9])\s*\u6708"
 )
+PARTIAL_MONTH_PATTERN = re.compile(
+    r"(?<!\d)(?P<month>1[0-2]|0?[1-9])\s*\u6708(?!\s*[\d\u4e2a])"
+)
 FUTURE_HORIZON_PATTERN = re.compile(
     r"(?:接下来|未来|之后|此后)(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
     r"(?P<unit>个?交易日|天|周|个?月|季度|年)"
@@ -90,7 +93,10 @@ def resolve_relative_time_range(
     return _subtract_months(end_date, months), end_date
 
 
-def resolve_explicit_time_range(prompt: str) -> Optional[Tuple[date, date]]:
+def resolve_explicit_time_range(
+    prompt: str,
+    reference_date: Optional[date] = None,
+) -> Optional[Tuple[date, date]]:
     """Resolve an explicit compact date range from a natural-language request."""
     match = EXPLICIT_RANGE_PATTERN.search(prompt) or TRUSTED_RANGE_PATTERN.search(prompt)
     if match is not None:
@@ -98,11 +104,22 @@ def resolve_explicit_time_range(prompt: str) -> Optional[Tuple[date, date]]:
         end = _parse_date_token(match.group("end"))
         return (start, end) if start <= end else None
     month_match = EXPLICIT_MONTH_PATTERN.search(prompt)
-    if month_match is None:
+    if month_match is not None:
+        year = int(month_match.group("year"))
+        month = int(month_match.group("month"))
+        return date(year, month, 1), date(year, month, monthrange(year, month)[1])
+    partial_match = PARTIAL_MONTH_PATTERN.search(prompt)
+    if partial_match is None or reference_date is None:
         return None
-    year = int(month_match.group("year"))
-    month = int(month_match.group("month"))
-    return date(year, month, 1), date(year, month, monthrange(year, month)[1])
+    month = int(partial_match.group("month"))
+    year = (
+        reference_date.year
+        if month <= reference_date.month
+        else reference_date.year - 1
+    )
+    start = date(year, month, 1)
+    month_end = date(year, month, monthrange(year, month)[1])
+    return start, min(month_end, reference_date)
 
 
 def resolve_future_horizon(prompt: str) -> Optional[Tuple[int, str]]:

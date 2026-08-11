@@ -305,7 +305,7 @@
       "id": "market_period_return-04",
       "name": "market_period_return 4",
       "family": "market_period_return",
-      "prompt": "2026年6月A股涨幅最大的前10只股票，并标注对应的市盈率（PE）。",
+      "prompt": "大A在6月上涨最多的股票前十，对应的市盈率也标记下",
       "expected_feasibility": "supported",
       "tier": "supported",
       "operations": [
