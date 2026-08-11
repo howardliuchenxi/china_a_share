@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-08-08**
+Last verified: **2026-08-10**
 
 ## Project boundary
 
@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00031-sdj` |
+| Latest ready revision | `china-a-share-lab-00188-cfp` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `d59ecd4b4ba9d4cee91d18fcd440fa2f3511bfee` |
+| Deployed Git commit | `aab7db3f45e1fca977220f52b0339931dafaf698` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -110,7 +110,7 @@ project-wide Cloud Run administration.
 | Bucket | `gs://china-a-share-lab-cache-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 7,719,183 bytes at last verification |
+| Current logical size | 424,607,657 bytes at last verification |
 | Public access prevention | Enforced |
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
@@ -378,3 +378,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-07-25 | Created `feishu-bot-webhook` with automatic replication for successful deployment notifications and granted secret-level access only to the deployment automation identity; expected cost remains negligible. |
 | 2026-08-08 | Increased `china-a-share-analysis-worker` memory from 1 GiB to 4 GiB after a full-market multi-year discovery workload exceeded the previous limit; retained 1 vCPU, one task, two-hour timeout, one retry, the existing runtime identity, and usage-only billing with no idle job cost. |
 | 2026-08-08 | Extended the `analysis-jobs/` Cloud Storage deletion lifecycle from 7 days to 365 days so asynchronous analysis and discovery task results remain available for historical review; retained the existing bucket, Standard storage class, access boundary, and usage-based cost model. |
+| 2026-08-10 | Deployed revision `china-a-share-lab-00188-cfp` through scheduled reconciliation; recorded source `main@aab7db3f45e1fca977220f52b0339931dafaf698`, verified 100% traffic, public health status, runtime configuration, synchronized worker deployment, and storage usage with no new resource types or IAM changes. |
