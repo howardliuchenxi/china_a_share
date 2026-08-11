@@ -1331,11 +1331,9 @@ export default function App() {
             onPaste={handlePromptPaste}
             placeholder="例如：北京时间2026年7月17日有多少只A股上涨，多少只下跌？"
           />
-          <p className="screenshot-hint">
-            {isImageReading
-              ? "\u6b63\u5728\u8bfb\u53d6\u622a\u56fe\u2026"
-              : "\u53ef\u76f4\u63a5\u7c98\u8d34 PNG\u3001JPEG \u6216 WebP \u622a\u56fe\uff0c\u6700\u5927 10 MiB\u3002"}
-          </p>
+          {isImageReading && (
+            <p className="screenshot-hint">{"\u6b63\u5728\u8bfb\u53d6\u622a\u56fe\u2026"}</p>
+          )}
           {analysisImage && (
             <div className="screenshot-preview">
               <img
