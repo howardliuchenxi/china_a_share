@@ -3936,6 +3936,26 @@ def test_workflow_precompiles_market_breadth_categories():
     } == {"up_count", "down_count"}
 
 
+def test_market_breadth_precompiler_does_not_capture_limit_up_event_studies():
+    result = AnalysisService._compile_known_request(
+        "A股20260102～20260106连续涨停三天的情况下，"
+        "接下来一个月的上涨情况数据分析\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260102\n"
+        "event_end_date=20260106\n"
+        "outcome_offset_value=1\n"
+        "outcome_offset_unit=month\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert {query.operation for query in result.queries} == {
+        "daily",
+        "limit_list_d",
+    }
+    assert result.result_pipeline.output_query_id == "limit_up_streak_outcome"
+
+
 def test_workflow_precompiles_block_trade_amount_ranking():
     result = AnalysisService._compile_known_request(
         "本月大宗交易成交金额最多的20只股票\n\n"

@@ -2016,6 +2016,8 @@ class AnalysisService:
         if (
             any(term in prompt for term in ("上涨", "下跌", "平盘", "红盘", "绿盘", "涨跌家数"))
             and any(term in prompt for term in ("全市场", "A股", "大A"))
+            and any(term in prompt.casefold() for term in ("多少", "数量", "家数", "count"))
+            and not any(term in prompt for term in ("涨停", "连板"))
         ):
             date_match = re.search(r"event_end_date=(20\d{6})", prompt)
             if date_match is None:
