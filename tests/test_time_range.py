@@ -97,6 +97,13 @@ def test_date_formats_chinese_numbers_and_trading_sessions_are_structured():
     )
 
 
+def test_explicit_calendar_month_expands_to_its_full_date_range():
+    assert resolve_explicit_time_range("查看2025年2月的完整数据") == (
+        date(2025, 2, 1),
+        date(2025, 2, 28),
+    )
+
+
 def test_trading_day_lookback_is_not_misrepresented_as_calendar_days():
     assert resolve_relative_time_range(
         "过去30个交易日",

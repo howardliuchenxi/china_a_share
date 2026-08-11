@@ -2259,6 +2259,64 @@ class AnalysisService:
             )
             if plan.result_pipeline is not None:
                 return plan
+        normalized_prompt = prompt.casefold()
+        valuation_positions = [
+            position
+            for token in ("\u5e02\u76c8\u7387", "\u5e02\u51c0\u7387")
+            if (position := normalized_prompt.find(token)) >= 0
+        ]
+        valuation_positions.extend(
+            match.start()
+            for match in re.finditer(r"\b(?:pe|pb)\b", normalized_prompt)
+        )
+        return_positions = [
+            position
+            for token in (
+                "\u6da8\u5e45",
+                "\u8dcc\u5e45",
+                "\u6da8\u8dcc\u5e45",
+                "\u6536\u76ca\u7387",
+            )
+            if (position := normalized_prompt.find(token)) >= 0
+        ]
+        resolved_range = resolve_explicit_time_range(prompt)
+        if (
+            valuation_positions
+            and return_positions
+            and min(return_positions) < min(valuation_positions)
+            and resolved_range is not None
+        ):
+            ranking_limit_match = re.search(
+                r"(?:top\s*|\u524d\s*)(\d+)\s*(?:\u5bb6|\u53ea)?",
+                normalized_prompt,
+            )
+            plan.intent = type(plan.intent).model_validate(
+                {
+                    "analysis_type": "rank_metric",
+                    "metric": {
+                        "type": "period_return",
+                        "window": {
+                            "start": resolved_range[0].strftime("%Y%m%d"),
+                            "end": resolved_range[1].strftime("%Y%m%d"),
+                        },
+                    },
+                    "ranking": {
+                        "direction": (
+                            "asc"
+                            if any(
+                                term in prompt
+                                for term in ("\u4e0b\u8dcc", "\u8dcc\u5e45")
+                            )
+                            else "desc"
+                        ),
+                        "limit": (
+                            int(ranking_limit_match.group(1))
+                            if ranking_limit_match is not None
+                            else 10
+                        ),
+                    },
+                }
+            )
         AnalysisService._compile_valuation_period_return(plan, prompt)
         if plan.result_pipeline is None:
             normalized = prompt.casefold()
@@ -5588,6 +5646,18 @@ class AnalysisService:
         prompt: str,
     ) -> None:
         """Compile a full-market period ranking at security-period grain."""
+        if (
+            len(plan.queries) > 1
+            and plan.result_pipeline is not None
+            and any(
+                step.operation == "join_fields"
+                for step in plan.result_pipeline.steps
+            )
+        ):
+            # A prior compiler already composed the ranking with requested output
+            # fields. Replacing it with a single-source ranking would silently drop
+            # provider dependencies that remain promised by the answer contract.
+            return
         if "\u6da8\u505c" in prompt:
             return
         ranking_terms = ("\u6700\u591a", "\u6700\u5927", "\u524d\u5341", "top")
@@ -5805,6 +5875,22 @@ class AnalysisService:
             return
         valuation_field = "pe" if is_pe else "pb"
         valuation_direction = "desc" if is_pe else "asc"
+        ranks_period_return = (
+            plan.intent is not None
+            and plan.intent.ranking is not None
+            and (
+                (
+                    plan.intent.analysis_type == "rank_metric"
+                    and plan.intent.metric is not None
+                    and plan.intent.metric.type == "period_return"
+                )
+                or (
+                    plan.intent.analysis_type == "field_analysis"
+                    and plan.intent.operation == "daily"
+                    and plan.intent.analysis_field == "close"
+                )
+            )
+        )
         valuation_query = next(
             (query for query in plan.queries if query.operation == "daily_basic"),
             None,
@@ -5820,15 +5906,13 @@ class AnalysisService:
             None,
         )
         if valuation_query is None or price_query is None:
-            dates = re.findall(
-                r"20\d{2}(?:-\d{2}-\d{2}|\d{4})",
-                f"{prompt}\n{plan.interpretation}",
+            resolved_range = resolve_explicit_time_range(
+                f"{prompt}\n{plan.interpretation}"
             )
-            if len(dates) < 2:
+            if resolved_range is None:
                 return
-            start_date, end_date = (
-                value.replace("-", "") for value in dates[-2:]
-            )
+            start_date = resolved_range[0].strftime("%Y%m%d")
+            end_date = resolved_range[1].strftime("%Y%m%d")
             valuation_query = DataQuery(
                 query_id="valuation_snapshot",
                 operation="daily_basic",
@@ -5871,6 +5955,39 @@ class AnalysisService:
         price_query.fields = ["ts_code", "trade_date", "close"]
         price_query.transform = "period_return_by_ts_code"
         price_query.params.pop("ts_code", None)
+        if ranks_period_return:
+            plan.queries = [price_query, valuation_query]
+            AnalysisService._compile_composed_result(
+                plan,
+                source_query=price_query,
+                output_query_id="period_return_valuation",
+                steps=[
+                    {
+                        "operation": "sort",
+                        "field": "period_return_pct",
+                        "direction": plan.intent.ranking.direction,
+                    },
+                    {"operation": "limit", "count": plan.intent.ranking.limit},
+                    {
+                        "operation": "join_fields",
+                        "right_source_query_id": valuation_query.query_id,
+                        "join_on": ["ts_code"],
+                        "fields": {valuation_field: valuation_field},
+                        "cardinality": "many_to_one",
+                    },
+                ],
+                output_descriptions={
+                    "ts_code": "A-share security code.",
+                    "period_return_pct": (
+                        "Security return over the requested period, in percent."
+                    ),
+                    valuation_field: (
+                        "Valuation metric attached to the ranked return cohort."
+                    ),
+                },
+            )
+            plan.intent = None
+            return
         AnalysisService._compile_composed_result(
             plan,
             source_query=valuation_query,

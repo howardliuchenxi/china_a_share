@@ -302,6 +302,23 @@
       "source": "matrix"
     },
     {
+      "id": "market_period_return-04",
+      "name": "market_period_return 4",
+      "family": "market_period_return",
+      "prompt": "2026年6月A股涨幅最大的前10只股票，并标注对应的市盈率（PE）。",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "daily_basic"
+      ],
+      "quality_invariants": [
+        "period_return_direction",
+        "sort_before_limit"
+      ],
+      "source": "reported_regression"
+    },
+    {
       "id": "valuation_period_return-01",
       "name": "valuation_period_return 1",
       "family": "valuation_period_return",

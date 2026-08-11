@@ -3547,6 +3547,82 @@ def test_workflow_compiles_valuation_selection_before_period_return_join():
     }
 
 
+def test_workflow_preserves_valuation_annotation_after_period_return_ranking():
+    plan = QueryPlan.model_validate(
+        {
+            "interpretation": (
+                "Rank 20260601 through 20260630 A-shares by return and attach PE "
+                "to the top ten."
+            ),
+            "intent": {
+                "analysis_type": "rank_metric",
+                "metric": {
+                    "type": "period_return",
+                    "window": {"start": "20260601", "end": "20260630"},
+                },
+                "ranking": {"direction": "desc", "limit": 10},
+            },
+            "requirements": [
+                {
+                    "requirement": "Rank June returns.",
+                    "status": "covered",
+                    "evidence": "daily provides closing prices.",
+                },
+                {
+                    "requirement": "Attach PE to the ranked securities.",
+                    "status": "covered",
+                    "evidence": "daily_basic provides pe.",
+                },
+            ],
+        }
+    )
+
+    result = AnalysisService._normalize_plan_for_request(
+        plan,
+        "2026年6月A股涨幅最大的前10只股票，并标注对应的市盈率（PE）。",
+    )
+
+    assert [query.operation for query in result.queries] == ["daily", "daily_basic"]
+    assert result.result_pipeline.source_query_id == "valuation_period_prices"
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "sort",
+        "limit",
+        "join_fields",
+    ]
+    assert result.result_pipeline.steps[0].field == "period_return_pct"
+    assert result.result_pipeline.steps[1].count == 10
+    assert result.result_pipeline.steps[2].right_source_query_id == (
+        "valuation_snapshot"
+    )
+    assert {output.field for output in result.answer_contract.outputs} == {
+        "ts_code",
+        "period_return_pct",
+        "pe",
+    }
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
+def test_workflow_precompiles_period_return_ranking_before_valuation_annotation():
+    result = AnalysisService._compile_known_request(
+        "2026年6月A股涨幅最大的前10只股票，并标注对应的市盈率（PE）。"
+    )
+
+    assert result is not None
+    assert [query.operation for query in result.queries] == ["daily", "daily_basic"]
+    assert result.queries[0].params == {
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+    assert result.queries[1].params == {"trade_date": "20260630"}
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "sort",
+        "limit",
+        "join_fields",
+    ]
+    assert result.result_pipeline.steps[0].field == "period_return_pct"
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
 def test_workflow_completes_valuation_return_plan_from_trusted_window():
     plan = make_daily_plan()
     plan.queries[0].operation = "daily_basic"

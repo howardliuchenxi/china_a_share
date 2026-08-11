@@ -31,6 +31,9 @@ EXPLICIT_RANGE_PATTERN = re.compile(
 TRUSTED_RANGE_PATTERN = re.compile(
     r"event_start_date=(?P<start>\d{8})\s+event_end_date=(?P<end>\d{8})"
 )
+EXPLICIT_MONTH_PATTERN = re.compile(
+    r"(?P<year>20\d{2})\s*\u5e74\s*(?P<month>1[0-2]|0?[1-9])\s*\u6708"
+)
 FUTURE_HORIZON_PATTERN = re.compile(
     r"(?:接下来|未来|之后|此后)(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
     r"(?P<unit>个?交易日|天|周|个?月|季度|年)"
@@ -90,11 +93,16 @@ def resolve_relative_time_range(
 def resolve_explicit_time_range(prompt: str) -> Optional[Tuple[date, date]]:
     """Resolve an explicit compact date range from a natural-language request."""
     match = EXPLICIT_RANGE_PATTERN.search(prompt) or TRUSTED_RANGE_PATTERN.search(prompt)
-    if match is None:
+    if match is not None:
+        start = _parse_date_token(match.group("start"))
+        end = _parse_date_token(match.group("end"))
+        return (start, end) if start <= end else None
+    month_match = EXPLICIT_MONTH_PATTERN.search(prompt)
+    if month_match is None:
         return None
-    start = _parse_date_token(match.group("start"))
-    end = _parse_date_token(match.group("end"))
-    return (start, end) if start <= end else None
+    year = int(month_match.group("year"))
+    month = int(month_match.group("month"))
+    return date(year, month, 1), date(year, month, monthrange(year, month)[1])
 
 
 def resolve_future_horizon(prompt: str) -> Optional[Tuple[int, str]]:
