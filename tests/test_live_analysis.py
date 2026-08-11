@@ -382,7 +382,11 @@ def test_live_analysis_questions_in_parallel(
         "DeepSeek and Tushare APIs."
     ),
 )
-def test_live_reported_prompt_regression(live_analysis_service, case) -> None:
+def test_live_reported_prompt_regression(
+    live_analysis_service,
+    live_market_data_provider,
+    case,
+) -> None:
     """Run one production-reported prompt through the complete public workflow."""
     response = live_analysis_service.analyze(
         request_id=f"regression-{case['name']}-{uuid4()}",
@@ -414,6 +418,13 @@ def test_live_reported_prompt_regression(live_analysis_service, case) -> None:
     assert response.results
     assert all(result.status.value == "success" for result in response.results), (
         _failure_message(response)
+    )
+    _assert_pipeline_result_succeeded(response)
+    _assert_quality_invariants(
+        response,
+        case["prompt"],
+        set(case.get("quality_invariants", [])),
+        live_market_data_provider,
     )
 
 

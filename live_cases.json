@@ -47,6 +47,21 @@
       "source": "matrix"
     },
     {
+      "id": "market_breadth-production-29344a86",
+      "name": "market_breadth production regression 29344a86",
+      "family": "market_breadth",
+      "prompt": "北京时间2026年8月7日有多少只A股上涨，多少只下跌？",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [
+        "conditional_category_counts"
+      ],
+      "source": "reported_regression"
+    },
+    {
       "id": "limit_up_list-01",
       "name": "limit_up_list 1",
       "family": "limit_up_list",

@@ -20,6 +20,7 @@ LIVE_REGRESSION_CASES = [
         "name": case.name,
         "prompt": case.prompt,
         "expected_feasibility": case.expected_feasibility,
+        "quality_invariants": case.quality_invariants,
     }
     for case in load_live_case_catalog().cases
     if case.source == "reported_regression"

@@ -1442,6 +1442,54 @@ def test_validator_rejects_distinct_outputs_with_identical_summaries():
         ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
+def test_validator_rejects_distinct_summaries_of_identical_derived_expressions():
+    plan = make_daily_plan()
+    plan.queries[0].fields = ["ts_code", "pct_chg"]
+    plan.result_pipeline = ResultPipeline.model_validate(
+        {
+            "source_query_id": plan.queries[0].query_id,
+            "output_query_id": "market-direction-summary",
+            "steps": [
+                {
+                    "operation": "derive",
+                    "field": "pct_chg",
+                    "output_field": "up_flag",
+                    "arithmetic_operator": "subtract",
+                    "value": 0,
+                },
+                {
+                    "operation": "derive",
+                    "field": "pct_chg",
+                    "output_field": "down_flag",
+                    "arithmetic_operator": "subtract",
+                    "value": 0,
+                },
+                {
+                    "operation": "summarize",
+                    "aggregations": [
+                        {
+                            "output_field": "up_count",
+                            "field": "up_flag",
+                            "function": "sum",
+                        },
+                        {
+                            "output_field": "down_count",
+                            "field": "down_flag",
+                            "function": "sum",
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="distinct summary outputs use identical unconditional aggregations",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
 def test_planner_compiles_materially_different_conditional_counts():
     plan = make_daily_plan().model_dump(mode="json")
     plan["queries"][0]["fields"] = ["ts_code", "change"]

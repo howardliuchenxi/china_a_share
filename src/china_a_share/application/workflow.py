@@ -1159,13 +1159,41 @@ class ASharePlanValidator:
 
         steps = pipeline.steps
 
+        field_expressions: dict[str, tuple[Any, ...]] = {}
         for step in steps:
+            if step.operation == "derive":
+                right_operand = (
+                    ("field", step.right_field)
+                    if step.right_field
+                    else ("value", step.value)
+                )
+                field_expressions[step.output_field] = (
+                    step.operation,
+                    step.arithmetic_operator,
+                    ("field", step.field),
+                    right_operand,
+                )
+            elif step.operation in {"compare_scalar", "compare_fields"}:
+                right_operand = (
+                    ("field", step.right_field)
+                    if step.right_field
+                    else ("value", step.value)
+                )
+                field_expressions[step.output_field] = (
+                    step.operation,
+                    step.comparison,
+                    ("field", step.field),
+                    right_operand,
+                )
             if step.operation != "summarize":
                 continue
-            aggregation_outputs: dict[tuple[str, str, Optional[float]], list[str]] = {}
+            aggregation_outputs: dict[tuple[Any, ...], list[str]] = {}
             for aggregation in step.aggregations:
                 signature = (
-                    aggregation.field,
+                    field_expressions.get(
+                        aggregation.field,
+                        ("field", aggregation.field),
+                    ),
                     aggregation.function,
                     aggregation.quantile,
                 )
