@@ -514,12 +514,9 @@ class DeepSeekQueryPlanner:
 
     @staticmethod
     def _candidate_score(plan: QueryPlan) -> tuple[int, int, int, int]:
-        """Rank valid candidates by completeness before execution complexity."""
+        """Rank valid candidates by contract fidelity before execution complexity."""
         covered_requirements = sum(
             requirement.status == "covered" for requirement in plan.requirements
-        )
-        output_count = (
-            len(plan.answer_contract.outputs) if plan.answer_contract else 0
         )
         node_count = len(plan.queries)
         if plan.execution_plan is not None:
@@ -529,7 +526,7 @@ class DeepSeekQueryPlanner:
         return (
             int(plan.feasibility == "supported"),
             covered_requirements,
-            output_count,
+            -len(plan.limitations),
             -node_count,
         )
 

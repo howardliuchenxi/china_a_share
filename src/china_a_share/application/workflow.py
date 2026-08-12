@@ -1948,6 +1948,55 @@ class AnalysisService:
             error_info,
         )
 
+    @staticmethod
+    def _answer_result_id(plan: QueryPlan) -> Optional[str]:
+        """Return the single result whose contract determines answer success."""
+        if plan.answer_contract is not None:
+            return plan.answer_contract.result_query_id
+        if plan.execution_plan is not None:
+            return plan.execution_plan.result_node_id
+        if plan.result_pipeline is not None:
+            return plan.result_pipeline.output_query_id
+        if len(plan.queries) == 1:
+            return plan.queries[0].query_id
+        return None
+
+    @classmethod
+    def _classify_execution_status(
+        cls,
+        plan: QueryPlan,
+        results: List[QueryResult],
+    ) -> tuple[str, Optional[str]]:
+        """Classify execution from the required answer result and advisory failures."""
+        answer_result_id = cls._answer_result_id(plan)
+        if answer_result_id is not None:
+            answer_result = next(
+                (
+                    result
+                    for result in results
+                    if result.query_id == answer_result_id
+                ),
+                None,
+            )
+            if (
+                answer_result is None
+                or answer_result.status != QueryStatus.SUCCESS
+                or answer_result.completeness == "partial"
+            ):
+                return "error", answer_result_id
+            if any(result.status != QueryStatus.SUCCESS for result in results):
+                return "partial_success", answer_result_id
+            return "success", answer_result_id
+
+        success_count = sum(
+            result.status == QueryStatus.SUCCESS for result in results
+        )
+        if success_count == len(results) and results:
+            return "success", None
+        if success_count:
+            return "partial_success", None
+        return "error", None
+
     def _plan_with_request_context(
         self,
         request_id: str,
@@ -3531,21 +3580,27 @@ class AnalysisService:
                 external_call=bool(results),
             )
         )
-        success_count = sum(result.status == QueryStatus.SUCCESS for result in results)
-        if success_count == len(results):
-            overall_status = "success"
-        elif success_count:
-            overall_status = "partial_success"
-        else:
-            overall_status = "error"
+        overall_status, answer_result_id = self._classify_execution_status(
+            validated_plan,
+            results,
+        )
         decision_trace.append(
             DecisionTraceStep(
                 stage="result",
-                status="success" if overall_status == "success" else "warning",
+                status=(
+                    "success"
+                    if overall_status == "success"
+                    else "warning" if overall_status == "partial_success" else "error"
+                ),
                 title="Analysis response assembled",
-                detail="Validated query results were normalized for display.",
+                detail=(
+                    "The required answer result passed its execution contract."
+                    if overall_status != "error"
+                    else "The required answer result did not satisfy its execution contract."
+                ),
                 evidence=[
                     f"Overall status: {overall_status}",
+                    f"Required answer result: {answer_result_id or 'not declared'}",
                     f"Rows returned: {sum(result.row_count for result in results)}",
                 ],
             )

@@ -28,6 +28,7 @@ from china_a_share.core.contracts import (
     QueryPlan,
     QueryConstraint,
     QueryResult,
+    QueryStatus,
     RequirementCoverage,
     ResultPipeline,
     ResultPipelineStep,
@@ -1022,10 +1023,14 @@ def test_planner_can_converge_across_contract_and_capability_rejections():
     )
 
 
-def test_planner_selects_the_most_complete_valid_complex_candidate():
+def test_planner_selects_contract_fidelity_over_extra_outputs():
     candidates = []
-    for index, output_fields in enumerate(
-        (["ts_code"], ["ts_code", "change"], ["change"]),
+    for index, (output_fields, limitations) in enumerate(
+        (
+            (["ts_code"], []),
+            (["ts_code", "change"], ["The answer includes an unrequested field."]),
+            (["change"], ["The requested identifier is unavailable."]),
+        ),
         start=1,
     ):
         candidate = make_daily_plan()
@@ -1044,6 +1049,7 @@ def test_planner_selects_the_most_complete_valid_complex_candidate():
                 ],
             }
         )
+        candidate.limitations = limitations
         candidate.queries[0].purpose = f"Candidate {index}."
         candidates.append(candidate)
     session = SequenceFakeSession(
@@ -1061,13 +1067,113 @@ def test_planner_selects_the_most_complete_valid_complex_candidate():
         lambda plan: plan,
     )
 
-    assert [output.field for output in result.answer_contract.outputs] == [
-        "ts_code",
-        "change",
-    ]
+    assert [output.field for output in result.answer_contract.outputs] == ["ts_code"]
     assert len(session.calls) == 3
     assert "candidate 2" in session.calls[1][1]["json"]["messages"][-1]["content"]
     assert "candidate 3" in session.calls[2][1]["json"]["messages"][-1]["content"]
+
+
+def test_execution_status_fails_when_required_answer_fails():
+    plan = make_daily_plan()
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [{"field": "ts_code", "description": "Security identifier."}],
+        }
+    )
+    plan.queries.append(
+        DataQuery(
+            query_id="advisory_context",
+            operation="daily_basic",
+            params={"trade_date": "20260717"},
+            fields=["ts_code"],
+            purpose="Retrieve optional context.",
+        )
+    )
+
+    status, required_result_id = AnalysisService._classify_execution_status(
+        plan,
+        [
+            QueryResult(
+                query_id="market_direction",
+                provider="test",
+                operation="daily",
+                status=QueryStatus.ERROR,
+            ),
+            QueryResult(
+                query_id="advisory_context",
+                provider="test",
+                operation="daily_basic",
+                status=QueryStatus.SUCCESS,
+            ),
+        ],
+    )
+
+    assert status == "error"
+    assert required_result_id == "market_direction"
+
+
+def test_execution_status_degrades_when_only_advisory_result_fails():
+    plan = make_daily_plan()
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [{"field": "ts_code", "description": "Security identifier."}],
+        }
+    )
+    plan.queries.append(
+        DataQuery(
+            query_id="advisory_context",
+            operation="daily_basic",
+            params={"trade_date": "20260717"},
+            fields=["ts_code"],
+            purpose="Retrieve optional context.",
+        )
+    )
+
+    status, required_result_id = AnalysisService._classify_execution_status(
+        plan,
+        [
+            QueryResult(
+                query_id="market_direction",
+                provider="test",
+                operation="daily",
+                status=QueryStatus.SUCCESS,
+                completeness="complete",
+            ),
+            QueryResult(
+                query_id="advisory_context",
+                provider="test",
+                operation="daily_basic",
+                status=QueryStatus.ERROR,
+            ),
+        ],
+    )
+
+    assert status == "partial_success"
+    assert required_result_id == "market_direction"
+
+
+def test_execution_status_rejects_partial_required_answer():
+    plan = make_daily_plan()
+
+    status, required_result_id = AnalysisService._classify_execution_status(
+        plan,
+        [
+            QueryResult(
+                query_id="market_direction",
+                provider="test",
+                operation="daily",
+                status=QueryStatus.SUCCESS,
+                completeness="partial",
+            )
+        ],
+    )
+
+    assert status == "error"
+    assert required_result_id == "market_direction"
 
 
 def test_planner_stops_after_three_identical_valid_complex_candidates():
