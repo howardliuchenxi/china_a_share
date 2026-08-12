@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-08-10**
+Last verified: **2026-08-11**
 
 ## Project boundary
 
@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00188-cfp` |
+| Latest ready revision | `china-a-share-lab-00193-brg` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `aab7db3f45e1fca977220f52b0339931dafaf698` |
+| Deployed Git commit | `395a633178fc57fc52b99a32964e3db83d4c3e5e` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -160,7 +160,7 @@ size exceeds the 0.5 GiB monthly Artifact Registry free allowance by roughly
 | `deepseek-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `zai-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `github-fix-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
-| `feishu-bot-webhook` | Version 1, enabled | Automatic | Deployment automation identity only |
+| `feishu-bot-webhook` | Version 2, enabled | Automatic | Deployment automation identity only |
 
 The four application secrets grant `roles/secretmanager.secretAccessor`
 directly to `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`.
@@ -379,3 +379,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-08-08 | Increased `china-a-share-analysis-worker` memory from 1 GiB to 4 GiB after a full-market multi-year discovery workload exceeded the previous limit; retained 1 vCPU, one task, two-hour timeout, one retry, the existing runtime identity, and usage-only billing with no idle job cost. |
 | 2026-08-08 | Extended the `analysis-jobs/` Cloud Storage deletion lifecycle from 7 days to 365 days so asynchronous analysis and discovery task results remain available for historical review; retained the existing bucket, Standard storage class, access boundary, and usage-based cost model. |
 | 2026-08-10 | Deployed revision `china-a-share-lab-00188-cfp` through scheduled reconciliation; recorded source `main@aab7db3f45e1fca977220f52b0339931dafaf698`, verified 100% traffic, public health status, runtime configuration, synchronized worker deployment, and storage usage with no new resource types or IAM changes. |
+| 2026-08-11 | Rotated `feishu-bot-webhook` to enabled version 2 after the prior Lark bot was removed; the next scheduled reconciliation delivered its start notification and deployed revision `china-a-share-lab-00193-brg` from `main@395a633178fc57fc52b99a32964e3db83d4c3e5e`, with 100% traffic, public health status, and the synchronized worker verified. No IAM boundary, resource type, lifecycle policy, or material cost changed. |
