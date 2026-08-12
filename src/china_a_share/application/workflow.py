@@ -4465,6 +4465,8 @@ class AnalysisService:
             "period_return_by_ts_code",
         )
         safe_frame = transformed.astype(object).where(pd.notnull(transformed), None)
+        start_trade_date = boundary_results[0].rows[0].get("trade_date")
+        end_trade_date = boundary_results[1].rows[0].get("trade_date")
         return QueryResult(
             query_id=query.query_id,
             provider=self._provider.name,
@@ -4473,6 +4475,13 @@ class AnalysisService:
             columns=list(safe_frame.columns),
             rows=safe_frame.to_dict(orient="records"),
             row_count=len(safe_frame),
+            completeness="complete",
+            completeness_evidence=[
+                "execution_strategy=full_market_boundary_snapshots",
+                f"covered_boundaries={start_trade_date}..{end_trade_date}",
+                "completeness_policy=both_market_snapshots_complete",
+            ],
+            retrieval_partition_count=2,
         )
 
     @staticmethod
@@ -6044,6 +6053,14 @@ class AnalysisService:
     @staticmethod
     def _compile_valuation_period_return(plan: QueryPlan, prompt: str) -> None:
         """Compile valuation selection before joining one return row per security."""
+        if (
+            plan.result_pipeline is not None
+            and plan.result_pipeline.output_query_id == "period_return_valuation"
+        ):
+            # This compiler clears the typed intent after composing the return
+            # ranking. Preserve that completed plan when request normalization
+            # invokes the compiler again, or PE would incorrectly become primary.
+            return
         prompt_upper = prompt.upper()
         is_pe = "PE" in prompt_upper or "\u5e02\u76c8\u7387" in prompt
         is_pb = "PB" in prompt_upper or "\u5e02\u51c0\u7387" in prompt

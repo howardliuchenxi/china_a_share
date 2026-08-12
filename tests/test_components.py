@@ -3808,6 +3808,26 @@ def test_workflow_precompiles_period_return_ranking_before_valuation_annotation(
     ASharePlanValidator(FakeMarketDataProvider()).validate(result)
 
 
+def test_workflow_preserves_precompiled_return_ranking_during_normalization():
+    prompt = (
+        "\u5927A\u5728\u4eca\u5e746\u6708\u4e0a\u6da8\u6700\u591a\u7684\u80a1\u7968\u524d\u5341\uff0c\u5bf9\u5e94\u7684\u5e02\u76c8\u7387\u4e5f\u6807\u8bb0\u4e0b\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260601\n"
+        "event_end_date=20260630\n"
+        "</trusted_analysis_window>"
+    )
+    precompiled = AnalysisService._compile_known_request(prompt)
+
+    result = AnalysisService._normalize_plan_for_request(precompiled, prompt)
+
+    assert result.result_pipeline.output_query_id == "period_return_valuation"
+    assert result.result_pipeline.source_query_id == "valuation_period_prices"
+    sort_step, limit_step, join_step = result.result_pipeline.steps
+    assert (sort_step.field, sort_step.direction) == ("period_return_pct", "desc")
+    assert limit_step.count == 10
+    assert join_step.right_source_query_id == "valuation_snapshot"
+
+
 def test_workflow_uses_return_ranking_when_valuation_annotation_comes_first():
     result = AnalysisService._compile_known_request(
         "\u5e02\u76c8\u7387\u4e5f\u6807\u8bb0\u4e00\u4e0b\uff0c\u5217\u51fa\u5927A 6\u6708\u4e0a\u6da8\u6700\u591a\u7684\u524d10\u53ea\u80a1\u7968\n"
@@ -5982,6 +6002,13 @@ def test_full_market_period_return_reads_only_boundary_snapshots():
     )
 
     assert result.status == "success"
+    assert result.completeness == "complete"
+    assert result.retrieval_partition_count == 2
+    assert (
+        "execution_strategy=full_market_boundary_snapshots"
+        in result.completeness_evidence
+    )
+    assert "covered_boundaries=20260601..20260630" in result.completeness_evidence
     assert result.rows[0] == {
         "ts_code": "000001.SZ",
         "start_date": "20260601",
