@@ -20,6 +20,7 @@ from china_a_share.core.contracts import (
     AnswerContract,
     AnalysisIntent,
     AnalysisRequest,
+    AnalysisStatusReason,
     DataFilter,
     DataOperation,
     DataQuery,
@@ -1092,7 +1093,7 @@ def test_execution_status_fails_when_required_answer_fails():
         )
     )
 
-    status, required_result_id = AnalysisService._classify_execution_status(
+    status, required_result_id, status_reason = AnalysisService._classify_execution_status(
         plan,
         [
             QueryResult(
@@ -1112,6 +1113,7 @@ def test_execution_status_fails_when_required_answer_fails():
 
     assert status == "error"
     assert required_result_id == "market_direction"
+    assert status_reason == AnalysisStatusReason.REQUIRED_RESULT_FAILED
 
 
 def test_execution_status_degrades_when_only_advisory_result_fails():
@@ -1133,7 +1135,7 @@ def test_execution_status_degrades_when_only_advisory_result_fails():
         )
     )
 
-    status, required_result_id = AnalysisService._classify_execution_status(
+    status, required_result_id, status_reason = AnalysisService._classify_execution_status(
         plan,
         [
             QueryResult(
@@ -1154,12 +1156,13 @@ def test_execution_status_degrades_when_only_advisory_result_fails():
 
     assert status == "partial_success"
     assert required_result_id == "market_direction"
+    assert status_reason == AnalysisStatusReason.ADVISORY_RESULT_FAILED
 
 
 def test_execution_status_rejects_partial_required_answer():
     plan = make_daily_plan()
 
-    status, required_result_id = AnalysisService._classify_execution_status(
+    status, required_result_id, status_reason = AnalysisService._classify_execution_status(
         plan,
         [
             QueryResult(
@@ -1174,6 +1177,71 @@ def test_execution_status_rejects_partial_required_answer():
 
     assert status == "error"
     assert required_result_id == "market_direction"
+    assert status_reason == AnalysisStatusReason.REQUIRED_RESULT_INCOMPLETE
+
+
+def test_execution_status_requires_complete_evidence_when_contract_demands_it():
+    plan = make_daily_plan()
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [{"field": "ts_code", "description": "Security identifier."}],
+            "required_completeness": "complete",
+        }
+    )
+
+    status, required_result_id, status_reason = (
+        AnalysisService._classify_execution_status(
+            plan,
+            [
+                QueryResult(
+                    query_id="market_direction",
+                    provider="test",
+                    operation="daily",
+                    status=QueryStatus.SUCCESS,
+                    completeness="unknown",
+                )
+            ],
+        )
+    )
+
+    assert status == "error"
+    assert required_result_id == "market_direction"
+    assert status_reason == AnalysisStatusReason.REQUIRED_RESULT_INCOMPLETE
+
+
+def test_answer_contract_rejects_overlapping_dependency_roles():
+    with pytest.raises(ValueError, match="both required and advisory"):
+        AnswerContract.model_validate(
+            {
+                "result_query_id": "market_direction",
+                "result_kind": "table",
+                "outputs": [
+                    {"field": "ts_code", "description": "Security identifier."}
+                ],
+                "required_result_ids": ["market_direction"],
+                "advisory_result_ids": ["market_direction"],
+            }
+        )
+
+
+def test_validator_rejects_unknown_answer_dependency():
+    plan = make_daily_plan()
+    plan.answer_contract = AnswerContract.model_validate(
+        {
+            "result_query_id": "market_direction",
+            "result_kind": "table",
+            "outputs": [{"field": "ts_code", "description": "Security identifier."}],
+            "required_result_ids": ["market_direction", "missing_result"],
+        }
+    )
+
+    with pytest.raises(
+        PlanValidationError,
+        match="dependencies do not match planned results: missing_result",
+    ):
+        ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
 
 
 def test_planner_stops_after_three_identical_valid_complex_candidates():
@@ -2851,9 +2919,12 @@ def test_workflow_compiles_intent_and_aligns_answer_contract_result():
     )
 
     result = service._compile_intent(plan)
+    service._align_answer_contract_result_id(result)
 
     assert result.result_pipeline.output_query_id == "period_return_output"
     assert result.answer_contract.result_query_id == "period_return_output"
+    assert result.answer_contract.required_result_ids == ["period_return_output"]
+    assert result.answer_contract.required_completeness == "complete"
     ASharePlanValidator(FakeMarketDataProvider()).validate(result)
 
 

@@ -16,6 +16,7 @@ from china_a_share.core.contracts import (
     CalculationTraceStep,
     AnalysisRequest,
     AnalysisResponse,
+    AnalysisStatusReason,
     DataFilter,
     DataOperation,
     DataQuery,
@@ -756,6 +757,16 @@ class ASharePlanValidator:
 
         contract = plan.answer_contract
         if contract is not None:
+            known_result_ids = {node.node_id for node in execution_plan.nodes}
+            declared_result_ids = set(contract.required_result_ids).union(
+                contract.advisory_result_ids
+            )
+            unknown_result_ids = declared_result_ids.difference(known_result_ids)
+            if unknown_result_ids:
+                raise PlanValidationError(
+                    "Answer contract dependencies do not match execution nodes: "
+                    + ", ".join(sorted(unknown_result_ids))
+                )
             if contract.result_query_id != execution_plan.result_node_id:
                 raise PlanValidationError(
                     "Answer contract must reference the execution plan result node."
@@ -1112,6 +1123,18 @@ class ASharePlanValidator:
         """Require the executable result to contain every promised answer field."""
         contract = plan.answer_contract
         pipeline = plan.result_pipeline
+        known_result_ids = {query.query_id for query in plan.queries}
+        if pipeline is not None:
+            known_result_ids.add(pipeline.output_query_id)
+        declared_result_ids = set(contract.required_result_ids).union(
+            contract.advisory_result_ids
+        )
+        unknown_result_ids = declared_result_ids.difference(known_result_ids)
+        if unknown_result_ids:
+            raise PlanValidationError(
+                "Answer contract dependencies do not match planned results: "
+                + ", ".join(sorted(unknown_result_ids))
+            )
         if pipeline and contract.result_query_id == pipeline.output_query_id:
             available_fields = pipeline_fields or set()
             if (
@@ -1949,53 +1972,80 @@ class AnalysisService:
         )
 
     @staticmethod
-    def _answer_result_id(plan: QueryPlan) -> Optional[str]:
-        """Return the single result whose contract determines answer success."""
+    def _required_result_ids(plan: QueryPlan) -> List[str]:
+        """Return terminal results whose failures invalidate the answer."""
         if plan.answer_contract is not None:
-            return plan.answer_contract.result_query_id
+            return plan.answer_contract.required_result_ids
         if plan.execution_plan is not None:
-            return plan.execution_plan.result_node_id
+            return [plan.execution_plan.result_node_id]
         if plan.result_pipeline is not None:
-            return plan.result_pipeline.output_query_id
+            return [plan.result_pipeline.output_query_id]
         if len(plan.queries) == 1:
-            return plan.queries[0].query_id
-        return None
+            return [plan.queries[0].query_id]
+        return []
 
     @classmethod
     def _classify_execution_status(
         cls,
         plan: QueryPlan,
         results: List[QueryResult],
-    ) -> tuple[str, Optional[str]]:
+    ) -> tuple[str, Optional[str], AnalysisStatusReason]:
         """Classify execution from the required answer result and advisory failures."""
-        answer_result_id = cls._answer_result_id(plan)
+        required_result_ids = cls._required_result_ids(plan)
+        results_by_id = {result.query_id: result for result in results}
+        for required_result_id in required_result_ids:
+            required_result = results_by_id.get(required_result_id)
+            if required_result is None:
+                return (
+                    "error",
+                    required_result_id,
+                    AnalysisStatusReason.REQUIRED_RESULT_MISSING,
+                )
+            if required_result.status != QueryStatus.SUCCESS:
+                return (
+                    "error",
+                    required_result_id,
+                    AnalysisStatusReason.REQUIRED_RESULT_FAILED,
+                )
+        answer_result_id = (
+            plan.answer_contract.result_query_id
+            if plan.answer_contract is not None
+            else required_result_ids[0] if required_result_ids else None
+        )
         if answer_result_id is not None:
-            answer_result = next(
-                (
-                    result
-                    for result in results
-                    if result.query_id == answer_result_id
-                ),
-                None,
+            answer_result = results_by_id[answer_result_id]
+            requires_complete = (
+                plan.answer_contract is not None
+                and plan.answer_contract.required_completeness == "complete"
             )
-            if (
-                answer_result is None
-                or answer_result.status != QueryStatus.SUCCESS
-                or answer_result.completeness == "partial"
+            if answer_result.completeness == "partial" or (
+                requires_complete and answer_result.completeness != "complete"
             ):
-                return "error", answer_result_id
+                return (
+                    "error",
+                    answer_result_id,
+                    AnalysisStatusReason.REQUIRED_RESULT_INCOMPLETE,
+                )
             if any(result.status != QueryStatus.SUCCESS for result in results):
-                return "partial_success", answer_result_id
-            return "success", answer_result_id
+                return (
+                    "partial_success",
+                    answer_result_id,
+                    AnalysisStatusReason.ADVISORY_RESULT_FAILED,
+                )
+            return (
+                "success",
+                answer_result_id,
+                AnalysisStatusReason.ANSWER_CONTRACT_SATISFIED,
+            )
 
         success_count = sum(
             result.status == QueryStatus.SUCCESS for result in results
         )
         if success_count == len(results) and results:
-            return "success", None
+            return "success", None, AnalysisStatusReason.ANSWER_CONTRACT_SATISFIED
         if success_count:
-            return "partial_success", None
-        return "error", None
+            return "partial_success", None, AnalysisStatusReason.ADVISORY_RESULT_FAILED
+        return "error", None, AnalysisStatusReason.REQUIRED_RESULT_FAILED
 
     def _plan_with_request_context(
         self,
@@ -3205,12 +3255,39 @@ class AnalysisService:
         """Bind the answer contract to the unique deterministic final result."""
         if plan.answer_contract is None:
             return
+        previous_result_id = plan.answer_contract.result_query_id
         if plan.execution_plan is not None:
             plan.answer_contract.result_query_id = plan.execution_plan.result_node_id
         elif plan.result_pipeline is not None:
             plan.answer_contract.result_query_id = plan.result_pipeline.output_query_id
         elif len(plan.queries) == 1:
             plan.answer_contract.result_query_id = plan.queries[0].query_id
+        final_result_id = plan.answer_contract.result_query_id
+        plan.answer_contract.required_result_ids = [
+            final_result_id if result_id == previous_result_id else result_id
+            for result_id in plan.answer_contract.required_result_ids
+        ]
+        ranking_operations = {"sort", "rank", "top_k_by_group", "limit"}
+        pipeline_requires_complete = bool(
+            plan.result_pipeline
+            and any(
+                step.operation in ranking_operations
+                for step in plan.result_pipeline.steps
+            )
+        )
+        execution_requires_complete = bool(
+            plan.execution_plan
+            and any(
+                node.step is not None and node.step.operation in ranking_operations
+                for node in plan.execution_plan.nodes
+            )
+        )
+        if (
+            plan.answer_contract.result_kind == "summary"
+            or pipeline_requires_complete
+            or execution_requires_complete
+        ):
+            plan.answer_contract.required_completeness = "complete"
 
 
     def analyze(
@@ -3580,7 +3657,7 @@ class AnalysisService:
                 external_call=bool(results),
             )
         )
-        overall_status, answer_result_id = self._classify_execution_status(
+        overall_status, answer_result_id, status_reason = self._classify_execution_status(
             validated_plan,
             results,
         )
@@ -3600,6 +3677,7 @@ class AnalysisService:
                 ),
                 evidence=[
                     f"Overall status: {overall_status}",
+                    f"Status reason: {status_reason.value}",
                     f"Required answer result: {answer_result_id or 'not declared'}",
                     f"Rows returned: {sum(result.row_count for result in results)}",
                 ],
@@ -3625,6 +3703,7 @@ class AnalysisService:
             planner=self._planner.name,
             data_provider=self._provider.name,
             status=overall_status,
+            status_reason=status_reason,
             plan=validated_plan,
             results=results,
             decision_trace=decision_trace,

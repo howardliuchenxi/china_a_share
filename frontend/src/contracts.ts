@@ -1,4 +1,10 @@
 export type AnalysisStatus = "success" | "partial_success" | "error";
+export type AnalysisStatusReason =
+  | "ANSWER_CONTRACT_SATISFIED"
+  | "REQUIRED_RESULT_FAILED"
+  | "REQUIRED_RESULT_MISSING"
+  | "REQUIRED_RESULT_INCOMPLETE"
+  | "ADVISORY_RESULT_FAILED";
 export type QueryStatus = "success" | "error";
 export type ErrorSource = string;
 
@@ -83,6 +89,12 @@ export interface AnswerContract {
   result_kind: "table" | "summary";
   /** Complete set of fields explicitly requested by the user. */
   outputs: AnswerOutput[];
+  /** Minimum completeness proof required from the final answer result. */
+  required_completeness: "complete" | "allow_unknown";
+  /** Terminal results whose successful execution is required for the answer. */
+  required_result_ids: string[];
+  /** Optional enrichment results that may fail without invalidating the answer. */
+  advisory_result_ids: string[];
 }
 
 export interface ResultPipelineStepContract {
@@ -296,6 +308,8 @@ export interface AnalysisResponse {
   data_provider: string;
   /** Overall request status across planning and query execution. */
   status: AnalysisStatus;
+  /** Machine-readable reason for the terminal execution status. */
+  status_reason?: AnalysisStatusReason | null;
   /** Validated query plan when planning completed successfully. */
   plan: QueryPlan | null;
   /** Ordered results corresponding to the plan queries. */

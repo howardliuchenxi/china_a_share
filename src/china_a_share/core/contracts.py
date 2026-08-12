@@ -112,6 +112,16 @@ class AnalysisStatus(str, Enum):
     ERROR = "error"
 
 
+class AnalysisStatusReason(str, Enum):
+    """Machine-readable reason for the terminal analysis status."""
+
+    ANSWER_CONTRACT_SATISFIED = "ANSWER_CONTRACT_SATISFIED"
+    REQUIRED_RESULT_FAILED = "REQUIRED_RESULT_FAILED"
+    REQUIRED_RESULT_MISSING = "REQUIRED_RESULT_MISSING"
+    REQUIRED_RESULT_INCOMPLETE = "REQUIRED_RESULT_INCOMPLETE"
+    ADVISORY_RESULT_FAILED = "ADVISORY_RESULT_FAILED"
+
+
 class AnalysisTaskStatus(str, Enum):
     """Persisted lifecycle state for one asynchronous analysis."""
 
@@ -1323,13 +1333,49 @@ class AnswerContract(BaseModel):
         max_length=20,
         description="Complete set of fields explicitly requested by the user.",
     )
+    required_completeness: Literal["complete", "allow_unknown"] = Field(
+        default="allow_unknown",
+        description=(
+            "Minimum completeness proof required from the final answer result; "
+            "complete is mandatory for exhaustive counts, screens, and rankings."
+        ),
+    )
+    required_result_ids: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Terminal result identifiers whose successful execution is required "
+            "for the answer contract."
+        ),
+    )
+    advisory_result_ids: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Result identifiers that enrich the response but may fail without "
+            "invalidating the promised answer."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_unique_outputs(self) -> "AnswerContract":
-        """Reject ambiguous contracts that promise one field more than once."""
+        """Normalize the final dependency and reject ambiguous contract entries."""
         output_fields = [output.field for output in self.outputs]
         if len(output_fields) != len(set(output_fields)):
             raise ValueError("answer contract output fields must be unique")
+        if not self.required_result_ids:
+            self.required_result_ids = [self.result_query_id]
+        if self.result_query_id not in self.required_result_ids:
+            raise ValueError(
+                "answer contract result_query_id must be a required result"
+            )
+        if len(self.required_result_ids) != len(set(self.required_result_ids)):
+            raise ValueError("answer contract required result ids must be unique")
+        if len(self.advisory_result_ids) != len(set(self.advisory_result_ids)):
+            raise ValueError("answer contract advisory result ids must be unique")
+        overlap = set(self.required_result_ids).intersection(self.advisory_result_ids)
+        if overlap:
+            raise ValueError(
+                "answer contract result dependencies must not be both required and advisory"
+            )
         return self
 
 
@@ -1830,6 +1876,10 @@ class AnalysisResponse(BaseModel):
     )
     status: AnalysisStatus = Field(
         description="Overall completion state across planning and query execution.",
+    )
+    status_reason: Optional[AnalysisStatusReason] = Field(
+        default=None,
+        description="Machine-readable reason for the terminal execution status.",
     )
     plan: Optional[QueryPlan] = Field(
         default=None,
