@@ -3808,6 +3808,48 @@ def test_workflow_precompiles_period_return_ranking_before_valuation_annotation(
     ASharePlanValidator(FakeMarketDataProvider()).validate(result)
 
 
+def test_workflow_precompiles_period_return_ranking_before_market_cap_annotation():
+    result = AnalysisService._compile_known_request(
+        "大A在今年6月上涨最多的股票前十，对应的总市值也标记下\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260601\n"
+        "event_end_date=20260630\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert [query.operation for query in result.queries] == ["daily", "daily_basic"]
+    assert result.queries[1].fields == ["ts_code", "total_mv"]
+    sort_step, limit_step, join_step = result.result_pipeline.steps
+    assert (sort_step.field, sort_step.direction) == ("period_return_pct", "desc")
+    assert limit_step.count == 10
+    assert join_step.fields == {"total_mv": "total_mv"}
+    assert {output.field for output in result.answer_contract.outputs} == {
+        "ts_code",
+        "period_return_pct",
+        "total_mv",
+    }
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
+def test_workflow_keeps_explicit_market_cap_selection_as_snapshot_ranking():
+    result = AnalysisService._compile_known_request(
+        "总市值最高的前10只股票最近一个月涨了多少\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260710\n"
+        "event_end_date=20260810\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.result_pipeline.source_query_id == "valuation_snapshot"
+    sort_step, limit_step, join_step = result.result_pipeline.steps
+    assert (sort_step.field, sort_step.direction) == ("total_mv", "desc")
+    assert limit_step.count == 10
+    assert join_step.right_source_query_id == "valuation_period_prices"
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
 def test_workflow_preserves_precompiled_return_ranking_during_normalization():
     prompt = (
         "\u5927A\u5728\u4eca\u5e746\u6708\u4e0a\u6da8\u6700\u591a\u7684\u80a1\u7968\u524d\u5341\uff0c\u5bf9\u5e94\u7684\u5e02\u76c8\u7387\u4e5f\u6807\u8bb0\u4e0b\n"

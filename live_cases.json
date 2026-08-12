@@ -319,6 +319,23 @@
       "source": "reported_regression"
     },
     {
+      "id": "market_period_return-05",
+      "name": "market_period_return 5",
+      "family": "market_period_return",
+      "prompt": "大A在今年6月上涨最多的股票前十，对应的总市值也标记下",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily",
+        "daily_basic"
+      ],
+      "quality_invariants": [
+        "period_return_direction",
+        "sort_before_limit"
+      ],
+      "source": "reported_regression"
+    },
+    {
       "id": "valuation_period_return-01",
       "name": "valuation_period_return 1",
       "family": "valuation_period_return",

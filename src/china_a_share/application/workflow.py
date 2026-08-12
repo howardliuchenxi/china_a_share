@@ -2379,12 +2379,18 @@ class AnalysisService:
             if plan.result_pipeline is not None:
                 return plan
         normalized_prompt = prompt.casefold()
-        valuation_positions = [
+        snapshot_positions = [
             position
-            for token in ("\u5e02\u76c8\u7387", "\u5e02\u51c0\u7387")
+            for token in (
+                "\u5e02\u76c8\u7387",
+                "\u5e02\u51c0\u7387",
+                "\u603b\u5e02\u503c",
+                "\u6d41\u901a\u5e02\u503c",
+                "market cap",
+            )
             if (position := normalized_prompt.find(token)) >= 0
         ]
-        valuation_positions.extend(
+        snapshot_positions.extend(
             match.start()
             for match in re.finditer(r"\b(?:pe|pb)\b", normalized_prompt)
         )
@@ -2405,7 +2411,7 @@ class AnalysisService:
             r".{0,8}(?:\u6700\u5927|\u6700\u591a|\u6700\u9ad8|\u6700\u4f4e|\u524d\s*\d+|top\s*\d+)",
             normalized_prompt,
         )
-        requests_valuation_annotation = any(
+        requests_snapshot_annotation = any(
             term in normalized_prompt
             for term in (
                 "\u6807\u6ce8",
@@ -2417,13 +2423,13 @@ class AnalysisService:
         )
         resolved_range = resolve_explicit_time_range(prompt)
         if (
-            valuation_positions
+            snapshot_positions
             and return_positions
             and (
-                min(return_positions) < min(valuation_positions)
+                min(return_positions) < min(snapshot_positions)
                 or (
                     requests_return_ranking is not None
-                    and requests_valuation_annotation
+                    and requests_snapshot_annotation
                 )
             )
             and resolved_range is not None
@@ -6052,7 +6058,7 @@ class AnalysisService:
 
     @staticmethod
     def _compile_valuation_period_return(plan: QueryPlan, prompt: str) -> None:
-        """Compile valuation selection before joining one return row per security."""
+        """Compile snapshot annotations and period returns into one result."""
         if (
             plan.result_pipeline is not None
             and plan.result_pipeline.output_query_id == "period_return_valuation"
@@ -6064,8 +6070,17 @@ class AnalysisService:
         prompt_upper = prompt.upper()
         is_pe = "PE" in prompt_upper or "\u5e02\u76c8\u7387" in prompt
         is_pb = "PB" in prompt_upper or "\u5e02\u51c0\u7387" in prompt
+        snapshot_fields = []
+        if is_pe:
+            snapshot_fields.append("pe")
+        if is_pb:
+            snapshot_fields.append("pb")
+        if "\u603b\u5e02\u503c" in prompt or "MARKET CAP" in prompt_upper:
+            snapshot_fields.append("total_mv")
+        if "\u6d41\u901a\u5e02\u503c" in prompt:
+            snapshot_fields.append("circ_mv")
         if not (
-            (is_pe or is_pb)
+            snapshot_fields
             and any(
                 term in prompt
                 for term in (
@@ -6080,8 +6095,15 @@ class AnalysisService:
             )
         ):
             return
-        valuation_field = "pe" if is_pe else "pb"
-        valuation_direction = "desc" if is_pe else "asc"
+        selection_field = snapshot_fields[0]
+        if selection_field == "pb":
+            selection_direction = "asc"
+        elif selection_field in {"total_mv", "circ_mv"} and any(
+            term in prompt for term in ("\u6700\u4f4e", "\u6700\u5c0f", "\u6700\u5c11")
+        ):
+            selection_direction = "asc"
+        else:
+            selection_direction = "desc"
         ranks_period_return = (
             plan.intent is not None
             and plan.intent.ranking is not None
@@ -6124,8 +6146,8 @@ class AnalysisService:
                 query_id="valuation_snapshot",
                 operation="daily_basic",
                 params={"trade_date": end_date},
-                fields=["ts_code", valuation_field],
-                purpose="Retrieve the full-market valuation snapshot.",
+                fields=["ts_code", *snapshot_fields],
+                purpose="Retrieve the full-market daily-basic snapshot.",
             )
             price_query = DataQuery(
                 query_id="valuation_period_prices",
@@ -6156,7 +6178,7 @@ class AnalysisService:
         )
         if requested_limit is not None:
             existing_limit = int(requested_limit.group(1))
-        for field in ("ts_code", valuation_field):
+        for field in ("ts_code", *snapshot_fields):
             if field not in valuation_query.fields:
                 valuation_query.fields.append(field)
         price_query.fields = ["ts_code", "trade_date", "close"]
@@ -6179,7 +6201,7 @@ class AnalysisService:
                         "operation": "join_fields",
                         "right_source_query_id": valuation_query.query_id,
                         "join_on": ["ts_code"],
-                        "fields": {valuation_field: valuation_field},
+                        "fields": {field: field for field in snapshot_fields},
                         "cardinality": "many_to_one",
                     },
                 ],
@@ -6188,9 +6210,10 @@ class AnalysisService:
                     "period_return_pct": (
                         "Security return over the requested period, in percent."
                     ),
-                    valuation_field: (
-                        "Valuation metric attached to the ranked return cohort."
-                    ),
+                    **{
+                        field: "Daily-basic field attached to the ranked cohort."
+                        for field in snapshot_fields
+                    },
                 },
             )
             plan.intent = None
@@ -6202,8 +6225,8 @@ class AnalysisService:
             steps=[
                 {
                     "operation": "sort",
-                    "field": valuation_field,
-                    "direction": valuation_direction,
+                    "field": selection_field,
+                    "direction": selection_direction,
                 },
                 {"operation": "limit", "count": existing_limit or 20},
                 {
@@ -6216,7 +6239,7 @@ class AnalysisService:
             ],
             output_descriptions={
                 "ts_code": "A-share security code.",
-                valuation_field: "Valuation metric used to select the ranked cohort.",
+                selection_field: "Daily-basic field used to select the ranked cohort.",
                 "period_return_pct": (
                     "Security return over the requested period, in percent."
                 ),
