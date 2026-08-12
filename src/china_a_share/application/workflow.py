@@ -78,6 +78,19 @@ FANOUT_OPERATIONS = {
     "stk_holdertrade",
     "forecast",
 }
+SECURITY_SCOPED_OPERATIONS = {
+    "balancesheet",
+    "cashflow",
+    "express",
+    "fina_indicator",
+    "fina_mainbz",
+    "forecast",
+    "margin_detail",
+    "moneyflow",
+    "repurchase",
+    "stk_holdernumber",
+    "stk_holdertrade",
+}
 DATE_FANOUT_PARAMETERS = {
     "share_float": "float_date",
     "stk_holdernumber": "ann_date",
@@ -92,6 +105,8 @@ SCREENSHOT_EVIDENCE_START = "<untrusted_screenshot_evidence>"
 SCREENSHOT_EVIDENCE_END = "</untrusted_screenshot_evidence>"
 STOCK_NAME_OPERATION = "stock_basic"
 STOCK_METADATA_FIELDS = ("ts_code", "name", "industry")
+TRUSTED_SECURITY_START = "<trusted_security>"
+TRUSTED_SECURITY_END = "</trusted_security>"
 SNAPSHOT_RANKING_METRICS = {
     "pct_chg": "pct_chg",
     "pe": "pe",
@@ -2657,13 +2672,7 @@ class AnalysisService:
             )
             if requests_moneyflow_comparison:
                 resolved = resolve_explicit_time_range(prompt)
-                code_match = re.search(
-                    r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
-                    prompt.upper(),
-                )
-                security_code = code_match.group(0) if code_match else None
-                if security_code is None and "\u8d35\u5dde\u8305\u53f0" in prompt:
-                    security_code = "600519.SH"
+                security_code = AnalysisService._resolve_prompt_security_code(prompt)
                 if resolved is None or security_code is None:
                     return None
                 query = DataQuery(
@@ -2700,13 +2709,7 @@ class AnalysisService:
                 resolved = resolve_explicit_time_range(prompt)
                 if resolved is None:
                     return None
-                code_match = re.search(
-                    r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
-                    prompt.upper(),
-                )
-                security_code = code_match.group(0) if code_match else None
-                if security_code is None and "\u4e2d\u56fd\u5e73\u5b89" in prompt:
-                    security_code = "601318.SH"
+                security_code = AnalysisService._resolve_prompt_security_code(prompt)
                 if security_code is None:
                     return None
                 final_year = resolved[1].year - 1
@@ -3084,8 +3087,13 @@ class AnalysisService:
             )
             if requests_market_cap_pb_ranking:
                 resolved = resolve_explicit_time_range(prompt)
-                if resolved is None:
+                market_cap_threshold = AnalysisService._resolve_prompt_numeric_threshold(
+                    prompt,
+                    "total_mv",
+                )
+                if resolved is None or market_cap_threshold is None:
                     return None
+                threshold_comparison, threshold_value = market_cap_threshold
                 query = DataQuery(
                     query_id="market_cap_pb_snapshot",
                     operation="daily_basic",
@@ -3101,8 +3109,8 @@ class AnalysisService:
                     "filters": [
                         {
                             "field": "total_mv",
-                            "operator": "gt",
-                            "value": 10_000_000,
+                            "operator": threshold_comparison,
+                            "value": threshold_value,
                         }
                     ],
                     "analysis_field": "pb",
@@ -3129,8 +3137,8 @@ class AnalysisService:
                             {
                                 "operation": "filter",
                                 "field": "total_mv",
-                                "comparison": "gt",
-                                "value": 10_000_000,
+                                "comparison": threshold_comparison,
+                                "value": threshold_value,
                             },
                             {
                                 "operation": "sort",
@@ -3170,13 +3178,7 @@ class AnalysisService:
                     year = resolved[1].year - 1
                 else:
                     return None
-                security_code = (
-                    "600519.SH"
-                    if "\u8d35\u5dde\u8305\u53f0" in prompt
-                    else "000001.SZ"
-                    if "Ping An Bank" in prompt
-                    else None
-                )
+                security_code = AnalysisService._resolve_prompt_security_code(prompt)
                 if security_code is None:
                     return None
                 query = DataQuery(
@@ -3350,6 +3352,16 @@ class AnalysisService:
         try:
             planning_request = self._prepare_planning_request(request_id, request)
             operations = self._provider.search_operations(planning_request.prompt)
+            if any(
+                operation.name in SECURITY_SCOPED_OPERATIONS
+                for operation in operations
+            ):
+                planning_request = AnalysisRequest(
+                    prompt=self._append_resolved_security_code(
+                        request_id,
+                        planning_request.prompt,
+                    )
+                )
             decision_trace.append(
                 DecisionTraceStep(
                     stage="capability",
@@ -5308,12 +5320,27 @@ class AnalysisService:
     def _compile_composite_valuation(plan: QueryPlan, prompt: str) -> None:
         """Compile common multi-metric valuation screens over one daily snapshot."""
         prompt_upper = prompt.upper()
-        if "PE" not in prompt_upper and "PB" not in prompt_upper:
+        snapshot_fields = [
+            field
+            for _, field in AnalysisService._resolve_prompt_snapshot_fields(prompt)
+        ]
+        if not snapshot_fields:
             return
-        if not any(
-            term in prompt
-            for term in ("below", "\u5c0f\u4e8e", "PE TTM", "\u603b\u5e02\u503c")
-        ):
+        has_numeric_filter = any(
+            AnalysisService._resolve_prompt_numeric_threshold(prompt, field)
+            is not None
+            for field in snapshot_fields
+        )
+        has_snapshot_ranking = any(
+            re.search(
+                rf"{re.escape(alias)}.{{0,4}}(?:最低|最小|最少|最高|最大|最多)",
+                prompt,
+                re.IGNORECASE,
+            )
+            for alias, field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items()
+            if field in snapshot_fields
+        )
+        if not (has_numeric_filter or has_snapshot_ranking or "PE TTM" in prompt_upper):
             return
         query = next(
             (query for query in plan.queries if query.operation == "daily_basic"),
@@ -5339,29 +5366,24 @@ class AnalysisService:
                 {"operation": "sort", "field": "pe_ttm", "direction": "asc"},
             ])
         else:
-            if "PE" in prompt_upper:
-                fields.append("pe")
-            if "PB" in prompt_upper:
-                fields.append("pb")
-            if "\u6362\u624b\u7387" in prompt:
-                fields.append("turnover_rate")
-            if "\u603b\u5e02\u503c" in prompt:
-                fields.append("total_mv")
-            numeric_filters = (
-                ("pe", r"PE(?:\u4e3a\u6b63\u4e14)?\u5c0f\u4e8e\s*(\d+(?:\.\d+)?)", "lt"),
-                ("pe", r"PE below\s*(\d+(?:\.\d+)?)", "lt"),
-                ("pb", r"PB\u5c0f\u4e8e\s*(\d+(?:\.\d+)?)", "lt"),
-                ("pb", r"PB below\s*(\d+(?:\.\d+)?)", "lt"),
-                ("turnover_rate", r"\u6362\u624b\u7387\u5927\u4e8e\s*(\d+(?:\.\d+)?)%?", "gt"),
-            )
+            fields.extend(snapshot_fields)
             if "PE\u4e3a\u6b63" in prompt:
                 steps.append({"operation": "filter", "field": "pe", "comparison": "gt", "value": 0})
-            for field, pattern, comparison in numeric_filters:
-                match = re.search(pattern, prompt, re.IGNORECASE)
-                if match:
-                    steps.append({"operation": "filter", "field": field, "comparison": comparison, "value": float(match.group(1))})
-            if "PB\u6700\u4f4e" in prompt:
-                steps.append({"operation": "sort", "field": "pb", "direction": "asc"})
+            for field in snapshot_fields:
+                threshold = AnalysisService._resolve_prompt_numeric_threshold(prompt, field)
+                if threshold is not None:
+                    comparison, value = threshold
+                    steps.append({"operation": "filter", "field": field, "comparison": comparison, "value": value})
+            for alias, field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items():
+                direction_match = re.search(
+                    rf"{re.escape(alias)}.{{0,4}}(最低|最小|最少|最高|最大|最多)",
+                    prompt,
+                    re.IGNORECASE,
+                )
+                if direction_match is not None:
+                    direction = "asc" if direction_match.group(1) in {"最低", "最小", "最少"} else "desc"
+                    steps.append({"operation": "sort", "field": field, "direction": direction})
+                    break
         limit_match = re.search(r"(?:Top|top|\u524d)\s*(\d+)", prompt)
         if limit_match:
             steps.append({"operation": "limit", "count": int(limit_match.group(1))})
@@ -5422,19 +5444,7 @@ class AnalysisService:
         if operation is None:
             return
         query = next((query for query in plan.queries if query.operation == operation), None)
-        security_code = None
-        code_match = re.search(
-            r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)",
-            prompt.upper(),
-        )
-        if code_match:
-            security_code = code_match.group(0)
-        elif "Kweichow Moutai" in prompt or "\u8d35\u5dde\u8305\u53f0" in prompt:
-            security_code = "600519.SH"
-        elif "Ping An Bank" in prompt or "\u5e73\u5b89\u94f6\u884c" in prompt:
-            security_code = "000001.SZ"
-        elif "China Ping An" in prompt or "\u4e2d\u56fd\u5e73\u5b89" in prompt:
-            security_code = "601318.SH"
+        security_code = AnalysisService._resolve_prompt_security_code(prompt)
         if operation == "stk_holdertrade" and security_code is None:
             plan.feasibility = "unsupported"
             plan.queries = []
@@ -5496,11 +5506,6 @@ class AnalysisService:
             if len(interpreted_dates) >= 2:
                 params["start_date"] = interpreted_dates[-2].replace("-", "")
                 params["end_date"] = interpreted_dates[-1].replace("-", "")
-            elif operation == "share_float" and year_match and "September" in prompt:
-                params.update({
-                    "start_date": f"{year_match.group(1)}0901",
-                    "end_date": f"{year_match.group(1)}0930",
-                })
             if operation == "forecast" and year_match and any(
                 term in prompt for term in ("H1", "\u4e0a\u534a\u5e74")
             ):
@@ -6107,6 +6112,45 @@ class AnalysisService:
             if field not in {resolved_field for _, resolved_field in resolved}:
                 resolved.append((start, field))
         return resolved
+
+    @staticmethod
+    def _resolve_prompt_numeric_threshold(
+        prompt: str,
+        field: str,
+    ) -> Optional[tuple[str, float]]:
+        """Resolve one explicit numeric field threshold with provider units."""
+        aliases = [
+            alias
+            for alias, alias_field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items()
+            if alias_field == field
+        ]
+        for alias in sorted(aliases, key=len, reverse=True):
+            match = re.search(
+                rf"{re.escape(alias)}(?:\s*为正且)?\s*"
+                rf"(超过|大于|高于|不少于|低于|小于|少于|不超过|"
+                rf"above|below|at\s+least|at\s+most|>=|<=|>|<)\s*"
+                rf"(\d+(?:\.\d+)?)\s*(亿|万|元)?",
+                prompt,
+                re.IGNORECASE,
+            )
+            if match is None:
+                continue
+            operator, raw_value, unit = match.groups()
+            normalized_operator = operator.casefold().replace("  ", " ")
+            comparison = (
+                "gt"
+                if normalized_operator in {"超过", "大于", "高于", "above", ">"}
+                else "ge"
+                if normalized_operator in {"不少于", "at least", ">="}
+                else "le"
+                if normalized_operator in {"不超过", "at most", "<="}
+                else "lt"
+            )
+            value = float(raw_value)
+            if field in {"total_mv", "circ_mv"}:
+                value *= {"亿": 10_000, "万": 1, "元": 0.0001, None: 1}[unit]
+            return comparison, value
+        return None
 
     @staticmethod
     def _compile_valuation_period_return(plan: QueryPlan, prompt: str) -> None:
@@ -7011,6 +7055,58 @@ class AnalysisService:
             )
         context.append("</trusted_analysis_window>")
         return f"{prompt}\n\n" + "\n".join(context)
+
+    def _append_resolved_security_code(self, request_id: str, prompt: str) -> str:
+        """Append a trusted code when one listed security name is explicit."""
+        if (
+            re.search(r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)", prompt.upper())
+            or not self._provider.supports("stock_basic")
+        ):
+            return prompt
+        frame = self._provider.query(
+            "stock_basic",
+            {"list_status": "L"},
+            ["ts_code", "symbol", "name"],
+            api_route="/analysis-planning",
+            request_id=request_id,
+            query_id="security-name-resolution",
+        )
+        normalized_prompt = prompt.casefold()
+        matches = []
+        for row in frame.to_dict(orient="records"):
+            name = str(row.get("name") or "").strip()
+            code = str(row.get("ts_code") or "").strip().upper()
+            if len(name) >= 2 and name.casefold() in normalized_prompt and code:
+                matches.append((len(name), name, code))
+        if not matches:
+            return prompt
+        longest_length = max(length for length, _, _ in matches)
+        longest_matches = {
+            (name, code)
+            for length, name, code in matches
+            if length == longest_length
+        }
+        if len(longest_matches) != 1:
+            raise ValueError("The security name is ambiguous in the listed-stock catalog.")
+        name, code = longest_matches.pop()
+        return (
+            f"{prompt}\n{TRUSTED_SECURITY_START}\n"
+            f"name={name}\nts_code={code}\n{TRUSTED_SECURITY_END}"
+        )
+
+    @staticmethod
+    def _resolve_prompt_security_code(prompt: str) -> Optional[str]:
+        """Return an explicit or trusted catalog-resolved security code."""
+        code_match = re.search(r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)", prompt.upper())
+        if code_match is not None:
+            return code_match.group(0)
+        trusted_match = re.search(
+            rf"{re.escape(TRUSTED_SECURITY_START)}.*?ts_code="
+            rf"(\d{{6}}\.(?:SH|SZ|BJ)).*?{re.escape(TRUSTED_SECURITY_END)}",
+            prompt,
+            re.DOTALL,
+        )
+        return trusted_match.group(1) if trusted_match is not None else None
 
     def _latest_completed_trading_date(
         self,

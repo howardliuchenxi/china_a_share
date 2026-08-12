@@ -813,6 +813,36 @@ def test_year_to_date_prompt_uses_the_completed_trading_year():
     assert "event_end_date=20260807" in enriched
 
 
+def test_security_name_resolution_uses_the_provider_catalog_for_any_company():
+    provider = FakeMarketDataProvider(
+        frame=pd.DataFrame(),
+        stock_frame=pd.DataFrame(
+            [
+                {
+                    "ts_code": "688981.SH",
+                    "symbol": "688981",
+                    "name": "中芯国际",
+                }
+            ]
+        ),
+    )
+    service = AnalysisService(
+        Mock(),
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+
+    enriched = service._append_resolved_security_code(
+        "request-security-name",
+        "比较中芯国际最近三年的财务指标",
+    )
+
+    assert "name=中芯国际" in enriched
+    assert "ts_code=688981.SH" in enriched
+    assert AnalysisService._resolve_prompt_security_code(enriched) == "688981.SH"
+
+
 def test_dividend_rejects_non_native_provider_parameters():
     validator = ASharePlanValidator(FakeMarketDataProvider())
 
@@ -4054,7 +4084,9 @@ def test_workflow_precompiles_security_moneyflow_comparison():
             "<trusted_analysis_window>\n"
             "event_start_date=20260707\n"
             "event_end_date=20260807\n"
-            "</trusted_analysis_window>"
+            "</trusted_analysis_window>\n"
+            "<trusted_security>\nname=贵州茅台\nts_code=600519.SH\n"
+            "</trusted_security>"
         )
     )
 
@@ -4080,7 +4112,9 @@ def test_workflow_precompiles_cross_statement_financial_comparison():
             "<trusted_analysis_window>\n"
             "event_start_date=20230807\n"
             "event_end_date=20260807\n"
-            "</trusted_analysis_window>"
+            "</trusted_analysis_window>\n"
+            "<trusted_security>\nname=中国平安\nts_code=601318.SH\n"
+            "</trusted_security>"
         )
     )
 
@@ -4254,7 +4288,9 @@ def test_workflow_precompiles_product_segment_ranking():
             "<trusted_analysis_window>\n"
             "event_start_date=20260807\n"
             "event_end_date=20260807\n"
-            "</trusted_analysis_window>"
+            "</trusted_analysis_window>\n"
+            "<trusted_security>\nname=贵州茅台\nts_code=600519.SH\n"
+            "</trusted_security>"
         )
     )
 
@@ -4267,9 +4303,22 @@ def test_workflow_precompiles_product_segment_ranking():
     assert result.result_pipeline.steps[-1].count == 1
 
 
+def test_market_cap_threshold_conversion_uses_the_prompt_value_and_unit():
+    assert AnalysisService._resolve_prompt_numeric_threshold(
+        "总市值超过500亿",
+        "total_mv",
+    ) == ("gt", 5_000_000)
+    assert AnalysisService._resolve_prompt_numeric_threshold(
+        "总市值不超过800000万元",
+        "total_mv",
+    ) == ("le", 800_000)
+
+
 def test_workflow_precompiles_geographic_business_segments():
     result = AnalysisService._compile_known_request(
-        "List Ping An Bank's domestic and overseas segment revenue for 2025."
+        "List Ping An Bank's domestic and overseas segment revenue for 2025.\n"
+        "<trusted_security>\nname=Ping An Bank\nts_code=000001.SZ\n"
+        "</trusted_security>"
     )
 
     assert result is not None
