@@ -3850,6 +3850,33 @@ def test_workflow_keeps_explicit_market_cap_selection_as_snapshot_ranking():
     ASharePlanValidator(FakeMarketDataProvider()).validate(result)
 
 
+def test_workflow_resolves_multiple_daily_basic_annotations_from_shared_aliases():
+    result = AnalysisService._compile_known_request(
+        "大A今年6月涨幅最高的前10只，附上换手率、量比和股息率\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260601\n"
+        "event_end_date=20260630\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.queries[1].fields == [
+        "ts_code",
+        "turnover_rate",
+        "volume_ratio",
+        "dv_ratio",
+    ]
+    sort_step, limit_step, join_step = result.result_pipeline.steps
+    assert (sort_step.field, sort_step.direction) == ("period_return_pct", "desc")
+    assert limit_step.count == 10
+    assert join_step.fields == {
+        "turnover_rate": "turnover_rate",
+        "volume_ratio": "volume_ratio",
+        "dv_ratio": "dv_ratio",
+    }
+    ASharePlanValidator(FakeMarketDataProvider()).validate(result)
+
+
 def test_workflow_preserves_precompiled_return_ranking_during_normalization():
     prompt = (
         "\u5927A\u5728\u4eca\u5e746\u6708\u4e0a\u6da8\u6700\u591a\u7684\u80a1\u7968\u524d\u5341\uff0c\u5bf9\u5e94\u7684\u5e02\u76c8\u7387\u4e5f\u6807\u8bb0\u4e0b\n"

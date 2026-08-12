@@ -116,6 +116,40 @@ RANKING_METRIC_PROMPT_ALIASES = {
     "pe": {"pe", "pe_ttm"},
     "pb": {"pb"},
 }
+DAILY_BASIC_PROMPT_FIELD_ALIASES = {
+    "市盈率ttm": "pe_ttm",
+    "市盈率": "pe",
+    "市净率": "pb",
+    "市销率ttm": "ps_ttm",
+    "市销率": "ps",
+    "股息率ttm": "dv_ttm",
+    "股息率": "dv_ratio",
+    "总市值": "total_mv",
+    "流通市值": "circ_mv",
+    "自由流通股本": "free_share",
+    "流通股本": "float_share",
+    "总股本": "total_share",
+    "换手率(自由流通股)": "turnover_rate_f",
+    "换手率": "turnover_rate",
+    "量比": "volume_ratio",
+    "market cap": "total_mv",
+    "pe ttm": "pe_ttm",
+    "pe_ttm": "pe_ttm",
+    "pe": "pe",
+    "pb": "pb",
+    "ps_ttm": "ps_ttm",
+    "ps": "ps",
+    "dv_ttm": "dv_ttm",
+    "dv_ratio": "dv_ratio",
+    "total_mv": "total_mv",
+    "circ_mv": "circ_mv",
+    "free_share": "free_share",
+    "float_share": "float_share",
+    "total_share": "total_share",
+    "turnover_rate_f": "turnover_rate_f",
+    "turnover_rate": "turnover_rate",
+    "volume_ratio": "volume_ratio",
+}
 CHINESE_DIGITS = {
     "零": 0,
     "一": 1,
@@ -2381,19 +2415,8 @@ class AnalysisService:
         normalized_prompt = prompt.casefold()
         snapshot_positions = [
             position
-            for token in (
-                "\u5e02\u76c8\u7387",
-                "\u5e02\u51c0\u7387",
-                "\u603b\u5e02\u503c",
-                "\u6d41\u901a\u5e02\u503c",
-                "market cap",
-            )
-            if (position := normalized_prompt.find(token)) >= 0
+            for position, _ in AnalysisService._resolve_prompt_snapshot_fields(prompt)
         ]
-        snapshot_positions.extend(
-            match.start()
-            for match in re.finditer(r"\b(?:pe|pb)\b", normalized_prompt)
-        )
         return_positions = [
             position
             for token in (
@@ -6057,6 +6080,35 @@ class AnalysisService:
             requirement.status = "covered"
 
     @staticmethod
+    def _resolve_prompt_snapshot_fields(prompt: str) -> List[tuple[int, str]]:
+        """Resolve daily-basic fields from the shared prompt alias catalog."""
+        normalized_prompt = prompt.casefold()
+        candidates = []
+        for alias, field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items():
+            pattern = re.escape(alias.casefold())
+            if alias[0].isascii() and alias[0].isalnum():
+                pattern = rf"(?<![a-z0-9_]){pattern}(?![a-z0-9_])"
+            candidates.extend(
+                (match.start(), match.end(), field)
+                for match in re.finditer(pattern, normalized_prompt)
+            )
+        resolved = []
+        occupied_spans = []
+        for start, end, field in sorted(
+            candidates,
+            key=lambda candidate: (candidate[0], -(candidate[1] - candidate[0])),
+        ):
+            if any(
+                start < used_end and end > used_start
+                for used_start, used_end in occupied_spans
+            ):
+                continue
+            occupied_spans.append((start, end))
+            if field not in {resolved_field for _, resolved_field in resolved}:
+                resolved.append((start, field))
+        return resolved
+
+    @staticmethod
     def _compile_valuation_period_return(plan: QueryPlan, prompt: str) -> None:
         """Compile snapshot annotations and period returns into one result."""
         if (
@@ -6067,18 +6119,10 @@ class AnalysisService:
             # ranking. Preserve that completed plan when request normalization
             # invokes the compiler again, or PE would incorrectly become primary.
             return
-        prompt_upper = prompt.upper()
-        is_pe = "PE" in prompt_upper or "\u5e02\u76c8\u7387" in prompt
-        is_pb = "PB" in prompt_upper or "\u5e02\u51c0\u7387" in prompt
-        snapshot_fields = []
-        if is_pe:
-            snapshot_fields.append("pe")
-        if is_pb:
-            snapshot_fields.append("pb")
-        if "\u603b\u5e02\u503c" in prompt or "MARKET CAP" in prompt_upper:
-            snapshot_fields.append("total_mv")
-        if "\u6d41\u901a\u5e02\u503c" in prompt:
-            snapshot_fields.append("circ_mv")
+        snapshot_fields = [
+            field
+            for _, field in AnalysisService._resolve_prompt_snapshot_fields(prompt)
+        ]
         if not (
             snapshot_fields
             and any(
@@ -6096,9 +6140,7 @@ class AnalysisService:
         ):
             return
         selection_field = snapshot_fields[0]
-        if selection_field == "pb":
-            selection_direction = "asc"
-        elif selection_field in {"total_mv", "circ_mv"} and any(
+        if any(
             term in prompt for term in ("\u6700\u4f4e", "\u6700\u5c0f", "\u6700\u5c11")
         ):
             selection_direction = "asc"
