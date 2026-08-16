@@ -174,6 +174,23 @@ class AnalysisImage(BaseModel):
         return value
 
 
+class AnalysisConversationTurn(BaseModel):
+    """One completed analysis turn supplied as bounded follow-up context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        min_length=1,
+        max_length=1_000,
+        description="Exact user request from one preceding analysis turn.",
+    )
+    interpretation: str = Field(
+        min_length=1,
+        max_length=1_000,
+        description="Validated plan interpretation returned for that preceding turn.",
+    )
+
+
 class AnalysisRequest(BaseModel):
     """Natural-language request submitted by the web client."""
 
@@ -188,6 +205,29 @@ class AnalysisRequest(BaseModel):
         default=None,
         description="Optional screenshot interpreted before the query plan is generated.",
     )
+    conversation: List[AnalysisConversationTurn] = Field(
+        default_factory=list,
+        max_length=3,
+        description=(
+            "Completed preceding turns used only to resolve follow-up references; "
+            "the current prompt still produces a complete newly validated plan."
+        ),
+    )
+    mode: Literal["plan", "execute"] = Field(
+        default="execute",
+        description="Whether to preview a validated plan or execute a confirmed plan.",
+    )
+    confirmed_plan: Optional["QueryPlan"] = Field(
+        default=None,
+        description="Exact previewed plan approved by the user for execution.",
+    )
+
+    @model_validator(mode="after")
+    def validate_phase_contract(self) -> "AnalysisRequest":
+        """Keep preview requests free of client-supplied execution plans."""
+        if self.mode == "plan" and self.confirmed_plan is not None:
+            raise ValueError("plan mode must not include confirmed_plan")
+        return self
 
 
 class DataOperation(BaseModel):

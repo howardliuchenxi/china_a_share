@@ -2,6 +2,7 @@
 
 import copy
 from datetime import date, datetime, timedelta
+import json
 import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
@@ -2108,19 +2109,20 @@ class AnalysisService:
         try:
             plan = self._compile_known_request(planning_request.prompt)
             if plan is None:
+                planner_request = self._with_conversation_context(planning_request)
                 validated_planner = getattr(self._planner, "plan_validated", None)
                 if callable(validated_planner):
                     plan = validated_planner(
-                        planning_request,
+                        planner_request,
                         operations,
                         lambda candidate: self._validate_planner_candidate(
                             candidate,
-                            planning_request.prompt,
+                            planner_request.prompt,
                             original_prompt,
                         ),
                     )
                 else:
-                    plan = self._planner.plan(planning_request, operations)
+                    plan = self._planner.plan(planner_request, operations)
             normalized = self._normalize_plan_for_request(
                 plan,
                 planning_request.prompt,
@@ -2155,6 +2157,46 @@ class AnalysisService:
             return plan
         finally:
             ANALYSIS_REQUEST_ID.reset(context_token)
+
+    @staticmethod
+    def _with_conversation_context(request: AnalysisRequest) -> AnalysisRequest:
+        """Expose bounded prior turns to the planner without changing execution state."""
+        if not request.conversation:
+            return request
+        context_lines = [
+            "<analysis_conversation_context>",
+            "Prior turns are context only. Resolve references in the current request, "
+            "but return a complete standalone plan for the current request. The most "
+            "recent current request overrides every conflicting prior choice.",
+        ]
+        for index, turn in enumerate(request.conversation, start=1):
+            context_lines.extend(
+                [
+                    f"<turn index=\"{index}\">",
+                    f"user_request={json.dumps(turn.prompt, ensure_ascii=False)}",
+                    "validated_interpretation="
+                    f"{json.dumps(turn.interpretation, ensure_ascii=False)}",
+                    "</turn>",
+                ]
+            )
+        context_lines.extend(
+            [
+                "</analysis_conversation_context>",
+                "<current_analysis_request>",
+                request.prompt,
+                "</current_analysis_request>",
+            ]
+        )
+        # The bounded internal context can exceed the public single-prompt limit;
+        # it is assembled only from already validated fields and never re-accepted
+        # as client input.
+        return AnalysisRequest.model_construct(
+            prompt="\n".join(context_lines),
+            image=None,
+            conversation=[],
+            mode=request.mode,
+            confirmed_plan=None,
+        )
 
     @staticmethod
     def _compile_known_request(prompt: str) -> Optional[QueryPlan]:
@@ -3351,7 +3393,8 @@ class AnalysisService:
         )
         try:
             planning_request = self._prepare_planning_request(request_id, request)
-            operations = self._provider.search_operations(planning_request.prompt)
+            discovery_prompt = self._with_conversation_context(planning_request).prompt
+            operations = self._provider.search_operations(discovery_prompt)
             if any(
                 operation.name in SECURITY_SCOPED_OPERATIONS
                 for operation in operations
@@ -3360,7 +3403,9 @@ class AnalysisService:
                     prompt=self._append_resolved_security_code(
                         request_id,
                         planning_request.prompt,
-                    )
+                    ),
+                    conversation=request.conversation,
+                    mode=request.mode,
                 )
             decision_trace.append(
                 DecisionTraceStep(
@@ -3375,19 +3420,29 @@ class AnalysisService:
                     evidence=[f"Candidate operations: {len(operations)}"],
                 )
             )
-            plan = self._plan_with_request_context(
-                request_id,
-                planning_request,
-                request.prompt,
-                operations,
-            )
-            self._normalize_latest_plan_dates(
-                plan,
-                self._latest_completed_trading_date(
+            if request.confirmed_plan is not None:
+                # Confirmed plans remain untrusted client input and must pass the
+                # same normalization, intent coverage, and allowlist validation.
+                plan = self._validate_planner_candidate(
+                    request.confirmed_plan.model_copy(deep=True),
+                    planning_request.prompt,
+                    request.prompt,
+                )
+            else:
+                plan = self._plan_with_request_context(
                     request_id,
-                    datetime.now(ZoneInfo("Asia/Shanghai")),
-                ),
-            )
+                    planning_request,
+                    request.prompt,
+                    operations,
+                )
+            if request.confirmed_plan is None:
+                self._normalize_latest_plan_dates(
+                    plan,
+                    self._latest_completed_trading_date(
+                        request_id,
+                        datetime.now(ZoneInfo("Asia/Shanghai")),
+                    ),
+                )
             planning_has_disclosures = bool(
                 plan.feasibility == "supported" and plan.limitations
             )
@@ -3554,6 +3609,41 @@ class AnalysisService:
                 planner=self._planner.name,
                 data_provider=self._provider.name,
                 status="error",
+                plan=validated_plan,
+                decision_trace=decision_trace,
+            )
+
+        if request.mode == "plan":
+            decision_trace.extend(
+                [
+                    DecisionTraceStep(
+                        stage="execution",
+                        status="skipped",
+                        title="Execution awaiting confirmation",
+                        detail=(
+                            "No market-data query was issued before explicit user "
+                            "confirmation."
+                        ),
+                    ),
+                    DecisionTraceStep(
+                        stage="result",
+                        status="success",
+                        title="Plan ready for review",
+                        detail="The validated complete plan can now be confirmed or revised.",
+                    ),
+                ]
+            )
+            self._log_termination(
+                request_id,
+                reason="plan_preview_ready",
+                status="success",
+                plan_feasibility=validated_plan.feasibility,
+            )
+            return AnalysisResponse(
+                request_id=request_id,
+                planner=self._planner.name,
+                data_provider=self._provider.name,
+                status="success",
                 plan=validated_plan,
                 decision_trace=decision_trace,
             )
@@ -6799,7 +6889,7 @@ class AnalysisService:
         """Return the text-only request consumed by provider discovery and planning."""
         prompt = self._append_resolved_time_range(request_id, request.prompt)
         if request.image is None:
-            return AnalysisRequest(prompt=prompt)
+            return AnalysisRequest(prompt=prompt, conversation=request.conversation)
         if self._vision_analyzer is None:
             raise VisionError(
                 source="glm",
@@ -6825,7 +6915,10 @@ class AnalysisService:
             f"{SCREENSHOT_EVIDENCE_END}"
         )
         try:
-            planning_request = AnalysisRequest(prompt=enriched_prompt)
+            planning_request = AnalysisRequest(
+                prompt=enriched_prompt,
+                conversation=request.conversation,
+            )
         except ValueError as exc:
             logger.error(
                 "vision_context_invalid request_id=%s provider=%s",

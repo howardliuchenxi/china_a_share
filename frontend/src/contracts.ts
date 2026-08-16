@@ -20,6 +20,19 @@ export interface AnalysisRequest {
   prompt: string;
   /** Optional screenshot interpreted before the query plan is generated. */
   image?: AnalysisImage;
+  /** Completed preceding turns used only to resolve follow-up references. */
+  conversation?: AnalysisConversationTurn[];
+  /** Whether to preview a plan or execute the exact plan approved by the user. */
+  mode?: "plan" | "execute";
+  /** Exact previewed plan approved by the user for execution. */
+  confirmed_plan?: QueryPlan;
+}
+
+export interface AnalysisConversationTurn {
+  /** Exact user request from one preceding analysis turn. */
+  prompt: string;
+  /** Validated plan interpretation returned for that preceding turn. */
+  interpretation: string;
 }
 
 export interface ConditionalCount {

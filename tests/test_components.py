@@ -18,6 +18,7 @@ from china_a_share.application.workflow import (
 )
 from china_a_share.core.contracts import (
     AnswerContract,
+    AnalysisConversationTurn,
     AnalysisIntent,
     AnalysisRequest,
     AnalysisStatusReason,
@@ -124,6 +125,20 @@ class FakeMarketDataProvider:
         return self.frame
 
 
+class FixedQueryPlanner:
+    """Return one isolated plan and record requests supplied by the workflow."""
+
+    name = "fixed"
+
+    def __init__(self, plan):
+        self._plan = plan
+        self.requests = []
+
+    def plan(self, request, candidate_operations):
+        self.requests.append(request)
+        return self._plan.model_copy(deep=True)
+
+
 def make_daily_plan():
     return QueryPlan(
         interpretation="Count daily market direction.",
@@ -149,6 +164,66 @@ def make_daily_plan():
             )
         ],
     )
+
+
+def test_plan_mode_builds_context_without_issuing_market_data_queries():
+    provider = FakeMarketDataProvider(frame=pd.DataFrame())
+    planner = FixedQueryPlanner(make_daily_plan())
+    service = AnalysisService(
+        planner,
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+
+    response = service.analyze(
+        request_id="plan-preview",
+        request=AnalysisRequest(
+            prompt="Use the same date and include unchanged securities.",
+            mode="plan",
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt="Count advancing and declining securities on 2026-07-17.",
+                    interpretation="Count market direction on 2026-07-17.",
+                )
+            ],
+        ),
+        api_route="/api/analysis",
+    )
+
+    assert response.status.value == "success"
+    assert response.plan is not None
+    assert response.results == []
+    assert provider.calls == []
+    assert "<analysis_conversation_context>" in planner.requests[0].prompt
+    assert "<current_analysis_request>" in planner.requests[0].prompt
+
+
+def test_execute_mode_revalidates_and_runs_the_confirmed_plan():
+    provider = FakeMarketDataProvider(
+        frame=pd.DataFrame([{"ts_code": "000001.SZ", "change": 1.5}])
+    )
+    planner = FixedQueryPlanner(make_daily_plan())
+    service = AnalysisService(
+        planner,
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+
+    response = service.analyze(
+        request_id="confirmed-execution",
+        request=AnalysisRequest(
+            prompt="Count advancing and declining securities.",
+            mode="execute",
+            confirmed_plan=make_daily_plan(),
+        ),
+        api_route="/api/analysis",
+    )
+
+    assert response.status.value == "success"
+    assert provider.calls == ["daily"]
+    assert planner.requests == []
 
 
 def test_catalog_and_validator_accept_stock_operation_plan():

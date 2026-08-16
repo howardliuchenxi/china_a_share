@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from china_a_share.core.contracts import (
+    AnalysisConversationTurn,
     AnalysisImage,
     AnalysisIntent,
     AnalysisRequest,
@@ -152,6 +153,33 @@ def test_analysis_request_accepts_one_supported_screenshot():
     assert request.image is not None
     assert request.image.media_type == "image/png"
     assert request.image.base64_data == "c2NyZWVuc2hvdA=="
+
+
+def test_analysis_request_bounds_completed_conversation_context():
+    turns = [
+        AnalysisConversationTurn(
+            prompt=f"Analyze security {index}.",
+            interpretation=f"Analyze validated security {index} data.",
+        )
+        for index in range(3)
+    ]
+
+    request = AnalysisRequest(prompt="Compare them.", mode="plan", conversation=turns)
+
+    assert request.mode == "plan"
+    assert request.conversation == turns
+    with pytest.raises(ValidationError):
+        AnalysisRequest(
+            prompt="Compare them.",
+            mode="plan",
+            conversation=turns
+            + [
+                AnalysisConversationTurn(
+                    prompt="Analyze one more security.",
+                    interpretation="Analyze one additional validated security.",
+                )
+            ],
+        )
 
 
 def test_analysis_image_rejects_malformed_base64():

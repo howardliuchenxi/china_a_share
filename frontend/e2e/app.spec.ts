@@ -94,6 +94,45 @@ test("custom prompt input enables submit button", async ({ page }) => {
   await expect(submitButton).toBeEnabled();
 });
 
+test("analysis requires an explicit plan confirmation before execution", async ({ page }) => {
+  const requests: Array<Record<string, unknown>> = [];
+  await page.route("**/api/analysis", async (route) => {
+    const request = route.request().postDataJSON() as Record<string, unknown>;
+    requests.push(request);
+    const isPreview = request.mode === "plan";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...successWithMultiRowFixture,
+        results: isPreview ? [] : successWithMultiRowFixture.results,
+      }),
+    });
+  });
+  await page.route("**/api/health", (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "ok" }),
+    });
+  });
+  await page.goto("/analysis");
+
+  await page.locator("#analysis-prompt").fill("查询2026年7月17日A股涨跌分布");
+  await page.getByRole("button", { name: "理解意图并生成计划" }).click();
+
+  await expect(page.getByRole("region", { name: "执行确认" })).toBeVisible();
+  expect(requests).toHaveLength(1);
+  expect(requests[0].mode).toBe("plan");
+
+  await page.getByRole("button", { name: "确认意图并执行" }).click();
+
+  await expect(page.locator(".result-block")).toBeVisible();
+  expect(requests).toHaveLength(2);
+  expect(requests[1].mode).toBe("execute");
+  expect(requests[1].confirmed_plan).toEqual(successWithMultiRowFixture.plan);
+});
+
 test("A-share result codes link to Eastmoney verification pages", async ({
   page,
 }) => {

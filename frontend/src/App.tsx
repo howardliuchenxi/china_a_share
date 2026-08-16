@@ -12,6 +12,7 @@ import { DiscoveryPage } from "./DiscoveryPage";
 import { EndToEndCasesPage } from "./EndToEndCasesPage";
 import { TermHelp } from "./TermHelp";
 import type {
+  AnalysisConversationTurn,
   AnalysisImage,
   AnalysisResponse,
   AnalysisTaskProgress,
@@ -44,6 +45,7 @@ const SUPPORTED_ANALYSIS_IMAGE_TYPES = new Set([
 const RESULT_PAGE_SIZE = 100;
 const MAX_PROMPT_HISTORY_ITEMS = 20;
 const PROMPT_HISTORY_STORAGE_KEY = "china-a-share.prompt-history";
+const MAX_CONVERSATION_TURNS = 3;
 import { DATA_DICTIONARY_ENTRIES, resultColumnMetadata } from "./dataDictionary";
 
 const errorSourceLabels: Record<string, string> = {
@@ -1066,6 +1068,8 @@ export default function App() {
   });
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [response, setResponse] = useState<AnalysisResponse | null>(null);
+  const [plannedPrompt, setPlannedPrompt] = useState("");
+  const [conversationTurns, setConversationTurns] = useState<AnalysisConversationTurn[]>([]);
   const [localError, setLocalError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [taskProgress, setTaskProgress] = useState<AnalysisTaskProgress | null>(null);
@@ -1192,20 +1196,67 @@ export default function App() {
     setLocalError("");
     setResponse(null);
     try {
-      setResponse(
-        await submitAnalysis(
+      const plannedResponse = await submitAnalysis(
           {
             prompt: submittedPrompt,
+            mode: "plan",
+            conversation: conversationTurns,
             ...(analysisImage ? { image: analysisImage } : {}),
           },
           setTaskProgress,
-        ),
-      );
+        );
+      setResponse(plannedResponse);
+      setPlannedPrompt(submittedPrompt);
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "本地请求失败。");
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function executeConfirmedPlan() {
+    const submittedPrompt = plannedPrompt;
+    if (!submittedPrompt || !response?.plan || isLoading) return;
+    setIsLoading(true);
+    setTaskProgress(null);
+    setLocalError("");
+    try {
+      const executedResponse = await submitAnalysis(
+        {
+          prompt: submittedPrompt,
+          mode: "execute",
+          confirmed_plan: response.plan,
+          conversation: conversationTurns,
+        },
+        setTaskProgress,
+      );
+      setResponse(executedResponse);
+      if (executedResponse.plan && executedResponse.status !== "error") {
+        setConversationTurns((turns) => [
+          ...turns,
+          {
+            prompt: submittedPrompt,
+            interpretation: executedResponse.plan!.interpretation,
+          },
+        ].slice(-MAX_CONVERSATION_TURNS));
+        setPrompt("");
+        removeAnalysisImage();
+      }
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "执行请求失败，请重试。");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function startNewConversation() {
+    setConversationTurns([]);
+    setPrompt("");
+    setResponse(null);
+    setPlannedPrompt("");
+    setTaskProgress(null);
+    setLocalError("");
+    removeAnalysisImage();
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1255,7 +1306,23 @@ export default function App() {
 
       {activePage === "analysis" ? <>
       <section className="request-panel" aria-labelledby="request-heading" data-feedback-id="request-panel">
-        <div className="section-heading"><span>01</span><h2 id="request-heading">数据请求</h2></div>
+        <div className="section-heading">
+          <span>01</span><h2 id="request-heading">多轮数据分析</h2>
+          <button type="button" className="new-conversation-button" onClick={startNewConversation}>
+            新对话
+          </button>
+        </div>
+        {conversationTurns.length > 0 && (
+          <ol className="conversation-history" aria-label="当前对话历史">
+            {conversationTurns.map((turn, index) => (
+              <li key={`${index}-${turn.prompt}`}>
+                <span>第 {index + 1} 轮</span>
+                <strong>{turn.prompt}</strong>
+                <p>{turn.interpretation}</p>
+              </li>
+            ))}
+          </ol>
+        )}
         <form onSubmit={handleSubmit}>
           <div className="prompt-controls" style={{ display: "flex", gap: "12px", marginBottom: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <div className="prompt-history" style={{ flex: "1", minWidth: "180px" }}>
@@ -1327,7 +1394,13 @@ export default function App() {
             id="analysis-prompt"
             rows={6}
             value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            onChange={(event) => {
+              setPrompt(event.target.value);
+              if (response?.plan && response.results.length === 0) {
+                setResponse(null);
+                setPlannedPrompt("");
+              }
+            }}
             onPaste={handlePromptPaste}
             placeholder="例如：北京时间2026年7月17日有多少只A股上涨，多少只下跌？"
           />
@@ -1357,7 +1430,11 @@ export default function App() {
               ? taskProgress?.totalItems
                 ? `\u6b63\u5728\u5206\u6790 ${taskProgress.completedItems}/${taskProgress.totalItems}\u2026`
                 : "\u6b63\u5728\u521b\u5efa\u5206\u6790\u4efb\u52a1\u2026"
-              : "\u5f00\u59cb\u5206\u6790"}
+              : response?.plan && response.results.length === 0
+                ? "重新生成计划"
+                : conversationTurns.length > 0
+                  ? "理解追问并生成计划"
+                  : "理解意图并生成计划"}
           </button>
           {isLoading && taskProgress && (
             <p className="task-progress" role="status">
@@ -1401,6 +1478,22 @@ export default function App() {
             onSelectOption={handleClarificationOption}
           />
         )}
+        {response?.plan?.feasibility === "supported"
+          && response.results.length === 0
+          && !response.error && (
+            <div className="execution-confirmation" role="region" aria-label="执行确认">
+              <strong>执行前确认</strong>
+              <p>{response.plan.interpretation}</p>
+              <p>确认后才会调用数据源并执行以上完整计划；如口径不对，请直接修改问题或继续补充条件。</p>
+              <button
+                type="button"
+                disabled={isLoading || isImageReading}
+                onClick={() => void executeConfirmedPlan()}
+              >
+                {isLoading ? "正在执行…" : "确认意图并执行"}
+              </button>
+            </div>
+          )}
         {response?.results && (() => {
           const resultQueryId = response.plan?.answer_contract?.result_query_id;
           if (!resultQueryId) {
@@ -1430,7 +1523,7 @@ export default function App() {
             </>
           );
         })()}
-        {!localError && !response && <p className="empty-output">数据源查询结果将在这里显示。</p>}
+        {!localError && !response && <p className="empty-output">先生成并确认分析计划，数据源查询结果才会在这里显示。</p>}
       </section>
 
       <section className="details-stack" aria-label="查询与执行详情" data-feedback-id="execution-details">
