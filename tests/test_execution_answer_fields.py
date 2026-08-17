@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 from china_a_share.application.workflow import ASharePlanValidator, AnalysisService
@@ -11,6 +12,33 @@ class _CatalogProvider:
     @staticmethod
     def supports(operation: str) -> bool:
         return operation in {"stock_basic", "daily_basic", "dividend"}
+
+
+class _IndustryCatalogProvider:
+    name = "tushare"
+
+    @staticmethod
+    def supports(operation: str) -> bool:
+        return operation == "stock_basic"
+
+    @staticmethod
+    def query(operation, params, fields, **context):
+        assert operation == "stock_basic"
+        assert params == {}
+        assert fields == ["industry"]
+        assert context["query_id"] == "industry-classification-catalog"
+        return pd.DataFrame({"industry": ["通信设备", "银行"]})
+
+
+class _IndustrySelectingPlanner:
+    name = "planner"
+
+    def __init__(self):
+        self.prompts = []
+
+    def generate_text(self, prompt):
+        self.prompts.append(prompt)
+        return '{"industry":"通信设备"}'
 
 
 def _execution_plan(
@@ -217,6 +245,40 @@ def test_industry_valuation_dividend_request_compiles_deterministically(
         "cash_div_tax",
     }
     assert ASharePlanValidator(_CatalogProvider()).validate(plan) is plan
+
+
+def test_industry_resolver_selects_only_a_provider_taxonomy_label():
+    planner = _IndustrySelectingPlanner()
+    service = AnalysisService.__new__(AnalysisService)
+    service._planner = planner
+    service._provider = _IndustryCatalogProvider()
+
+    resolved = service._append_resolved_industry(
+        "industry-request",
+        "A股2026年手机行业，市盈率和分红数据",
+        "A股2026年手机行业，市盈率和分红数据",
+    )
+
+    assert "<trusted_industry_classification>" in resolved
+    assert "industry=通信设备" in resolved
+    assert "手机" in planner.prompts[0]
+    assert "通信设备" in planner.prompts[0]
+
+
+def test_industry_resolver_uses_one_direct_taxonomy_match_without_model_call():
+    planner = _IndustrySelectingPlanner()
+    service = AnalysisService.__new__(AnalysisService)
+    service._planner = planner
+    service._provider = _IndustryCatalogProvider()
+
+    resolved = service._append_resolved_industry(
+        "industry-request",
+        "A股2026年银行行业，市盈率和分红数据",
+        "A股2026年银行行业，市盈率和分红数据",
+    )
+
+    assert "industry=银行" in resolved
+    assert planner.prompts == []
 
 
 @pytest.mark.parametrize(

@@ -264,6 +264,22 @@ def _assert_quality_invariants(
             and aggregation.function == "count_distinct"
             for aggregation in summary.aggregations
         )
+    if "industry_valuation_dividend_table" in invariants:
+        assert plan.answer_contract is not None
+        assert plan.answer_contract.result_kind == "table"
+        expected_fields = {"ts_code", "name", "pe", "cash_div_tax"}
+        assert {output.field for output in plan.answer_contract.outputs} == (
+            expected_fields
+        )
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.answer_contract.result_query_id
+        )
+        assert result.rows
+        assert result.row_count == len(result.rows)
+        assert all(expected_fields.issubset(row) for row in result.rows)
+        assert len({row["ts_code"] for row in result.rows}) == len(result.rows)
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:

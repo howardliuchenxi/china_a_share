@@ -56,6 +56,8 @@ logger = logging.getLogger(__name__)
 
 BACKGROUND_TASK_REQUIRED_ERROR_CODE = "BACKGROUND_TASK_REQUIRED"
 MAX_QUERIES_PER_ANALYSIS = 8
+TRUSTED_INDUSTRY_START = "<trusted_industry_classification>"
+TRUSTED_INDUSTRY_END = "</trusted_industry_classification>"
 MAX_DYNAMIC_HOLDER_QUERIES = 6_000
 FANOUT_RECOVERY_ATTEMPTS = 1
 MAX_BOUNDARY_DATE_PROBES = 10
@@ -5313,6 +5315,13 @@ class AnalysisService:
         """Compile an industry valuation view enriched with annual dividends."""
         normalized_prompt = prompt.casefold()
         industries = ASharePlanValidator._extract_prompt_industries(normalized_prompt)
+        resolved_industry = re.search(
+            rf"{TRUSTED_INDUSTRY_START}\s*industry=(.+?)\s*{TRUSTED_INDUSTRY_END}",
+            prompt,
+            re.DOTALL,
+        )
+        if resolved_industry is not None:
+            industries = {resolved_industry.group(1).strip()}
         year_match = re.search(r"(20\d{2})年", prompt)
         if not (
             industries
@@ -6933,6 +6942,7 @@ class AnalysisService:
     ) -> AnalysisRequest:
         """Return the text-only request consumed by provider discovery and planning."""
         prompt = self._append_resolved_time_range(request_id, request.prompt)
+        prompt = self._append_resolved_industry(request_id, prompt, request.prompt)
         if request.image is None:
             return AnalysisRequest(prompt=prompt, conversation=request.conversation)
         if self._vision_analyzer is None:
@@ -6981,6 +6991,85 @@ class AnalysisService:
             len(description),
         )
         return planning_request
+
+    def _append_resolved_industry(
+        self,
+        request_id: str,
+        prompt: str,
+        user_prompt: str,
+    ) -> str:
+        """Resolve a user industry phrase to one provider-supported classification."""
+        requested = ASharePlanValidator._extract_prompt_industries(user_prompt)
+        generate_text = getattr(self._planner, "generate_text", None)
+        if (
+            len(requested) != 1
+            or not self._provider.supports("stock_basic")
+            or not callable(generate_text)
+        ):
+            return prompt
+        requested_industry = next(iter(requested))
+        catalog = self._provider.query(
+            "stock_basic",
+            {},
+            ["industry"],
+            api_route="/internal/industry-classification",
+            request_id=request_id,
+            query_id="industry-classification-catalog",
+        )
+        candidates = sorted(
+            {
+                str(value).strip()
+                for value in catalog.get("industry", pd.Series(dtype="string")).dropna()
+                if str(value).strip()
+            }
+        )
+        direct_matches = [
+            candidate
+            for candidate in candidates
+            if requested_industry in candidate or candidate in requested_industry
+        ]
+        selected = direct_matches[0] if len(direct_matches) == 1 else None
+        if selected is None and candidates:
+            classification_prompt = (
+                "Map one user-requested A-share industry to exactly one label from "
+                "the supplied provider taxonomy. Return JSON only in the form "
+                '{"industry":"exact supplied label"}. Choose the closest standard '
+                "industry by ordinary business meaning. Never invent, translate, or "
+                "combine labels.\n"
+                f"requested_industry={json.dumps(requested_industry, ensure_ascii=False)}\n"
+                f"allowed_labels={json.dumps(candidates, ensure_ascii=False)}"
+            )
+            raw_selection = generate_text(classification_prompt)
+            payload_match = re.search(r"\{.*\}", raw_selection, re.DOTALL)
+            try:
+                payload = json.loads(payload_match.group(0)) if payload_match else {}
+            except json.JSONDecodeError as exc:
+                logger.error(
+                    "industry_classification_invalid request_id=%s requested_industry=%s",
+                    request_id,
+                    requested_industry,
+                )
+                raise PlanValidationError(
+                    "The industry classification resolver returned invalid JSON."
+                ) from exc
+            candidate = payload.get("industry")
+            if isinstance(candidate, str) and candidate in candidates:
+                selected = candidate
+        if selected is None:
+            raise PlanValidationError(
+                "The requested industry could not be mapped to the provider taxonomy."
+            )
+        logger.info(
+            "industry_classification_resolved request_id=%s requested_industry=%s "
+            "provider_industry=%s",
+            request_id,
+            requested_industry,
+            selected,
+        )
+        return (
+            f"{prompt}\n\n{TRUSTED_INDUSTRY_START}\n"
+            f"industry={selected}\n{TRUSTED_INDUSTRY_END}"
+        )
 
     @staticmethod
     def _validate_planned_time_semantics(

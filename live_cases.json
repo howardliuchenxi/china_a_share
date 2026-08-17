@@ -1478,6 +1478,19 @@
       "source": "reported_regression"
     },
     {
+      "id": "mobile-phone-valuation-and-dividend-table-contract",
+      "name": "mobile_phone_valuation_and_dividend_table_contract",
+      "family": "reported_regression",
+      "prompt": "A股2026年手机行业，市盈率和分红数据",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [],
+      "quality_invariants": [
+        "industry_valuation_dividend_table"
+      ],
+      "source": "reported_regression"
+    },
+    {
       "id": "holder-concentration-derived-field-contract-repair",
       "name": "holder_concentration_derived_field_contract_repair",
       "family": "reported_regression",
