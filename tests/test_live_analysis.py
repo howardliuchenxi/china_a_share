@@ -22,7 +22,11 @@ from china_a_share.cache import (
     NoopDataCacheStore,
 )
 from china_a_share.config import Settings
-from china_a_share.core.contracts import AnalysisRequest, AnalysisStatus
+from china_a_share.core.contracts import (
+    AnalysisConversationTurn,
+    AnalysisRequest,
+    AnalysisStatus,
+)
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
@@ -530,3 +534,51 @@ def test_live_background_fanout_through_http_and_worker(
     assert {"stock_basic", "daily_basic", "dividend"}.issubset(operations)
     assert analysis["results"]
     assert all(result["status"] == "success" for result in analysis["results"])
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
+def test_live_industry_valuation_followup_returns_ranked_security_list(
+    live_analysis_service,
+) -> None:
+    """Verify a follow-up inherits industry scope and preserves list semantics."""
+    response = live_analysis_service.analyze(
+        request_id=f"live-industry-followup-{uuid4()}",
+        request=AnalysisRequest(
+            prompt="只给我市盈率最低的10家公司列表，保留分红数据",
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt="A股2026年手机行业，市盈率和分红数据",
+                    interpretation="Return the requested industry table.",
+                )
+            ],
+        ),
+        api_route="/local-live-industry-followup",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert response.status is AnalysisStatus.SUCCESS, (
+        _failure_message(response),
+        [
+            (result.query_id, result.completeness)
+            for result in response.results
+        ],
+    )
+    assert response.plan is not None
+    assert response.plan.answer_contract is not None
+    result = next(
+        item
+        for item in response.results
+        if item.query_id == response.plan.answer_contract.result_query_id
+    )
+    assert result.row_count == 10
+    assert len({row["ts_code"] for row in result.rows}) == 10
+    pe_values = [row["pe"] for row in result.rows]
+    assert all(value is not None for value in pe_values)
+    assert pe_values == sorted(pe_values)

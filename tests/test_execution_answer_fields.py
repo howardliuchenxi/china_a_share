@@ -2,7 +2,12 @@ import pandas as pd
 import pytest
 
 from china_a_share.application.workflow import ASharePlanValidator, AnalysisService
-from china_a_share.core.contracts import DataOperation, QueryPlan
+from china_a_share.core.contracts import (
+    AnalysisConversationTurn,
+    AnalysisRequest,
+    DataOperation,
+    QueryPlan,
+)
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 
 
@@ -227,6 +232,7 @@ def test_industry_valuation_dividend_request_compiles_deterministically(
         "daily_basic",
         "dividend",
     ]
+    assert plan.queries[0].params == {"list_status": "L"}
     assert plan.queries[0].filters[0].value == expected_industry
     assert [row_filter.value for row_filter in plan.queries[2].filters] == [
         f"{expected_year}0101",
@@ -256,11 +262,12 @@ def test_industry_resolver_selects_only_a_provider_taxonomy_label():
     resolved = service._append_resolved_industry(
         "industry-request",
         "A股2026年手机行业，市盈率和分红数据",
-        "A股2026年手机行业，市盈率和分红数据",
+        AnalysisRequest(prompt="A股2026年手机行业，市盈率和分红数据"),
     )
 
     assert "<trusted_industry_classification>" in resolved
     assert "industry=通信设备" in resolved
+    assert "year=2026" in resolved
     assert "手机" in planner.prompts[0]
     assert "通信设备" in planner.prompts[0]
 
@@ -274,11 +281,67 @@ def test_industry_resolver_uses_one_direct_taxonomy_match_without_model_call():
     resolved = service._append_resolved_industry(
         "industry-request",
         "A股2026年银行行业，市盈率和分红数据",
-        "A股2026年银行行业，市盈率和分红数据",
+        AnalysisRequest(prompt="A股2026年银行行业，市盈率和分红数据"),
     )
 
     assert "industry=银行" in resolved
     assert planner.prompts == []
+
+
+def test_industry_resolver_inherits_the_latest_explicit_conversation_scope():
+    planner = _IndustrySelectingPlanner()
+    service = AnalysisService.__new__(AnalysisService)
+    service._planner = planner
+    service._provider = _IndustryCatalogProvider()
+    request = AnalysisRequest(
+        prompt="只给我市盈率最低的10家公司列表，保留分红数据",
+        conversation=[
+            AnalysisConversationTurn(
+                prompt="A股2026年手机行业，市盈率和分红数据",
+                interpretation="Return the requested industry table.",
+            )
+        ],
+    )
+
+    resolved = service._append_resolved_industry(
+        "industry-followup",
+        request.prompt,
+        request,
+    )
+
+    assert "industry=通信设备" in resolved
+    assert "year=2026" in resolved
+
+
+def test_industry_valuation_followup_compiles_ranked_table_from_trusted_scope():
+    plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
+    prompt = (
+        "只给我市盈率最低的10家公司列表，保留分红数据\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260814\n"
+        "event_end_date=20260814\n"
+        "</trusted_analysis_window>\n"
+        "<trusted_industry_classification>\n"
+        "industry=通信设备\n"
+        "year=2026\n"
+        "</trusted_industry_classification>"
+    )
+
+    AnalysisService._normalize_plan_for_request(plan, prompt)
+
+    assert plan.queries[0].filters[0].value == "通信设备"
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "latest_by_group",
+        "join_fields",
+        "drop_missing",
+        "sort",
+        "limit",
+        "join_fields",
+        "select_fields",
+    ]
+    assert plan.result_pipeline.steps[3].direction == "asc"
+    assert plan.result_pipeline.steps[4].count == 10
+    assert ASharePlanValidator(_CatalogProvider()).validate(plan) is plan
 
 
 @pytest.mark.parametrize(

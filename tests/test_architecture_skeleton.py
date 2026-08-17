@@ -168,6 +168,15 @@ def test_share_float_capability_resolves_bounded_range_to_exact_date_fanout():
     assert shape.completeness_policy == "all_dates_complete"
 
 
+def test_stock_basic_capability_audits_the_listed_security_universe():
+    shape = resolve_query_shape("stock_basic", {"list_status": "L"})
+
+    assert shape is not None
+    assert shape.shape_id == "listed_security_universe"
+    assert shape.execution_strategy == "provider_query"
+    assert shape.completeness_policy == "paginate_until_short_page"
+
+
 def test_registered_capability_rejects_partial_date_range():
     with pytest.raises(ValueError, match="start_date and end_date together"):
         resolve_query_shape("share_float", {"start_date": "20261001"})

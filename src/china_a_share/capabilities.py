@@ -58,6 +58,34 @@ COMMON_PAGINATION_PARAMS = ("limit", "offset")
 
 
 PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
+    "stock_basic": ProviderOperationCapability(
+        operation="stock_basic",
+        allowed_params=(
+            "ts_code",
+            "name",
+            "exchange",
+            "market",
+            "is_hs",
+            "list_status",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="listed_security_universe",
+                required_params=("list_status",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="all_security_reference",
+                required_params=(),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code",),
+    ),
     "daily": ProviderOperationCapability(
         operation="daily",
         allowed_params=(

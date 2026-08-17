@@ -544,7 +544,7 @@ class ASharePlanValidator:
         if (
             "join_fields" in operations
             and operations.index("sort") < operations.index("limit")
-            < operations.index("join_fields")
+            and "join_fields" in operations[operations.index("limit") + 1 :]
         ):
             # A composed ranking may deliberately select a snapshot cohort before
             # enriching it with one derived row per security. The local pipeline
@@ -4433,6 +4433,13 @@ class AnalysisService:
                         ),
                         "missing_count": missing_count,
                     },
+                    completeness="complete",
+                    completeness_evidence=[
+                        "execution_strategy=security_fanout",
+                        f"covered_securities={universe_count}",
+                        "completeness_policy=all_security_queries_completed",
+                    ],
+                    retrieval_partition_count=universe_count,
                 )
             )
 
@@ -5118,7 +5125,8 @@ class AnalysisService:
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
-        AnalysisService._compile_industry_valuation_dividend(plan, prompt)
+        if AnalysisService._compile_industry_valuation_dividend(plan, prompt):
+            return plan
         AnalysisService._compile_holder_concentration_ranking(plan, prompt)
         AnalysisService._compile_valuation_period_return(plan, prompt)
         unlock_window = resolve_explicit_time_range(prompt)
@@ -5311,28 +5319,30 @@ class AnalysisService:
         ]
 
     @staticmethod
-    def _compile_industry_valuation_dividend(plan: QueryPlan, prompt: str) -> None:
+    def _compile_industry_valuation_dividend(plan: QueryPlan, prompt: str) -> bool:
         """Compile an industry valuation view enriched with annual dividends."""
         normalized_prompt = prompt.casefold()
         industries = ASharePlanValidator._extract_prompt_industries(normalized_prompt)
         resolved_industry = re.search(
-            rf"{TRUSTED_INDUSTRY_START}\s*industry=(.+?)\s*{TRUSTED_INDUSTRY_END}",
+            rf"{TRUSTED_INDUSTRY_START}\s*industry=(.+?)\s+year=(20\d{{2}})"
+            rf"\s*{TRUSTED_INDUSTRY_END}",
             prompt,
             re.DOTALL,
         )
         if resolved_industry is not None:
             industries = {resolved_industry.group(1).strip()}
         year_match = re.search(r"(20\d{2})年", prompt)
+        resolved_year = resolved_industry.group(2) if resolved_industry else None
         if not (
             industries
-            and year_match
+            and (year_match or resolved_year)
             and "分红" in prompt
             and (
                 "市盈率" in prompt
                 or re.search(r"(?<![a-z])pe(?![a-z])", normalized_prompt)
             )
         ):
-            return
+            return False
 
         planned_queries = list(plan.queries)
         if plan.execution_plan is not None:
@@ -5357,13 +5367,14 @@ class AnalysisService:
             else trusted_snapshot.group(1) if trusted_snapshot else None
         )
         if trade_date is None:
-            return
+            return False
 
         industry = sorted(industries)[0]
-        year = year_match.group(1)
+        year = year_match.group(1) if year_match else resolved_year
         universe_query = DataQuery(
             query_id="industry_security_universe",
             operation="stock_basic",
+            params={"list_status": "L"},
             fields=["ts_code", "name", "industry"],
             filters=[
                 DataFilter(field="industry", operator="contains", value=industry)
@@ -5395,6 +5406,18 @@ class AnalysisService:
         plan.limitations = []
         for requirement in plan.requirements:
             requirement.status = "covered"
+        ranking_steps = []
+        ranking_match = re.search(r"(?:最低|最高).*?(\d+)\s*(?:家|只)?", prompt)
+        if ranking_match is not None:
+            ranking_steps = [
+                {"operation": "drop_missing", "fields": ["pe"]},
+                {
+                    "operation": "sort",
+                    "field": "pe",
+                    "direction": "asc" if "最低" in prompt else "desc",
+                },
+                {"operation": "limit", "count": int(ranking_match.group(1))},
+            ]
         AnalysisService._compile_composed_result(
             plan,
             source_query=dividend_query,
@@ -5413,6 +5436,7 @@ class AnalysisService:
                     "fields": {"pe": "pe"},
                     "cardinality": "many_to_one",
                 },
+                *ranking_steps,
                 {
                     "operation": "join_fields",
                     "right_source_query_id": universe_query.query_id,
@@ -5432,6 +5456,7 @@ class AnalysisService:
                 "cash_div_tax": "Latest announced pre-tax cash dividend per share.",
             },
         )
+        return True
 
     @staticmethod
     def _enforce_unverifiable_data_boundary(plan: QueryPlan, prompt: str) -> None:
@@ -6942,7 +6967,7 @@ class AnalysisService:
     ) -> AnalysisRequest:
         """Return the text-only request consumed by provider discovery and planning."""
         prompt = self._append_resolved_time_range(request_id, request.prompt)
-        prompt = self._append_resolved_industry(request_id, prompt, request.prompt)
+        prompt = self._append_resolved_industry(request_id, prompt, request)
         if request.image is None:
             return AnalysisRequest(prompt=prompt, conversation=request.conversation)
         if self._vision_analyzer is None:
@@ -6996,10 +7021,17 @@ class AnalysisService:
         self,
         request_id: str,
         prompt: str,
-        user_prompt: str,
+        request: AnalysisRequest,
     ) -> str:
         """Resolve a user industry phrase to one provider-supported classification."""
-        requested = ASharePlanValidator._extract_prompt_industries(user_prompt)
+        source_prompt = request.prompt
+        requested = ASharePlanValidator._extract_prompt_industries(source_prompt)
+        if not requested:
+            for turn in reversed(request.conversation):
+                requested = ASharePlanValidator._extract_prompt_industries(turn.prompt)
+                if requested:
+                    source_prompt = turn.prompt
+                    break
         generate_text = getattr(self._planner, "generate_text", None)
         if (
             len(requested) != 1
@@ -7008,6 +7040,12 @@ class AnalysisService:
         ):
             return prompt
         requested_industry = next(iter(requested))
+        year_match = re.search(r"(20\d{2})年", request.prompt)
+        if year_match is None:
+            year_match = re.search(r"(20\d{2})年", source_prompt)
+        if year_match is None:
+            return prompt
+        requested_year = year_match.group(1)
         catalog = self._provider.query(
             "stock_basic",
             {},
@@ -7068,7 +7106,7 @@ class AnalysisService:
         )
         return (
             f"{prompt}\n\n{TRUSTED_INDUSTRY_START}\n"
-            f"industry={selected}\n{TRUSTED_INDUSTRY_END}"
+            f"industry={selected}\nyear={requested_year}\n{TRUSTED_INDUSTRY_END}"
         )
 
     @staticmethod
