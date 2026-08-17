@@ -417,6 +417,19 @@
       "source": "matrix"
     },
     {
+      "id": "valuation_screen-04",
+      "name": "valuation_screen follow-up metric annotation",
+      "family": "valuation_screen",
+      "prompt": "筛选市盈率低于10的A股，把股息率也附上",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily_basic"
+      ],
+      "quality_invariants": [],
+      "source": "reported_regression"
+    },
+    {
       "id": "liquidity_ranking-01",
       "name": "liquidity_ranking 1",
       "family": "liquidity_ranking",

@@ -1305,9 +1305,10 @@ export default function App() {
       </nav>
 
       {activePage === "analysis" ? <>
+      <section className="analysis-chat" aria-label="A股数据分析对话">
       <section className="request-panel" aria-labelledby="request-heading" data-feedback-id="request-panel">
         <div className="section-heading">
-          <span>01</span><h2 id="request-heading">多轮数据分析</h2>
+          <h2 id="request-heading">{"A\u80a1\u6570\u636e\u5206\u6790\u52a9\u624b"}</h2>
           <button type="button" className="new-conversation-button" onClick={startNewConversation}>
             新对话
           </button>
@@ -1316,14 +1317,27 @@ export default function App() {
           <ol className="conversation-history" aria-label="当前对话历史">
             {conversationTurns.map((turn, index) => (
               <li key={`${index}-${turn.prompt}`}>
-                <span>第 {index + 1} 轮</span>
-                <strong>{turn.prompt}</strong>
-                <p>{turn.interpretation}</p>
+                <div className="chat-message is-user">
+                  <span>{"\u4f60"}</span>
+                  <p>{turn.prompt}</p>
+                </div>
+                <div className="chat-message is-assistant">
+                  <span>{"\u5206\u6790\u52a9\u624b"}</span>
+                  <p>{turn.interpretation}</p>
+                </div>
               </li>
             ))}
           </ol>
         )}
-        <form onSubmit={handleSubmit}>
+        {response && plannedPrompt && (
+          <div className="chat-message is-user current-user-message">
+            <span>{"\u4f60"}</span>
+            <p>{plannedPrompt}</p>
+          </div>
+        )}
+        <form className="chat-composer" onSubmit={handleSubmit}>
+          <details className="prompt-library">
+            <summary>{"\u5386\u53f2\u4e0e\u6536\u85cf"}</summary>
           <div className="prompt-controls" style={{ display: "flex", gap: "12px", marginBottom: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <div className="prompt-history" style={{ flex: "1", minWidth: "180px" }}>
               <select
@@ -1390,9 +1404,10 @@ export default function App() {
               <span>{savedPrompts.includes(prompt.trim()) ? "★ 已收藏" : "☆ 收藏提问"}</span>
             </button>
           </div>
+          </details>
           <textarea
             id="analysis-prompt"
-            rows={6}
+            rows={3}
             value={prompt}
             onChange={(event) => {
               setPrompt(event.target.value);
@@ -1402,7 +1417,7 @@ export default function App() {
               }
             }}
             onPaste={handlePromptPaste}
-            placeholder="例如：北京时间2026年7月17日有多少只A股上涨，多少只下跌？"
+            placeholder={conversationTurns.length > 0 ? "\u7ee7\u7eed\u8ffd\u95ee\u6216\u8865\u5145\u7b5b\u9009\u6761\u4ef6\u2026" : "\u8f93\u5165\u4f60\u60f3\u5206\u6790\u7684 A\u80a1\u95ee\u9898\u2026"}
           />
           {isImageReading && (
             <p className="screenshot-hint">{"\u6b63\u5728\u8bfb\u53d6\u622a\u56fe\u2026"}</p>
@@ -1433,8 +1448,8 @@ export default function App() {
               : response?.plan && response.results.length === 0
                 ? "重新生成计划"
                 : conversationTurns.length > 0
-                  ? "理解追问并生成计划"
-                  : "理解意图并生成计划"}
+                  ? "\u53d1\u9001\u8ffd\u95ee"
+                  : "\u53d1\u9001"}
           </button>
           {isLoading && taskProgress && (
             <p className="task-progress" role="status">
@@ -1447,7 +1462,7 @@ export default function App() {
       </section>
 
       <section className="results-panel" aria-labelledby="results-heading" data-feedback-id="results-panel">
-        <div className="section-heading"><span>02</span><h2 id="results-heading">数据与错误</h2></div>
+        <div className="assistant-message-heading"><span>{"\u5206\u6790\u52a9\u624b"}</span><h2 id="results-heading">{response?.plan ? "\u610f\u56fe\u4e0e\u7ed3\u679c" : "\u7b49\u5f85\u4f60\u7684\u95ee\u9898"}</h2></div>
         {(response?.request_id || taskProgress?.taskId) && (
           <p className="request-trace" role="status">
             <strong>{"\u8ffd\u8e2a ID"}</strong>
@@ -1565,6 +1580,7 @@ export default function App() {
             <DecisionTrace response={response} />
           </div>
         </details>
+      </section>
       </section>
       </> : activePage === "discovery" ? <DiscoveryPage onApplyFormula={(formula) => {
         setPrompt(`筛选今日全部A股中严格满足以下条件的股票，不要改变运算符或阈值，并返回股票代码、名称及公式涉及字段：${formula}`);

@@ -119,8 +119,11 @@ test("analysis requires an explicit plan confirmation before execution", async (
   await page.goto("/analysis");
 
   await page.locator("#analysis-prompt").fill("查询2026年7月17日A股涨跌分布");
-  await page.getByRole("button", { name: "理解意图并生成计划" }).click();
+  await page.getByRole("button", { name: "发送", exact: true }).click();
 
+  await expect(page.locator(".current-user-message")).toContainText(
+    "查询2026年7月17日A股涨跌分布",
+  );
   await expect(page.getByRole("region", { name: "执行确认" })).toBeVisible();
   expect(requests).toHaveLength(1);
   expect(requests[0].mode).toBe("plan");

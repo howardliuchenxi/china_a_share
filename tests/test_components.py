@@ -5200,6 +5200,62 @@ def test_validator_accepts_year_constraint_as_complete_date_range():
     assert ASharePlanValidator._constraint_enforced_by_query(constraint, query)
 
 
+@pytest.mark.parametrize(
+    ("field", "operator", "value"),
+    [("pe", "lt", 10.0), ("pb", "le", 1.5)],
+)
+def test_workflow_binds_declared_scalar_constraints_to_query_filters(
+    field,
+    operator,
+    value,
+):
+    plan = QueryPlan(
+        interpretation="Filter a valuation snapshot by its declared threshold.",
+        requirements=[
+            RequirementCoverage(
+                requirement="Apply the requested valuation threshold.",
+                status="covered",
+                implementation="Filter the retrieved valuation field locally.",
+                evidence="daily_basic supplies the requested scalar field.",
+            )
+        ],
+        queries=[
+            DataQuery(
+                query_id="valuation_snapshot",
+                operation="daily_basic",
+                params={"trade_date": "20260814"},
+                fields=["ts_code", field],
+                purpose="Retrieve one complete valuation snapshot.",
+            )
+        ],
+        constraints=[
+            QueryConstraint(
+                constraint_id="valuation_threshold",
+                scope="result",
+                field=field,
+                operator=operator,
+                value=value,
+                query_id="valuation_snapshot",
+            )
+        ],
+        answer_contract=AnswerContract(
+            result_query_id="valuation_snapshot",
+            result_kind="table",
+            outputs=[
+                {"field": "ts_code", "description": "A-share security code."},
+                {"field": field, "description": "Requested valuation metric."},
+            ],
+        ),
+    )
+
+    AnalysisService._bind_declared_query_constraints(plan)
+
+    assert plan.queries[0].filters == [
+        DataFilter(field=field, operator=operator, value=value)
+    ]
+    ASharePlanValidator(FakeMarketDataProvider()).validate(plan)
+
+
 def test_validator_rejects_registered_operation_with_partial_date_range():
     plan = make_daily_plan()
     plan.queries[0].operation = "share_float"

@@ -2132,6 +2132,7 @@ class AnalysisService:
                 normalized,
             )
             plan = self._compile_intent(normalized)
+            self._bind_declared_query_constraints(plan)
             self._align_answer_contract_result_id(plan)
             ASharePlanValidator.validate_prompt_intent_coverage(
                 original_prompt,
@@ -3317,11 +3318,42 @@ class AnalysisService:
             normalized,
         )
         compiled = self._compile_intent(normalized)
+        self._bind_declared_query_constraints(compiled)
         self._align_answer_contract_result_id(compiled)
         return self._validate_planned_time_semantics(
             self._validator.validate(compiled),
             planning_prompt,
         )
+
+    @staticmethod
+    def _bind_declared_query_constraints(plan: QueryPlan) -> None:
+        """Compile enforceable declared predicates into deterministic query filters."""
+        queries = list(plan.queries)
+        if plan.execution_plan is not None:
+            queries.extend(
+                node.query
+                for node in plan.execution_plan.nodes
+                if node.kind == "query" and node.query is not None
+            )
+        queries_by_id = {query.query_id: query for query in queries}
+        for constraint in plan.constraints:
+            query = queries_by_id.get(constraint.query_id)
+            if query is None or ASharePlanValidator._constraint_enforced_by_query(
+                constraint,
+                query,
+            ):
+                continue
+            if constraint.field not in query.fields:
+                continue
+            # A declared predicate over a retrieved scalar field has one exact local
+            # execution: filter the provider rows before any downstream calculation.
+            query.filters.append(
+                DataFilter(
+                    field=constraint.field,
+                    operator=constraint.operator,
+                    value=constraint.value,
+                )
+            )
 
     @staticmethod
     def _align_answer_contract_result_id(plan: QueryPlan) -> None:
@@ -3536,7 +3568,11 @@ class AnalysisService:
                 error=ServiceError(
                     source=exc.source,
                     code=exc.code,
-                    message=str(exc),
+                    message=(
+                        "The analysis intent could not be converted into a safe "
+                        "executable plan. Revise the request or retry with the same "
+                        "conversation context."
+                    ),
                     http_status=exc.http_status,
                     raw_response=exc.raw_response,
                 ),
@@ -3548,7 +3584,10 @@ class AnalysisService:
                     stage="validation",
                     status="error",
                     title="Plan contract rejected",
-                    detail=str(exc),
+                    detail=(
+                        "The proposed plan did not satisfy the executable data "
+                        "contract, so no market-data query was issued."
+                    ),
                 )
             )
             self._log_termination(request_id, reason="plan_validation_error", status="error", error_info=str(exc))
@@ -3558,7 +3597,13 @@ class AnalysisService:
                 data_provider=self._provider.name,
                 status="error",
                 decision_trace=decision_trace,
-                error=ServiceError(source="system", message=str(exc)),
+                error=ServiceError(
+                    source="system",
+                    message=(
+                        "The analysis plan failed safety validation. Revise the "
+                        "request or retry without changing the confirmed scope."
+                    ),
+                ),
             )
         except Exception as exc:
             logger.exception("planning_failed request_id=%s source=system", request_id)

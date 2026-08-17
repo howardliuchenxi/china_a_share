@@ -357,6 +357,105 @@ h1 {
   background: rgba(255, 255, 255, 0.56);
 }
 
+.analysis-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 65vh;
+  padding: 24px;
+  border: 1px solid #c7ccc3;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.analysis-chat .request-panel {
+  display: contents;
+}
+
+.analysis-chat .request-panel > .section-heading {
+  order: 1;
+  margin-bottom: 0;
+  align-items: center;
+}
+
+.analysis-chat .conversation-history {
+  order: 2;
+}
+
+.analysis-chat .current-user-message {
+  order: 3;
+}
+
+.analysis-chat .results-panel {
+  order: 4;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.analysis-chat .details-stack {
+  order: 5;
+}
+
+.analysis-chat .chat-composer {
+  position: sticky;
+  bottom: 16px;
+  z-index: 4;
+  order: 6;
+  padding: 14px;
+  border: 1px solid #aebbb2;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(35, 52, 44, 0.12);
+}
+
+.analysis-chat .chat-composer textarea {
+  min-height: 84px;
+  border: 0;
+  resize: vertical;
+  box-shadow: none;
+}
+
+.prompt-library {
+  margin-bottom: 6px;
+}
+
+.prompt-library > summary {
+  width: max-content;
+  cursor: pointer;
+  color: #657169;
+  font-size: 0.76rem;
+}
+
+.prompt-library[open] > summary {
+  margin-bottom: 10px;
+}
+
+.analysis-chat .chat-composer > button[type="submit"] {
+  width: auto;
+  margin-left: auto;
+  padding: 0.7rem 1.2rem;
+  border-radius: 999px;
+}
+
+.assistant-message-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.assistant-message-heading span,
+.chat-message span {
+  color: #657169;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.assistant-message-heading h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .request-panel,
 .results-panel,
 .reference-panel {
@@ -403,13 +502,11 @@ h1 {
 }
 
 .conversation-history li {
-  padding: 0.85rem 1rem;
-  border-left: 3px solid #3d7459;
-  background: #f5f8f4;
+  display: grid;
+  gap: 12px;
 }
 
 .conversation-history span,
-.conversation-history strong,
 .conversation-history p {
   display: block;
 }
@@ -421,8 +518,31 @@ h1 {
 }
 
 .conversation-history p {
-  margin: 0.35rem 0 0;
-  color: #536159;
+  margin: 0.25rem 0 0;
+}
+
+.chat-message {
+  max-width: min(86%, 920px);
+  padding: 12px 16px;
+  border-radius: 16px;
+}
+
+.chat-message p {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+}
+
+.chat-message.is-user {
+  align-self: flex-end;
+  margin-left: auto;
+  border-bottom-right-radius: 4px;
+  background: #dfece3;
+}
+
+.chat-message.is-assistant {
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+  background: #f3f5f1;
 }
 
 .execution-confirmation {
