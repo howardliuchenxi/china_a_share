@@ -30,6 +30,7 @@ class _CatalogProvider:
         "dividend",
         "repurchase",
         "moneyflow",
+        "forecast",
     )
 
     @staticmethod
@@ -40,6 +41,7 @@ class _CatalogProvider:
             "dividend",
             "repurchase",
             "moneyflow",
+            "forecast",
         }
 
 
@@ -1218,3 +1220,90 @@ def test_moneyflow_followup_inherits_security_and_date_and_derives_components():
         "net_sm_amount",
     ]
     ASharePlanValidator(_CatalogProvider()).validate(normalized)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        (
+            "Kweichow Moutai's latest earnings forecast range.\n"
+            "<trusted_security>\nname=Kweichow Moutai\nts_code=600519.SH\n"
+            "</trusted_security>"
+        ),
+        (
+            "\u8d35\u5dde\u8305\u53f0\u6700\u65b0\u4e1a\u7ee9\u9884\u544a\u533a\u95f4\n"
+            "<trusted_security>\nname=Kweichow Moutai\nts_code=600519.SH\n"
+            "</trusted_security>"
+        ),
+    ],
+)
+def test_latest_earnings_forecast_compiles_at_single_disclosure_grain(prompt):
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    query = plan.queries[0]
+    assert query.operation == "forecast"
+    assert query.params == {"ts_code": "600519.SH"}
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "drop_missing",
+        "sort",
+        "limit",
+        "select_fields",
+    ]
+    assert plan.result_pipeline.steps[1].field == "ann_date"
+    assert plan.result_pipeline.steps[1].direction == "desc"
+    assert plan.result_pipeline.steps[2].count == 1
+    assert {
+        "p_change_min",
+        "p_change_max",
+        "net_profit_min",
+        "net_profit_max",
+    }.issubset(output.field for output in plan.answer_contract.outputs)
+    ASharePlanValidator(_CatalogProvider()).validate(plan)
+
+
+def test_security_resolution_matches_normalized_official_english_name():
+    class EnglishCatalogProvider:
+        name = "tushare"
+        operation_names = ("stock_basic",)
+
+        @staticmethod
+        def supports(operation):
+            return operation == "stock_basic"
+
+        @staticmethod
+        def query(operation, params, fields, **context):
+            assert operation == "stock_basic"
+            assert fields == ["ts_code", "symbol", "name", "enname"]
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "600519.SH",
+                        "symbol": "600519",
+                        "name": "Moutai",
+                        "enname": "Kweichow Moutai Co., Ltd.",
+                    },
+                    {
+                        "ts_code": "000001.SZ",
+                        "symbol": "000001",
+                        "name": "Ping An",
+                        "enname": "Ping An Bank Co., Ltd.",
+                    },
+                ]
+            )
+
+    provider = EnglishCatalogProvider()
+    service = AnalysisService(
+        planner=_IndustrySelectingPlanner(),
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+
+    enriched = service._append_resolved_security_code(
+        "english-security-resolution",
+        "Kweichow Moutai's latest earnings forecast range.",
+    )
+
+    assert "name=kweichow moutai" in enriched
+    assert "ts_code=600519.SH" in enriched

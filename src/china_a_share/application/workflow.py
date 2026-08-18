@@ -2257,6 +2257,11 @@ class AnalysisService:
     @staticmethod
     def _compile_known_request(prompt: str) -> Optional[QueryPlan]:
         """Compile stable multi-source request families without model-generated DAGs."""
+        earnings_forecast = AnalysisService._compile_known_latest_earnings_forecast(
+            prompt
+        )
+        if earnings_forecast is not None:
+            return earnings_forecast
         security_moneyflow = AnalysisService._compile_known_security_moneyflow(prompt)
         if security_moneyflow is not None:
             return security_moneyflow
@@ -3533,6 +3538,100 @@ class AnalysisService:
                         "field": "net_mf_amount",
                         "description": "Native main-fund net inflow amount.",
                     },
+                ],
+            ),
+        )
+
+    @staticmethod
+    def _compile_known_latest_earnings_forecast(prompt: str) -> Optional[QueryPlan]:
+        """Compile the latest disclosed earnings-guidance range for one security."""
+        normalized = prompt.casefold()
+        if not (
+            any(
+                term in normalized
+                for term in (
+                    "earnings forecast",
+                    "earnings guidance",
+                    "forecast range",
+                    "\u4e1a\u7ee9\u9884\u544a",
+                    "\u4e1a\u7ee9\u9884\u544a\u533a\u95f4",
+                )
+            )
+            and any(term in normalized for term in ("latest", "\u6700\u65b0"))
+        ):
+            return None
+        security_code = AnalysisService._resolve_prompt_security_code(prompt)
+        if security_code is None:
+            return None
+        query = DataQuery(
+            query_id="latest_earnings_forecast_disclosures",
+            operation="forecast",
+            params={"ts_code": security_code},
+            fields=[
+                "ts_code",
+                "ann_date",
+                "end_date",
+                "type",
+                "p_change_min",
+                "p_change_max",
+                "net_profit_min",
+                "net_profit_max",
+                "summary",
+                "change_reason",
+            ],
+            purpose=(
+                "Retrieve disclosed earnings-guidance ranges for the resolved "
+                "security."
+            ),
+        )
+        result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": query.query_id,
+                "output_query_id": "latest_earnings_forecast",
+                "steps": [
+                    {"operation": "drop_missing", "fields": ["ann_date"]},
+                    {"operation": "sort", "field": "ann_date", "direction": "desc"},
+                    {"operation": "limit", "count": 1},
+                    {
+                        "operation": "select_fields",
+                        "fields": query.fields,
+                    },
+                ],
+            }
+        )
+        return QueryPlan(
+            interpretation=(
+                f"Return the latest disclosed earnings-guidance range for "
+                f"{security_code}."
+            ),
+            queries=[query],
+            result_pipeline=result_pipeline,
+            requirements=[
+                RequirementCoverage(
+                    requirement=(
+                        "Return the latest disclosed earnings-guidance range for "
+                        "one security."
+                    ),
+                    status="covered",
+                    implementation=(
+                        "Sort native forecast disclosures by announcement date and "
+                        "keep the newest row."
+                    ),
+                    evidence=(
+                        "forecast provides announcement date, percentage-change "
+                        "bounds, and net-profit bounds."
+                    ),
+                )
+            ],
+            answer_contract=AnswerContract(
+                result_query_id=result_pipeline.output_query_id,
+                result_kind="table",
+                outputs=[
+                    {
+                        "field": field,
+                        "description": "Latest disclosed earnings-guidance field.",
+                    }
+                    for field in query.fields
                 ],
             ),
         )
@@ -9509,18 +9608,43 @@ class AnalysisService:
         frame = self._provider.query(
             "stock_basic",
             {"list_status": "L"},
-            ["ts_code", "symbol", "name"],
+            ["ts_code", "symbol", "name", "enname"],
             api_route="/analysis-planning",
             request_id=request_id,
             query_id="security-name-resolution",
         )
         normalized_prompt = prompt.casefold()
+        normalized_english_prompt = " ".join(
+            re.findall(r"[a-z0-9]+", normalized_prompt)
+        )
         matches = []
         for row in frame.to_dict(orient="records"):
             name = str(row.get("name") or "").strip()
+            english_name = str(row.get("enname") or "").strip()
             code = str(row.get("ts_code") or "").strip().upper()
             if len(name) >= 2 and name.casefold() in normalized_prompt and code:
                 matches.append((len(name), name, code))
+            english_tokens = re.findall(r"[a-z0-9]+", english_name.casefold())
+            while english_tokens and english_tokens[-1] in {
+                "co",
+                "company",
+                "corp",
+                "corporation",
+                "inc",
+                "limited",
+                "ltd",
+            }:
+                english_tokens.pop()
+            english_alias = " ".join(english_tokens)
+            if (
+                len(english_alias) >= 4
+                and code
+                and re.search(
+                    rf"(?:^| ){re.escape(english_alias)}(?: |$)",
+                    normalized_english_prompt,
+                )
+            ):
+                matches.append((len(english_alias), english_alias, code))
         if not matches:
             return prompt
         longest_length = max(length for length, _, _ in matches)
