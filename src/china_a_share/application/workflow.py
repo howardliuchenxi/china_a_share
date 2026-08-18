@@ -6005,9 +6005,33 @@ class AnalysisService:
         plan.execution_plan = None
         plan.constraints = []
         plan.queries = [universe_query, valuation_query, dividend_query]
-        plan.limitations = []
-        for requirement in plan.requirements:
-            requirement.status = "covered"
+        plan.interpretation = (
+            f"List currently listed A-share securities classified as {industry}, "
+            f"with price-to-earnings ratios from {trade_date} and the latest "
+            f"per-share pre-tax cash dividend announced in {year}."
+        )
+        plan.requirements = [
+            RequirementCoverage(
+                requirement=(
+                    f"Return {industry} industry securities with valuation and "
+                    f"{year} dividend data."
+                ),
+                status="covered",
+                implementation=(
+                    "Join the provider-classified security universe to the "
+                    "completed valuation snapshot and latest dividend disclosure."
+                ),
+                evidence=(
+                    "stock_basic supplies the provider industry classification, "
+                    "daily_basic supplies price-to-earnings ratios, and dividend "
+                    "supplies per-share cash distributions."
+                ),
+            )
+        ]
+        plan.limitations = [
+            f"Dividend values include only disclosures announced during {year}; "
+            "a missing value does not imply a zero dividend."
+        ]
         ranking_steps = []
         ranking_match = re.search(r"(?:最低|最高).*?(\d+)\s*(?:家|只)?", prompt)
         if ranking_match is not None:

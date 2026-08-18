@@ -238,6 +238,15 @@ def test_industry_valuation_dividend_request_compiles_deterministically(
         f"{expected_year}0101",
         f"{expected_year}1231",
     ]
+    assert expected_industry in plan.interpretation
+    assert expected_year in plan.interpretation
+    assert "price-to-earnings ratios" in plan.interpretation
+    assert "per-share pre-tax cash dividend" in plan.interpretation
+    assert plan.requirements[0].requirement == (
+        f"Return {expected_industry} industry securities with valuation and "
+        f"{expected_year} dividend data."
+    )
+    assert "missing value does not imply a zero dividend" in plan.limitations[0]
     assert [step.operation for step in plan.result_pipeline.steps] == [
         "latest_by_group",
         "join_fields",
