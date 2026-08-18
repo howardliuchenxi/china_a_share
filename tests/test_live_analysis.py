@@ -1,6 +1,7 @@
 """Opt-in quality coverage against the real DeepSeek and Tushare APIs."""
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from uuid import uuid4
 
@@ -284,6 +285,30 @@ def _assert_quality_invariants(
         assert result.row_count == len(result.rows)
         assert all(expected_fields.issubset(row) for row in result.rows)
         assert len({row["ts_code"] for row in result.rows}) == len(result.rows)
+    if "explicit_ranked_limit" in invariants:
+        assert plan.answer_contract is not None
+        limit_match = re.search(r"(?:\u524d|top)\s*(\d+)", prompt.casefold())
+        assert limit_match is not None
+        expected_count = int(limit_match.group(1))
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.answer_contract.result_query_id
+        )
+        values = [float(row["pe"]) for row in result.rows]
+        assert len(values) == expected_count
+        if any(
+            term in prompt.casefold()
+            for term in ("\u4ece\u4f4e\u5230\u9ad8", "\u5347\u5e8f", "ascending")
+        ):
+            assert values == sorted(values)
+        elif any(
+            term in prompt.casefold()
+            for term in ("\u4ece\u9ad8\u5230\u4f4e", "\u964d\u5e8f", "descending")
+        ):
+            assert values == sorted(values, reverse=True)
+        else:
+            raise AssertionError("Ranked-limit invariant requires an explicit order.")
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:

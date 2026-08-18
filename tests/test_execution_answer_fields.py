@@ -354,6 +354,45 @@ def test_industry_valuation_followup_compiles_ranked_table_from_trusted_scope():
 
 
 @pytest.mark.parametrize(
+    ("prompt", "expected_direction", "expected_limit"),
+    [
+        (
+            "\u8bf7\u6309\u5e02\u76c8\u7387\u4ece\u4f4e\u5230\u9ad8\u5217\u51fa2026\u5e74\u901a\u4fe1\u8bbe\u5907\u884c\u4e1a\u524d7\u5bb6\u516c\u53f8\uff0c"
+            "\u5e76\u4fdd\u7559\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\uff1b\u4e0d\u8981\u53ea\u544a\u8bc9\u6211\u6570\u91cf",
+            "asc",
+            7,
+        ),
+        (
+            "\u6309\u5e02\u76c8\u7387\u4ece\u9ad8\u5230\u4f4e\u5217\u51fa2025\u5e74\u7535\u6c60\u884c\u4e1a\u524d5\u5bb6\u516c\u53f8\u5e76\u4fdd\u7559\u5206\u7ea2\u6570\u636e",
+            "desc",
+            5,
+        ),
+    ],
+)
+def test_industry_valuation_ranking_accepts_explicit_order_phrases(
+    prompt,
+    expected_direction,
+    expected_limit,
+):
+    plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
+
+    AnalysisService._normalize_plan_for_request(plan, prompt)
+
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "latest_by_group",
+        "join_fields",
+        "drop_missing",
+        "sort",
+        "limit",
+        "join_fields",
+        "select_fields",
+    ]
+    assert plan.result_pipeline.steps[3].direction == expected_direction
+    assert plan.result_pipeline.steps[4].count == expected_limit
+    assert plan.answer_contract.result_kind == "table"
+
+
+@pytest.mark.parametrize(
     ("prompt", "expected_limit"),
     [
         ("A股2026年最新披露数据，筹码集中度top10公司", 10),

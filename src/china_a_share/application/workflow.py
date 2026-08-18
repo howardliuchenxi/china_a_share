@@ -6033,14 +6033,42 @@ class AnalysisService:
             "a missing value does not imply a zero dividend."
         ]
         ranking_steps = []
-        ranking_match = re.search(r"(?:最低|最高).*?(\d+)\s*(?:家|只)?", prompt)
-        if ranking_match is not None:
+        ascending_terms = (
+            "最低",
+            "从低到高",
+            "升序",
+            "lowest",
+            "smallest",
+            "ascending",
+        )
+        descending_terms = (
+            "最高",
+            "从高到低",
+            "降序",
+            "highest",
+            "largest",
+            "descending",
+        )
+        ranking_direction = (
+            "asc"
+            if any(term in normalized_prompt for term in ascending_terms)
+            else "desc"
+            if any(term in normalized_prompt for term in descending_terms)
+            else None
+        )
+        ranking_match = re.search(r"(?:前|top)\s*(\d+)", normalized_prompt)
+        if ranking_match is None and ranking_direction is not None:
+            ranking_match = re.search(
+                r"(\d+)\s*(?:家(?:公司)?|只|companies|company|stocks|stock)",
+                normalized_prompt,
+            )
+        if ranking_match is not None and ranking_direction is not None:
             ranking_steps = [
                 {"operation": "drop_missing", "fields": ["pe"]},
                 {
                     "operation": "sort",
                     "field": "pe",
-                    "direction": "asc" if "最低" in prompt else "desc",
+                    "direction": ranking_direction,
                 },
                 {"operation": "limit", "count": int(ranking_match.group(1))},
             ]
