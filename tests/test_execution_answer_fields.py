@@ -680,6 +680,23 @@ def test_annual_holder_trade_counts_compile_deterministically(
     }
 
 
+def test_multi_factor_valuation_confirmation_explains_screen_and_order():
+    prompt = (
+        "\u627e\u4f4ePE\u3001\u4f4ePB\u3001\u9ad8\u80a1\u606f\u7387\u7684\u5341\u53ea\u80a1\u7968\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260817\n"
+        "event_end_date=20260817\n"
+        "</trusted_analysis_window>"
+    )
+
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert "20260817" in plan.interpretation
+    assert "lower 30 percent" in plan.interpretation
+    assert "10 highest trailing dividend yields" in plan.interpretation
+
+
 def test_repurchase_count_and_list_compiles_at_distinct_company_grain():
     prompt = (
         "2026\u5e746\u6708\u5ba3\u5e03\u56de\u8d2d\u7684A\u80a1\u516c\u53f8\u6709\u591a\u5c11\u5bb6\uff1f\u8bf7\u5217\u51fa\u5168\u90e8"

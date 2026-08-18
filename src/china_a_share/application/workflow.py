@@ -2676,6 +2676,12 @@ class AnalysisService:
                 )
                 plan.intent = None
                 plan.queries = [query]
+                plan.interpretation = (
+                    f"Using the completed {as_of} valuation snapshot, keep positive "
+                    "PE and PB observations inside their respective lower 30 percent "
+                    "cross-sectional cohorts, then return the 10 highest trailing "
+                    "dividend yields."
+                )
                 plan.requirements = [
                     RequirementCoverage(
                         requirement=(
