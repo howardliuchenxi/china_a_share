@@ -343,6 +343,37 @@ def _assert_quality_invariants(
         )
         security_codes = [row["ts_code"] for row in result.rows]
         assert len(security_codes) == len(set(security_codes))
+    if "explicit_date_order" in invariants:
+        assert plan.answer_contract is not None
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.answer_contract.result_query_id
+        )
+        date_field = next(
+            field
+            for field in ("ann_date", "trade_date", "end_date", "float_date")
+            if any(output.field == field for output in plan.answer_contract.outputs)
+        )
+        descending = any(
+            term in prompt.casefold()
+            for term in (
+                "descending",
+                "newest first",
+                "latest first",
+                "\u4ece\u65b0\u5230\u65e7",
+                "\u964d\u5e8f",
+            )
+        )
+        expected_direction = "desc" if descending else "asc"
+        assert any(
+            step.operation == "sort"
+            and step.field == date_field
+            and step.direction == expected_direction
+            for step in steps
+        )
+        date_values = [row[date_field] for row in result.rows]
+        assert date_values == sorted(date_values, reverse=descending)
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:
@@ -641,3 +672,50 @@ def test_live_industry_valuation_followup_returns_ranked_security_list(
     pe_values = [row["pe"] for row in result.rows]
     assert all(value is not None for value in pe_values)
     assert pe_values == sorted(pe_values)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
+def test_live_industry_followup_filters_all_requested_nonmissing_metrics(
+    live_analysis_service,
+) -> None:
+    """Verify follow-up metric-presence filters run before ranking and limiting."""
+    response = live_analysis_service.analyze(
+        request_id=f"live-industry-nonmissing-followup-{uuid4()}",
+        request=AnalysisRequest(
+            prompt=(
+                "\u53ea\u4fdd\u7559\u6709\u5206\u7ea2\u4e14\u5e02\u76c8\u7387\u975e\u7a7a\u7684\u516c\u53f8\uff0c"
+                "\u6309\u5e02\u76c8\u7387\u4ece\u4f4e\u5230\u9ad8\u5217\u51fa\u524d12\u5bb6\uff0c"
+                "\u4ecd\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5e02\u76c8\u7387\u548c\u5206\u7ea2"
+            ),
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt="A\u80a12026\u5e74\u624b\u673a\u884c\u4e1a\uff0c\u5e02\u76c8\u7387\u548c\u5206\u7ea2\u6570\u636e",
+                    interpretation="Return the requested industry table.",
+                )
+            ],
+        ),
+        api_route="/local-live-industry-nonmissing-followup",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert response.status is AnalysisStatus.SUCCESS, _failure_message(response)
+    assert response.plan is not None
+    assert response.plan.answer_contract is not None
+    result = next(
+        item
+        for item in response.results
+        if item.query_id == response.plan.answer_contract.result_query_id
+    )
+    assert result.row_count == 12
+    assert all(row["pe"] is not None for row in result.rows)
+    assert all(row["cash_div_tax"] is not None for row in result.rows)
+    assert [row["pe"] for row in result.rows] == sorted(
+        row["pe"] for row in result.rows
+    )

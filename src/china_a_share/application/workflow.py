@@ -3485,29 +3485,58 @@ class AnalysisService:
                 )
             ],
         )
+        result_steps = [
+            {
+                "operation": "latest_by_group",
+                "group_by": ["ts_code"],
+                "order_by": "ann_date",
+                "direction": "desc",
+            },
+            {
+                "operation": "join_fields",
+                "right_source_query_id": company_query.query_id,
+                "join_on": ["ts_code"],
+                "fields": {"name": "name"},
+                "cardinality": "many_to_one",
+            },
+        ]
+        if any(
+            term in normalized
+            for term in (
+                "newest first",
+                "latest first",
+                "descending",
+                "\u4ece\u65b0\u5230\u65e7",
+                "\u964d\u5e8f",
+            )
+        ):
+            result_steps.append(
+                {"operation": "sort", "field": "ann_date", "direction": "desc"}
+            )
+        elif any(
+            term in normalized
+            for term in (
+                "oldest first",
+                "earliest first",
+                "ascending",
+                "\u4ece\u65e7\u5230\u65b0",
+                "\u5347\u5e8f",
+            )
+        ):
+            result_steps.append(
+                {"operation": "sort", "field": "ann_date", "direction": "asc"}
+            )
+        result_steps.append(
+            {
+                "operation": "select_fields",
+                "fields": ["ts_code", "name", "ann_date"],
+            }
+        )
         AnalysisService._compile_composed_result(
             plan,
             source_query=disclosure_query,
             output_query_id="repurchase_company_list",
-            steps=[
-                {
-                    "operation": "latest_by_group",
-                    "group_by": ["ts_code"],
-                    "order_by": "ann_date",
-                    "direction": "desc",
-                },
-                {
-                    "operation": "join_fields",
-                    "right_source_query_id": company_query.query_id,
-                    "join_on": ["ts_code"],
-                    "fields": {"name": "name"},
-                    "cardinality": "many_to_one",
-                },
-                {
-                    "operation": "select_fields",
-                    "fields": ["ts_code", "name", "ann_date"],
-                },
-            ],
+            steps=result_steps,
             output_descriptions={
                 "ts_code": "A-share security code.",
                 "name": "Current public security name when available.",
@@ -6159,8 +6188,20 @@ class AnalysisService:
                 normalized_prompt,
             )
         if ranking_match is not None and ranking_direction is not None:
+            ranking_required_fields = ["pe"]
+            if any(
+                term in normalized_prompt
+                for term in (
+                    "with dividends",
+                    "non-null dividend",
+                    "dividend is not missing",
+                    "\u6709\u5206\u7ea2",
+                    "\u5206\u7ea2\u975e\u7a7a",
+                )
+            ):
+                ranking_required_fields.append("cash_div_tax")
             ranking_steps = [
-                {"operation": "drop_missing", "fields": ["pe"]},
+                {"operation": "drop_missing", "fields": ranking_required_fields},
                 {
                     "operation": "sort",
                     "field": "pe",

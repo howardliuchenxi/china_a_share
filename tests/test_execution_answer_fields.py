@@ -394,6 +394,32 @@ def test_industry_valuation_ranking_accepts_explicit_order_phrases(
     assert plan.answer_contract.result_kind == "table"
 
 
+def test_industry_ranking_filters_every_explicitly_required_nonmissing_metric():
+    plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
+    prompt = (
+        "\u53ea\u4fdd\u7559\u6709\u5206\u7ea2\u4e14\u5e02\u76c8\u7387\u975e\u7a7a\u7684\u516c\u53f8\uff0c"
+        "\u6309\u5e02\u76c8\u7387\u4ece\u4f4e\u5230\u9ad8\u5217\u51fa\u524d12\u5bb6\uff0c"
+        "\u4ecd\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5e02\u76c8\u7387\u548c\u5206\u7ea2\n\n"
+        "<conversation_context>\n"
+        "A\u80a12026\u5e74\u624b\u673a\u884c\u4e1a\uff0c\u5e02\u76c8\u7387\u548c\u5206\u7ea2\u6570\u636e\n"
+        "</conversation_context>"
+    )
+
+    AnalysisService._normalize_plan_for_request(plan, prompt)
+
+    missing_step = next(
+        step
+        for step in plan.result_pipeline.steps
+        if step.operation == "drop_missing"
+    )
+    assert missing_step.fields == ["pe", "cash_div_tax"]
+    assert plan.result_pipeline.steps.index(missing_step) < next(
+        index
+        for index, step in enumerate(plan.result_pipeline.steps)
+        if step.operation == "limit"
+    )
+
+
 def test_snapshot_date_normalization_updates_confirmation_text():
     plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
     valuation_node = next(
@@ -448,6 +474,26 @@ def test_repurchase_count_and_list_compiles_at_distinct_company_grain():
         "name",
         "ann_date",
     }
+
+
+def test_repurchase_company_list_preserves_explicit_announcement_date_order():
+    prompt = (
+        "\u5217\u51fa2026\u5e74\u7b2c\u4e8c\u5b63\u5ea6\u5ba3\u5e03\u56de\u8d2d\u7684\u5168\u90e8A\u80a1\u516c\u53f8\uff0c"
+        "\u6309\u516c\u544a\u65e5\u671f\u4ece\u65b0\u5230\u65e7\u7ed9\u51fa\u4ee3\u7801\u3001\u540d\u79f0\u548c\u65e5\u671f"
+    )
+
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert plan.queries[0].params == {
+        "start_date": "20260401",
+        "end_date": "20260630",
+    }
+    sort_step = next(
+        step for step in plan.result_pipeline.steps if step.operation == "sort"
+    )
+    assert sort_step.field == "ann_date"
+    assert sort_step.direction == "desc"
 
 
 @pytest.mark.parametrize(

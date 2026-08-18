@@ -64,7 +64,9 @@ ENGLISH_MONTHS = {
 }
 QUARTER_PATTERN = re.compile(
     r"(?:\bQ(?P<quarter>[1-4])(?:\s+(?P<year>20\d{2}))?\b|"
-    r"\b(?P<leading_year>20\d{2})\s*Q(?P<leading_quarter>[1-4])\b)",
+    r"\b(?P<leading_year>20\d{2})\s*Q(?P<leading_quarter>[1-4])\b|"
+    r"(?P<chinese_year>20\d{2})\u5e74?\u7b2c?"
+    r"(?P<chinese_quarter>[\u4e00\u4e8c\u4e09\u56db1-4])\u5b63\u5ea6)",
     re.IGNORECASE,
 )
 FUTURE_HORIZON_PATTERN = re.compile(
@@ -151,13 +153,23 @@ def resolve_explicit_time_range(
         return date(year, month, 1), date(year, month, monthrange(year, month)[1])
     quarter_match = QUARTER_PATTERN.search(prompt)
     if quarter_match is not None:
-        year_token = quarter_match.group("year") or quarter_match.group("leading_year")
+        year_token = (
+            quarter_match.group("year")
+            or quarter_match.group("leading_year")
+            or quarter_match.group("chinese_year")
+        )
         if year_token is None and reference_date is None:
             return None
         year = int(year_token) if year_token is not None else reference_date.year
-        quarter = int(
+        quarter_token = (
             quarter_match.group("quarter")
             or quarter_match.group("leading_quarter")
+            or quarter_match.group("chinese_quarter")
+        )
+        quarter = (
+            int(quarter_token)
+            if quarter_token.isdigit()
+            else {"\u4e00": 1, "\u4e8c": 2, "\u4e09": 3, "\u56db": 4}[quarter_token]
         )
         start_month = (quarter - 1) * 3 + 1
         end_month = start_month + 2

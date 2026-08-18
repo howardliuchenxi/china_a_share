@@ -130,6 +130,20 @@ def test_explicit_quarter_expands_to_its_full_date_range(prompt):
     )
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "2026\u5e74\u7b2c\u4e8c\u5b63\u5ea6\u5ba3\u5e03\u56de\u8d2d\u7684\u516c\u53f8",
+        "2026\u5e742\u5b63\u5ea6\u5ba3\u5e03\u56de\u8d2d\u7684\u516c\u53f8",
+    ],
+)
+def test_chinese_explicit_quarter_expands_to_its_full_date_range(prompt):
+    assert resolve_explicit_time_range(prompt) == (
+        date(2026, 4, 1),
+        date(2026, 6, 30),
+    )
+
+
 def test_quarter_without_year_uses_reference_year():
     assert resolve_explicit_time_range("Q4 有多少家公司解禁", date(2026, 8, 17)) == (
         date(2026, 10, 1),
