@@ -2221,6 +2221,50 @@ class AnalysisService:
     @staticmethod
     def _compile_known_request(prompt: str) -> Optional[QueryPlan]:
         """Compile stable multi-source request families without model-generated DAGs."""
+        completed_repurchases = AnalysisService._compile_known_completed_repurchases(prompt)
+        if completed_repurchases is not None:
+            return completed_repurchases
+        price_extrema = AnalysisService._compile_known_security_price_extrema(prompt)
+        if price_extrema is not None:
+            return price_extrema
+        block_trade = AnalysisService._compile_known_block_trade(prompt)
+        if block_trade is not None:
+            return block_trade
+        normalized_prompt = prompt.casefold()
+        if (
+            any(term in normalized_prompt for term in ("cash dividend total", "现金分红总额"))
+            and any(term in normalized_prompt for term in ("do not substitute", "不接受每股"))
+        ):
+            return QueryPlan(
+                interpretation=(
+                    "The requested total cash distribution cannot be derived from "
+                    "per-share dividend disclosures without a matching share-base "
+                    "snapshot."
+                ),
+                feasibility="unsupported",
+                requirements=[
+                    RequirementCoverage(
+                        requirement="Rank A-shares by total cash dividends.",
+                        status="unsupported",
+                        implementation=None,
+                        evidence=(
+                            "The connected dividend operation exposes per-share cash "
+                            "dividends, not a verified total distribution amount."
+                        ),
+                    )
+                ],
+                limitations=[
+                    "Per-share cash dividends are not a valid substitute for the "
+                    "requested total cash distribution."
+                ],
+                clarification_options=[
+                    "Ask for per-share cash dividends instead.",
+                    "Provide an audited total-distribution source.",
+                ],
+            )
+        unlock_count = AnalysisService._compile_known_unlock_distinct_count(prompt)
+        if unlock_count is not None:
+            return unlock_count
         plan = QueryPlan(
             interpretation="Compile a supported request from trusted local semantics.",
             intent={
@@ -3319,6 +3363,316 @@ class AnalysisService:
                 return plan
             return None
         return plan
+
+    @staticmethod
+    def _compile_known_completed_repurchases(prompt: str) -> Optional[QueryPlan]:
+        """Compile bounded lists of completed repurchase disclosures."""
+        normalized = prompt.casefold()
+        if not (
+            any(term in normalized for term in ("repurchase", "repurchases", "回购"))
+            and any(term in normalized for term in ("completed", "complete", "已完成"))
+        ):
+            return None
+        resolved = resolve_explicit_time_range(prompt)
+        if resolved is None:
+            return None
+        query = DataQuery(
+            query_id="completed_repurchase_disclosures",
+            operation="repurchase",
+            params={
+                "start_date": resolved[0].strftime("%Y%m%d"),
+                "end_date": resolved[1].strftime("%Y%m%d"),
+            },
+            fields=[
+                "ts_code",
+                "ann_date",
+                "end_date",
+                "proc",
+                "vol",
+                "amount",
+                "high_limit",
+                "low_limit",
+            ],
+            filters=[DataFilter(field="proc", operator="contains", value="完成")],
+            purpose="Retrieve completed repurchases announced inside the requested window.",
+        )
+        return QueryPlan(
+            interpretation="List completed A-share repurchases in the requested window.",
+            queries=[query],
+            requirements=[
+                RequirementCoverage(
+                    requirement="List companies with completed repurchases.",
+                    status="covered",
+                    implementation="Filter native repurchase disclosures by completion status.",
+                    evidence="repurchase exposes the disclosure status in proc.",
+                )
+            ],
+            answer_contract=AnswerContract(
+                result_query_id=query.query_id,
+                result_kind="table",
+                outputs=[
+                    {"field": "ts_code", "description": "A-share security code."},
+                    {"field": "ann_date", "description": "Repurchase announcement date."},
+                    {"field": "proc", "description": "Repurchase progress status."},
+                    {"field": "vol", "description": "Repurchased share volume."},
+                    {"field": "amount", "description": "Repurchased amount."},
+                ],
+            ),
+        )
+
+    @staticmethod
+    def _compile_known_security_price_extrema(prompt: str) -> Optional[QueryPlan]:
+        """Compile bounded high-and-low close questions for one security."""
+        normalized = prompt.casefold()
+        requests_high = any(term in normalized for term in ("highest", "maximum", "最高", "最大"))
+        requests_low = any(term in normalized for term in ("lowest", "minimum", "最低", "最小"))
+        requests_close = any(term in normalized for term in ("close", "closing price", "收盘价"))
+        if not (requests_high and requests_low and requests_close):
+            return None
+        security_code = AnalysisService._resolve_prompt_security_code(prompt)
+        resolved = resolve_explicit_time_range(prompt)
+        if security_code is None or resolved is None:
+            return None
+        query = DataQuery(
+            query_id="security_price_window",
+            operation="daily",
+            params={
+                "ts_code": security_code,
+                "start_date": resolved[0].strftime("%Y%m%d"),
+                "end_date": resolved[1].strftime("%Y%m%d"),
+            },
+            fields=["ts_code", "trade_date", "close"],
+            purpose="Retrieve daily closes for one security and bounded window.",
+        )
+        return QueryPlan(
+            interpretation="Calculate the observed high and low closes in the requested window.",
+            queries=[query],
+            result_pipeline=ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": "security_close_extrema",
+                    "steps": [
+                        {"operation": "drop_missing", "fields": ["close"]},
+                        {
+                            "operation": "summarize",
+                            "aggregations": [
+                                {
+                                    "output_field": "highest_close",
+                                    "field": "close",
+                                    "function": "max",
+                                },
+                                {
+                                    "output_field": "lowest_close",
+                                    "field": "close",
+                                    "function": "min",
+                                },
+                            ],
+                        },
+                    ],
+                }
+            ),
+            requirements=[
+                RequirementCoverage(
+                    requirement="Compare the highest and lowest observed close.",
+                    status="covered",
+                    implementation="Summarize audited daily closes inside the bounded window.",
+                    evidence="daily provides one close per security and trading date.",
+                )
+            ],
+            answer_contract=AnswerContract(
+                result_query_id="security_close_extrema",
+                result_kind="summary",
+                outputs=[
+                    {
+                        "field": "highest_close",
+                        "description": "Highest observed daily close in the requested window.",
+                    },
+                    {
+                        "field": "lowest_close",
+                        "description": "Lowest observed daily close in the requested window.",
+                    },
+                ],
+            ),
+        )
+
+    @staticmethod
+    def _compile_known_block_trade(prompt: str) -> Optional[QueryPlan]:
+        """Compile bounded block-trade detail and amount-ranking requests."""
+        normalized = prompt.casefold()
+        if not any(term in normalized for term in ("block trade", "block trades", "大宗交易")):
+            return None
+        resolved = resolve_explicit_time_range(prompt)
+        if resolved is None:
+            return None
+        security_code = AnalysisService._resolve_prompt_security_code(prompt)
+        ranks_amount = (
+            "amount" in normalized or "成交金额" in prompt
+        ) and any(term in normalized for term in ("top", "最多", "最高", "排名"))
+        start_date = resolved[0].strftime("%Y%m%d")
+        end_date = resolved[1].strftime("%Y%m%d")
+        if start_date == end_date and security_code is None:
+            params = {"trade_date": start_date}
+        else:
+            params = {"start_date": start_date, "end_date": end_date}
+            if security_code is not None:
+                params["ts_code"] = security_code
+        query = DataQuery(
+            query_id="block_trade_window",
+            operation="block_trade",
+            params=params,
+            fields=[
+                "ts_code",
+                "trade_date",
+                "price",
+                "vol",
+                "amount",
+                "buyer",
+                "seller",
+            ],
+            purpose="Retrieve block trades inside the requested bounded window.",
+        )
+        pipeline = None
+        result_query_id = query.query_id
+        outputs = [
+            {"field": "ts_code", "description": "A-share security code."},
+            {"field": "trade_date", "description": "Block-trade date."},
+            {"field": "price", "description": "Block-trade price."},
+            {"field": "vol", "description": "Block-trade volume."},
+            {"field": "amount", "description": "Block-trade amount."},
+            {"field": "buyer", "description": "Buyer branch."},
+            {"field": "seller", "description": "Seller branch."},
+        ]
+        if ranks_amount:
+            limit_match = re.search(r"(?:top|前)?\s*(\d+)\s*(?:只|家)?", normalized)
+            result_limit = int(limit_match.group(1)) if limit_match else 20
+            result_query_id = "block_trade_amount_ranking"
+            pipeline = ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": result_query_id,
+                    "steps": [
+                        {"operation": "drop_missing", "fields": ["amount"]},
+                        {
+                            "operation": "aggregate",
+                            "group_by": ["ts_code"],
+                            "aggregations": [
+                                {
+                                    "output_field": "total_amount",
+                                    "field": "amount",
+                                    "function": "sum",
+                                }
+                            ],
+                        },
+                        {
+                            "operation": "sort",
+                            "field": "total_amount",
+                            "direction": "desc",
+                        },
+                        {"operation": "limit", "count": result_limit},
+                    ],
+                }
+            )
+            outputs = [
+                {"field": "ts_code", "description": "A-share security code."},
+                {
+                    "field": "total_amount",
+                    "description": "Total block-trade amount in the requested window.",
+                },
+            ]
+        return QueryPlan(
+            interpretation="Retrieve bounded A-share block trades without estimation.",
+            queries=[query],
+            result_pipeline=pipeline,
+            requirements=[
+                RequirementCoverage(
+                    requirement="Retrieve or rank block trades in the requested window.",
+                    status="covered",
+                    implementation="Use the native block_trade operation.",
+                    evidence="block_trade exposes dated security-level transaction rows.",
+                )
+            ],
+            answer_contract=AnswerContract(
+                result_query_id=result_query_id,
+                result_kind="table",
+                outputs=outputs,
+            ),
+        )
+
+    @staticmethod
+    def _compile_known_unlock_distinct_count(prompt: str) -> Optional[QueryPlan]:
+        """Compile bounded unlock questions that count unique securities."""
+        normalized = prompt.casefold()
+        requests_unlocks = any(
+            term in normalized for term in ("unlock", "unlocks", "解禁")
+        )
+        requests_company_count = (
+            any(term in normalized for term in ("how many", "多少"))
+            and any(term in normalized for term in ("companies", "company", "家公司"))
+        )
+        if not requests_unlocks or not requests_company_count:
+            return None
+        resolved = resolve_explicit_time_range(prompt)
+        if resolved is None:
+            return None
+        query = DataQuery(
+            query_id="unlock_window",
+            operation="share_float",
+            params={
+                "start_date": resolved[0].strftime("%Y%m%d"),
+                "end_date": resolved[1].strftime("%Y%m%d"),
+            },
+            fields=["ts_code", "float_date"],
+            purpose="Retrieve every unlock event inside the requested window.",
+        )
+        return QueryPlan(
+            interpretation=(
+                "Count distinct A-share securities with at least one unlock event "
+                "inside the requested window."
+            ),
+            queries=[query],
+            result_pipeline=ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": "distinct_unlock_company_count",
+                    "steps": [
+                        {
+                            "operation": "summarize",
+                            "aggregations": [
+                                {
+                                    "output_field": "company_count",
+                                    "field": "ts_code",
+                                    "function": "count_distinct",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            requirements=[
+                RequirementCoverage(
+                    requirement=(
+                        "Count companies with unlock events in the requested window."
+                    ),
+                    status="covered",
+                    implementation="Count distinct security codes after complete retrieval.",
+                    evidence=(
+                        "share_float provides one or more unlock-event rows per security."
+                    ),
+                )
+            ],
+            answer_contract=AnswerContract(
+                result_query_id="distinct_unlock_company_count",
+                result_kind="summary",
+                outputs=[
+                    {
+                        "field": "company_count",
+                        "description": (
+                            "Distinct A-share securities with at least one unlock event."
+                        ),
+                    }
+                ],
+            ),
+        )
 
     def _validate_planner_candidate(
         self,
@@ -4506,9 +4860,26 @@ class AnalysisService:
             )
 
         rows: List[Dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
-            for result in pool.map(_fetch_date, dates):
+        for batch_start in range(0, len(dates), MAX_QUERIES_PER_ANALYSIS):
+            batch_dates = dates[
+                batch_start : batch_start + MAX_QUERIES_PER_ANALYSIS
+            ]
+            with ThreadPoolExecutor(max_workers=len(batch_dates)) as pool:
+                batch_results = list(pool.map(_fetch_date, batch_dates))
+            for result in batch_results:
                 if result.status != QueryStatus.SUCCESS:
+                    if (
+                        query.operation == "share_float"
+                        and result.error is not None
+                        and "pagination repeated a page" in result.error.message
+                    ):
+                        return self._execute_share_float_range_by_security(
+                            query,
+                            start_date=start_date,
+                            end_date=end_date,
+                            api_route=api_route,
+                            request_id=request_id,
+                        )
                     return result
                 rows.extend(result.rows)
         audited_shape = resolve_query_shape(query.operation, query.params)
@@ -4530,6 +4901,194 @@ class AnalysisService:
             completeness="complete",
             completeness_evidence=completeness_evidence,
             retrieval_partition_count=day_count,
+        )
+
+    def _execute_share_float_range_by_security(
+        self,
+        query: DataQuery,
+        *,
+        start_date: date,
+        end_date: date,
+        api_route: str,
+        request_id: str,
+    ) -> QueryResult:
+        """Recover a saturated unlock window with one bounded query per security."""
+        universe_rows: List[Dict[str, Any]] = []
+        for list_status in ("L", "D", "P"):
+            universe_result = self._executor.execute(
+                DataQuery(
+                    query_id=f"{query.query_id}-universe-{list_status}",
+                    operation="stock_basic",
+                    params={"list_status": list_status},
+                    fields=["ts_code", "name"],
+                    purpose="Enumerate the complete A-share security catalog.",
+                ),
+                api_route=api_route,
+                request_id=request_id,
+            )
+            if universe_result.status != QueryStatus.SUCCESS:
+                return universe_result
+            universe_rows.extend(universe_result.rows)
+
+        security_codes = sorted(
+            {
+                str(row["ts_code"])
+                for row in universe_rows
+                if row.get("ts_code")
+                and str(row["ts_code"]).endswith(VALID_SECURITY_SUFFIXES)
+            }
+        )
+        if not security_codes or len(security_codes) > MAX_DYNAMIC_HOLDER_QUERIES:
+            return QueryResult(
+                query_id=query.query_id,
+                provider=self._provider.name,
+                operation=query.operation,
+                status=QueryStatus.ERROR,
+                error=ServiceError(
+                    source="system",
+                    message=(
+                        "share_float window recovery requires a non-empty security "
+                        f"catalog of at most {MAX_DYNAMIC_HOLDER_QUERIES} entries; "
+                        f"received {len(security_codes)}."
+                    ),
+                ),
+            )
+
+        requested_fields = list(query.fields)
+        fetch_fields = list(dict.fromkeys([*requested_fields, "float_date"]))
+
+        def _fetch_security(security_code: str) -> QueryResult:
+            security_query = query.model_copy(deep=True)
+            security_query.query_id = f"{query.query_id}-{security_code}"
+            security_query.fields = fetch_fields
+            return self._execute_share_float_security_partition(
+                security_query,
+                security_code=security_code,
+                start_date=start_date,
+                end_date=end_date,
+                api_route=api_route,
+                request_id=request_id,
+            )
+
+        logger.info(
+            "share_float_window_recovery_started request_id=%s securities=%s "
+            "start_date=%s end_date=%s",
+            request_id,
+            len(security_codes),
+            start_date,
+            end_date,
+        )
+        rows: List[Dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
+            for result in pool.map(_fetch_security, security_codes):
+                if result.status != QueryStatus.SUCCESS:
+                    return result
+                for row in result.rows:
+                    float_date = str(row.get("float_date") or "")
+                    if start_date.strftime("%Y%m%d") <= float_date <= end_date.strftime(
+                        "%Y%m%d"
+                    ):
+                        rows.append(
+                            {field: row.get(field) for field in requested_fields}
+                        )
+        logger.info(
+            "share_float_window_recovery_completed request_id=%s securities=%s rows=%s",
+            request_id,
+            len(security_codes),
+            len(rows),
+        )
+        return QueryResult(
+            query_id=query.query_id,
+            provider=self._provider.name,
+            operation=query.operation,
+            status=QueryStatus.SUCCESS,
+            columns=requested_fields,
+            rows=rows,
+            row_count=len(rows),
+            completeness="complete",
+            completeness_evidence=[
+                "query_shape=bounded_unlock_range",
+                "execution_strategy=security_window_fanout",
+                f"covered_securities={len(security_codes)}",
+                f"covered_dates={start_date:%Y%m%d}..{end_date:%Y%m%d}",
+                "completeness_policy=all_security_queries_completed",
+            ],
+            retrieval_partition_count=len(security_codes),
+        )
+
+    def _execute_share_float_security_partition(
+        self,
+        query: DataQuery,
+        *,
+        security_code: str,
+        start_date: date,
+        end_date: date,
+        api_route: str,
+        request_id: str,
+    ) -> QueryResult:
+        """Bisect only saturated per-security unlock windows until complete."""
+        partition_query = query.model_copy(deep=True)
+        partition_query.params = {
+            "ts_code": security_code,
+            "start_date": start_date.strftime("%Y%m%d"),
+            "end_date": end_date.strftime("%Y%m%d"),
+        }
+        result = self._executor.execute(
+            partition_query,
+            api_route=api_route,
+            request_id=request_id,
+        )
+        if result.status == QueryStatus.SUCCESS:
+            return result
+        if (
+            result.error is None
+            or "pagination repeated a page" not in result.error.message
+        ):
+            return result
+        if start_date >= end_date:
+            return result
+
+        midpoint = start_date + timedelta(days=(end_date - start_date).days // 2)
+        left = self._execute_share_float_security_partition(
+            query,
+            security_code=security_code,
+            start_date=start_date,
+            end_date=midpoint,
+            api_route=api_route,
+            request_id=request_id,
+        )
+        if left.status != QueryStatus.SUCCESS:
+            return left
+        right = self._execute_share_float_security_partition(
+            query,
+            security_code=security_code,
+            start_date=midpoint + timedelta(days=1),
+            end_date=end_date,
+            api_route=api_route,
+            request_id=request_id,
+        )
+        if right.status != QueryStatus.SUCCESS:
+            return right
+        rows = [*left.rows, *right.rows]
+        return QueryResult(
+            query_id=query.query_id,
+            provider=self._provider.name,
+            operation=query.operation,
+            status=QueryStatus.SUCCESS,
+            columns=list(query.fields),
+            rows=rows,
+            row_count=len(rows),
+            completeness="complete",
+            completeness_evidence=[
+                "execution_strategy=recursive_security_window_partition",
+                f"security={security_code}",
+                f"covered_dates={start_date:%Y%m%d}..{end_date:%Y%m%d}",
+                "completeness_policy=all_subpartitions_complete",
+            ],
+            retrieval_partition_count=(
+                (left.retrieval_partition_count or 1)
+                + (right.retrieval_partition_count or 1)
+            ),
         )
 
     def _execute_full_market_range_by_date(

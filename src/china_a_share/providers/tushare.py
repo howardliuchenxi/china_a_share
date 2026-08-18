@@ -27,7 +27,7 @@ PAGINATED_OPERATION_LIMITS = {
     "daily": 6_000,
     "daily_basic": 6_000,
     "block_trade": 1_000,
-    "share_float": 6_000,
+    "share_float": 5_000,
     "stock_st": 1_000,
 }
 

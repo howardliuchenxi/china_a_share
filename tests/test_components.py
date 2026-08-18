@@ -4308,6 +4308,147 @@ def test_workflow_binds_market_wide_unlocks_to_the_resolved_window():
     assert ASharePlanValidator._uses_bounded_date_fanout(result.queries[0])
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "How many distinct companies have unlocks in Q4 2026?",
+        "Q4 2026 有多少家公司有限售股解禁？",
+    ],
+)
+def test_workflow_precompiles_unlock_company_counts_as_distinct_securities(prompt):
+    result = AnalysisService._compile_known_request(
+        f"{prompt}\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20261001\n"
+        "event_end_date=20261231\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.queries[0].operation == "share_float"
+    assert result.queries[0].params == {
+        "start_date": "20261001",
+        "end_date": "20261231",
+    }
+    summary = result.result_pipeline.steps[0]
+    assert summary.operation == "summarize"
+    assert summary.aggregations[0].field == "ts_code"
+    assert summary.aggregations[0].function == "count_distinct"
+    assert result.answer_contract.required_completeness == "allow_unknown"
+
+
+def test_workflow_precompiles_block_trade_amount_ranking():
+    prompt = (
+        "本月大宗交易成交金额最多的20只股票\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260801\n"
+        "event_end_date=20260817\n"
+        "</trusted_analysis_window>"
+    )
+    result = AnalysisService._compile_known_request(prompt)
+    result = AnalysisService._normalize_plan_for_request(result, prompt)
+
+    assert result is not None
+    assert result.queries[0].operation == "block_trade"
+    assert result.queries[0].params == {
+        "start_date": "20260801",
+        "end_date": "20260817",
+    }
+    assert [step.operation for step in result.result_pipeline.steps] == [
+        "drop_missing",
+        "aggregate",
+        "sort",
+        "limit",
+    ]
+    assert result.result_pipeline.steps[1].group_by == ["ts_code"]
+    assert result.result_pipeline.steps[-1].count == 20
+
+
+def test_workflow_precompiles_security_close_extrema():
+    result = AnalysisService._compile_known_request(
+        "Compare Kweichow Moutai's highest and lowest close in June 2026.\n\n"
+        "<trusted_security_resolution>\n"
+        "name=Kweichow Moutai\n"
+        "ts_code=600519.SH\n"
+        "</trusted_security_resolution>\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260601\n"
+        "event_end_date=20260630\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.queries[0].operation == "daily"
+    assert result.queries[0].params == {
+        "ts_code": "600519.SH",
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+    summary = result.result_pipeline.steps[-1]
+    assert summary.operation == "summarize"
+    assert {
+        (item.output_field, item.function) for item in summary.aggregations
+    } == {("highest_close", "max"), ("lowest_close", "min")}
+
+
+def test_workflow_precompiles_completed_repurchase_filter():
+    prompt = (
+        "过去90天已完成回购的公司有哪些\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260519\n"
+        "event_end_date=20260817\n"
+        "</trusted_analysis_window>"
+    )
+    result = AnalysisService._compile_known_request(prompt)
+    result = AnalysisService._normalize_plan_for_request(result, prompt)
+
+    assert result is not None
+    assert result.queries[0].operation == "repurchase"
+    assert result.queries[0].params == {
+        "start_date": "20260519",
+        "end_date": "20260817",
+    }
+    assert [item.model_dump() for item in result.queries[0].filters] == [
+        {"field": "proc", "operator": "contains", "value": "完成"}
+    ]
+
+
+def test_workflow_precompiles_security_block_trade_window():
+    result = AnalysisService._compile_known_request(
+        "平安银行过去三个月的大宗交易\n\n"
+        "<trusted_security_resolution>\n"
+        "name=平安银行\n"
+        "ts_code=000001.SZ\n"
+        "</trusted_security_resolution>\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260517\n"
+        "event_end_date=20260817\n"
+        "</trusted_analysis_window>"
+    )
+
+    assert result is not None
+    assert result.queries[0].params == {
+        "ts_code": "000001.SZ",
+        "start_date": "20260517",
+        "end_date": "20260817",
+    }
+    assert result.result_pipeline is None
+    assert result.answer_contract.result_kind == "table"
+
+
+def test_workflow_rejects_total_cash_dividend_without_total_distribution_data():
+    result = AnalysisService._compile_known_request(
+        "2025年现金分红总额最高的A股，不接受每股分红替代"
+    )
+
+    assert result is not None
+    assert result.feasibility == "unsupported"
+    assert result.queries == []
+    assert result.requirements[0].status == "unsupported"
+    assert result.clarification_options
+
+
+
 def test_workflow_precompiles_repurchase_ranking_at_security_grain():
     result = AnalysisService._compile_known_request(
         "Rank 2026 A-share repurchase plans by announced upper amount."
@@ -6175,6 +6316,182 @@ def test_disclosure_range_uses_exact_calendar_date_queries():
         ("share_float", {"float_date": "20261002"}),
         ("share_float", {"float_date": "20261003"}),
     ]
+
+
+def test_saturated_unlock_range_recovers_once_by_complete_security_window():
+    class SaturatedUnlockProvider(FakeMarketDataProvider):
+        def supports(self, operation):
+            return operation in {"share_float", "stock_basic"}
+
+        def query(
+            self,
+            operation,
+            params,
+            fields,
+            *,
+            api_route,
+            request_id,
+            query_id,
+        ):
+            self.calls.append((operation, dict(params)))
+            if operation == "stock_basic":
+                codes = {
+                    "L": ["000001.SZ", "000002.SZ"],
+                    "D": ["000002.SZ", "600001.SH"],
+                    "P": [],
+                }[params["list_status"]]
+                return pd.DataFrame(
+                    {
+                        "ts_code": codes,
+                        "name": [f"Security {code}" for code in codes],
+                    }
+                )
+            if "float_date" in params:
+                if params["float_date"] == "20260102":
+                    raise ValueError(
+                        "share_float pagination repeated a page at offset 10000."
+                    )
+                return pd.DataFrame(columns=fields)
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": params["ts_code"],
+                        "float_date": "20260102",
+                        "float_share": 10.0,
+                    },
+                    {
+                        "ts_code": params["ts_code"],
+                        "float_date": "20260205",
+                        "float_share": 20.0,
+                    },
+                ]
+            )
+
+    provider = SaturatedUnlockProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    query = DataQuery(
+        query_id="annual-unlocks",
+        operation="share_float",
+        params={"start_date": "20260101", "end_date": "20260130"},
+        fields=["ts_code", "float_date", "float_share"],
+        purpose="Read one complete unlock window.",
+    )
+
+    result = service._execute_disclosure_range_by_date(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.completeness == "complete"
+    assert result.row_count == 3
+    assert result.retrieval_partition_count == 3
+    assert "execution_strategy=security_window_fanout" in (
+        result.completeness_evidence
+    )
+    security_calls = sorted(
+        (
+            params
+            for operation, params in provider.calls
+            if operation == "share_float" and "ts_code" in params
+        ),
+        key=lambda params: params["ts_code"],
+    )
+    assert security_calls == [
+        {
+            "ts_code": "000001.SZ",
+            "start_date": "20260101",
+            "end_date": "20260130",
+        },
+        {
+            "ts_code": "000002.SZ",
+            "start_date": "20260101",
+            "end_date": "20260130",
+        },
+        {
+            "ts_code": "600001.SH",
+            "start_date": "20260101",
+            "end_date": "20260130",
+        },
+    ]
+    assert all(row["float_date"] == "20260102" for row in result.rows)
+    date_calls = [
+        params
+        for operation, params in provider.calls
+        if operation == "share_float" and "float_date" in params
+    ]
+    assert len(date_calls) < 15
+
+
+def test_saturated_security_unlock_window_is_recursively_partitioned():
+    class SaturatedSecurityProvider(FakeMarketDataProvider):
+        def query(
+            self,
+            operation,
+            params,
+            fields,
+            *,
+            api_route,
+            request_id,
+            query_id,
+        ):
+            self.calls.append((operation, dict(params)))
+            start = datetime.strptime(params["start_date"], "%Y%m%d").date()
+            end = datetime.strptime(params["end_date"], "%Y%m%d").date()
+            if start < end:
+                raise ValueError(
+                    "share_float pagination repeated a page at offset 10000."
+                )
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": params["ts_code"],
+                        "float_date": params["start_date"],
+                        "float_share": 10.0,
+                    }
+                ]
+            )
+
+    provider = SaturatedSecurityProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    query = DataQuery(
+        query_id="security-unlocks",
+        operation="share_float",
+        fields=["ts_code", "float_date", "float_share"],
+        purpose="Read one security unlock window.",
+    )
+
+    result = service._execute_share_float_security_partition(
+        query,
+        security_code="000001.SZ",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 4),
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.completeness == "complete"
+    assert result.row_count == 4
+    assert result.retrieval_partition_count == 4
+    assert [row["float_date"] for row in result.rows] == [
+        "20260101",
+        "20260102",
+        "20260103",
+        "20260104",
+    ]
+    assert len(provider.calls) == 7
 
 
 def test_full_market_range_proves_all_trading_date_snapshots_complete():
