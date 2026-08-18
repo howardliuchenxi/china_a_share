@@ -514,15 +514,15 @@ def test_quarterly_cash_dividend_ranking_keeps_one_highest_disclosure_per_compan
     assert ASharePlanValidator._uses_bounded_date_fanout(plan.queries[0]) is True
     assert [step.operation for step in plan.result_pipeline.steps] == [
         "drop_missing",
+        "inner_join",
         "sort",
         "distinct",
         "sort",
         "limit",
-        "join_fields",
         "select_fields",
     ]
-    assert plan.result_pipeline.steps[2].fields == ["ts_code"]
-    assert plan.result_pipeline.steps[4].count == 20
+    assert plan.result_pipeline.steps[3].fields == ["ts_code"]
+    assert plan.result_pipeline.steps[5].count == 20
     assert {output.field for output in plan.answer_contract.outputs} == {
         "ts_code",
         "name",
@@ -543,11 +543,11 @@ def test_positive_cash_dividend_ranking_filters_before_ascending_company_rank():
     assert [step.operation for step in plan.result_pipeline.steps] == [
         "drop_missing",
         "filter",
+        "inner_join",
         "sort",
         "distinct",
         "sort",
         "limit",
-        "join_fields",
         "select_fields",
     ]
     positive_filter = plan.result_pipeline.steps[1]
@@ -556,9 +556,9 @@ def test_positive_cash_dividend_ranking_filters_before_ascending_company_rank():
         "gt",
         0,
     )
-    assert plan.result_pipeline.steps[2].direction == "asc"
-    assert plan.result_pipeline.steps[4].direction == "asc"
-    assert plan.result_pipeline.steps[5].count == 8
+    assert plan.result_pipeline.steps[3].direction == "asc"
+    assert plan.result_pipeline.steps[5].direction == "asc"
+    assert plan.result_pipeline.steps[6].count == 8
     assert "lowest positive" in plan.interpretation
 
 

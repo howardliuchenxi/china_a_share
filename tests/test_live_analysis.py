@@ -390,6 +390,7 @@ def _assert_quality_invariants(
         )
         values = [row["cash_div_tax"] for row in result.rows]
         assert len(values) == expected_count
+        assert all(row["name"] for row in result.rows)
         assert all(value is not None for value in values)
         ascending = any(
             term in prompt.casefold()

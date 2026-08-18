@@ -3665,6 +3665,15 @@ class AnalysisService:
                     "value": 0,
                 }
             )
+        ranking_steps.append(
+            {
+                "operation": "inner_join",
+                "right_source_query_id": company_query.query_id,
+                "join_on": ["ts_code"],
+                "fields": {"name": "name"},
+                "cardinality": "many_to_one",
+            }
+        )
         ranking_steps.extend(
             [
                 {
@@ -3687,13 +3696,6 @@ class AnalysisService:
             output_query_id="cash_dividend_company_ranking",
             steps=[
                 *ranking_steps,
-                {
-                    "operation": "join_fields",
-                    "right_source_query_id": company_query.query_id,
-                    "join_on": ["ts_code"],
-                    "fields": {"name": "name"},
-                    "cardinality": "many_to_one",
-                },
                 {
                     "operation": "select_fields",
                     "fields": ["ts_code", "name", "cash_div_tax", "ann_date"],
