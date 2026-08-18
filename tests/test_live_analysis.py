@@ -703,11 +703,21 @@ def test_live_multi_turn_valuation_refinement(live_analysis_service) -> None:
     assert refined.plan is not None
     assert refined.plan.result_pipeline is not None
     assert [step.operation for step in refined.plan.result_pipeline.steps] == [
+        "drop_missing",
+        "filter",
+        "filter",
+        "quantile_filter",
+        "quantile_filter",
         "filter",
         "sort",
         "limit",
         "join_fields",
     ]
+    assert sum(
+        step.operation == "quantile_filter"
+        for step in refined.plan.result_pipeline.steps
+    ) == 2
+    assert "previously confirmed valuation cohort" in refined.plan.interpretation
     result = next(
         item
         for item in refined.results

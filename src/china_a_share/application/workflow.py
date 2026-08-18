@@ -2161,9 +2161,10 @@ class AnalysisService:
         """Plan under request-scoped observability and deterministic reconciliation."""
         context_token = ANALYSIS_REQUEST_ID.set(request_id)
         try:
+            planner_request = self._with_conversation_context(planning_request)
+            normalization_prompt = planner_request.prompt
             plan = self._compile_known_request(planning_request.prompt)
             if plan is None:
-                planner_request = self._with_conversation_context(planning_request)
                 validated_planner = getattr(self._planner, "plan_validated", None)
                 if callable(validated_planner):
                     plan = validated_planner(
@@ -2179,7 +2180,7 @@ class AnalysisService:
                     plan = self._planner.plan(planner_request, operations)
             normalized = self._normalize_plan_for_request(
                 plan,
-                planning_request.prompt,
+                normalization_prompt,
             )
             ASharePlanValidator.normalize_prompt_classifications(
                 original_prompt,
@@ -6179,6 +6180,8 @@ class AnalysisService:
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
+        if AnalysisService._compile_conversation_valuation_refinement(plan, prompt):
+            return plan
         if AnalysisService._compile_industry_valuation_dividend(plan, prompt):
             return plan
         AnalysisService._compile_holder_concentration_ranking(plan, prompt)
@@ -6270,6 +6273,247 @@ class AnalysisService:
         # accidentally revive a request for unavailable private or order-level data.
         AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         return plan
+
+    @staticmethod
+    def _compile_conversation_valuation_refinement(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> bool:
+        """Apply current valuation refinements to the latest confirmed cohort."""
+        current_match = re.search(
+            r"<current_analysis_request>\s*(.*?)\s*</current_analysis_request>",
+            prompt,
+            re.DOTALL,
+        )
+        turn_matches = re.findall(
+            r"<turn\s+index=\"\d+\">\s*(.*?)\s*</turn>",
+            prompt,
+            re.DOTALL,
+        )
+        if current_match is None or not turn_matches:
+            return False
+        current_prompt = current_match.group(1).strip()
+        latest_turn = turn_matches[-1]
+        request_match = re.search(r"user_request=(.+)", latest_turn)
+        interpretation_match = re.search(
+            r"validated_interpretation=(.+)",
+            latest_turn,
+        )
+        if request_match is None or interpretation_match is None:
+            return False
+        try:
+            previous_prompt = json.loads(request_match.group(1).strip())
+            previous_interpretation = json.loads(
+                interpretation_match.group(1).strip()
+            )
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(previous_prompt, str) or not isinstance(
+            previous_interpretation,
+            str,
+        ):
+            return False
+        if not any(
+            term in current_prompt
+            for term in ("\u53ea\u4fdd\u7559", "\u4ecd\u4fdd\u7559", "\u6309", "\u524d")
+        ):
+            return False
+        resolved_fields = AnalysisService._resolve_prompt_snapshot_fields(
+            current_prompt
+        )
+        if not resolved_fields:
+            return False
+        snapshot_date_match = re.search(r"(?<!\d)(20\d{6})(?!\d)", previous_interpretation)
+        previous_compilation_prompt = previous_prompt
+        if snapshot_date_match is not None:
+            snapshot_date = snapshot_date_match.group(1)
+            previous_compilation_prompt += (
+                "\n\n<trusted_analysis_window>\n"
+                f"event_start_date={snapshot_date}\n"
+                f"event_end_date={snapshot_date}\n"
+                "</trusted_analysis_window>"
+            )
+        base_plan = AnalysisService._compile_known_request(
+            previous_compilation_prompt
+        )
+        if base_plan is None or base_plan.result_pipeline is None:
+            return False
+        source_query = next(
+            (
+                query
+                for query in base_plan.queries
+                if query.query_id == base_plan.result_pipeline.source_query_id
+                and query.operation == "daily_basic"
+            ),
+            None,
+        )
+        if source_query is None:
+            return False
+        operations = [
+            step.operation for step in base_plan.result_pipeline.steps
+        ]
+        if "sort" not in operations or "limit" not in operations:
+            return False
+        sort_index = operations.index("sort")
+        limit_index = operations.index("limit", sort_index + 1)
+        trailing_steps = base_plan.result_pipeline.steps[limit_index + 1 :]
+        if any(step.operation != "join_fields" for step in trailing_steps):
+            return False
+
+        source_fields = set(source_query.fields)
+        field_remapping = {
+            "dv_ratio": "dv_ttm"
+            for _, field in resolved_fields
+            if field == "dv_ratio"
+            and "dv_ttm" in source_fields
+            and "dv_ratio" not in source_fields
+        }
+        refinement_steps = list(
+            base_plan.result_pipeline.steps[:sort_index]
+        )
+        filter_descriptions = []
+        for _, requested_field in resolved_fields:
+            threshold = AnalysisService._resolve_prompt_numeric_threshold(
+                current_prompt,
+                requested_field,
+            )
+            if threshold is None:
+                continue
+            field = field_remapping.get(requested_field, requested_field)
+            comparison, value = threshold
+            candidate = ResultPipelineStep(
+                operation="filter",
+                field=field,
+                comparison=comparison,
+                value=value,
+            )
+            if candidate not in refinement_steps:
+                refinement_steps.append(candidate)
+            symbol = {"gt": ">", "ge": ">=", "le": "<=", "lt": "<"}[
+                comparison
+            ]
+            filter_descriptions.append(f"{field} {symbol} {value:g}")
+
+        current_sort = None
+        for alias, requested_field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items():
+            direction_match = re.search(
+                rf"{re.escape(alias)}.{{0,12}}(\u6700\u4f4e|\u6700\u5c0f|\u6700\u5c11|\u6700\u9ad8|\u6700\u5927|\u6700\u591a|"
+                rf"\u4ece\u4f4e\u5230\u9ad8|\u4ece\u9ad8\u5230\u4f4e|\u5347\u5e8f|\u964d\u5e8f|ascending|descending)",
+                current_prompt,
+                re.IGNORECASE,
+            )
+            if direction_match is None:
+                continue
+            direction = (
+                "asc"
+                if direction_match.group(1).casefold()
+                in {"\u6700\u4f4e", "\u6700\u5c0f", "\u6700\u5c11", "\u4ece\u4f4e\u5230\u9ad8", "\u5347\u5e8f", "ascending"}
+                else "desc"
+            )
+            current_sort = ResultPipelineStep(
+                operation="sort",
+                field=field_remapping.get(requested_field, requested_field),
+                direction=direction,
+            )
+            break
+        if current_sort is None:
+            current_sort = base_plan.result_pipeline.steps[sort_index]
+        limit_match = re.search(r"(?:Top|top|\u524d)\s*(\d+)", current_prompt)
+        current_limit = ResultPipelineStep(
+            operation="limit",
+            count=(
+                int(limit_match.group(1))
+                if limit_match is not None
+                else base_plan.result_pipeline.steps[limit_index].count
+            ),
+        )
+        refinement_steps.extend(
+            [current_sort, current_limit, *trailing_steps]
+        )
+
+        requests_name = "\u540d\u79f0" in current_prompt
+        requested_output_fields = ["ts_code"]
+        if requests_name:
+            requested_output_fields.append("name")
+        requested_output_fields.extend(
+            field_remapping.get(field, field) for _, field in resolved_fields
+        )
+        available_outputs = {
+            output.field: output
+            for output in base_plan.answer_contract.outputs
+        }
+        if any(
+            field not in available_outputs
+            for field in requested_output_fields
+            if field != "name"
+        ):
+            return False
+        base_queries = [
+            query.model_copy(deep=True) for query in base_plan.queries
+        ]
+        if requests_name and "name" not in available_outputs:
+            name_query = DataQuery(
+                query_id="conversation_valuation_names",
+                operation="stock_basic",
+                params={"list_status": "L"},
+                fields=["ts_code", "name"],
+                purpose="Retrieve company names for the refined valuation rows.",
+            )
+            base_queries.append(name_query)
+            refinement_steps.append(
+                ResultPipelineStep(
+                    operation="join_fields",
+                    right_source_query_id=name_query.query_id,
+                    join_on=["ts_code"],
+                    fields={"name": "name"},
+                    cardinality="many_to_one",
+                )
+            )
+
+        sort_direction = (
+            "ascending" if current_sort.direction == "asc" else "descending"
+        )
+        filter_clause = (
+            ", apply " + " and ".join(filter_descriptions)
+            if filter_descriptions
+            else ""
+        )
+        plan.interpretation = (
+            "Starting from the previously confirmed valuation cohort"
+            f"{filter_clause}, sort {current_sort.field} {sort_direction}, then "
+            f"return the first {current_limit.count} rows with the requested fields."
+        )
+        plan.intent = None
+        plan.feasibility = "supported"
+        plan.requirements = [
+            requirement.model_copy(deep=True)
+            for requirement in base_plan.requirements
+        ]
+        plan.constraints = []
+        plan.queries = base_queries
+        plan.execution_plan = None
+        plan.result_pipeline = ResultPipeline(
+            source_query_id=base_plan.result_pipeline.source_query_id,
+            output_query_id="conversation_valuation_refinement",
+            steps=refinement_steps,
+        )
+        plan.answer_contract = AnswerContract(
+            result_query_id=plan.result_pipeline.output_query_id,
+            result_kind="table",
+            outputs=[
+                (
+                    available_outputs[field].model_copy(deep=True)
+                    if field in available_outputs
+                    else {
+                        "field": "name",
+                        "description": "A-share company name.",
+                    }
+                )
+                for field in dict.fromkeys(requested_output_fields)
+            ],
+        )
+        plan.limitations = list(base_plan.limitations)
+        return True
 
     @staticmethod
     def _compile_holder_concentration_ranking(

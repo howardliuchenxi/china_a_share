@@ -3,7 +3,11 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from china_a_share.application.workflow import ASharePlanValidator, AnalysisService
+from china_a_share.application.workflow import (
+    ASharePlanValidator,
+    AnalysisService,
+    DataQueryExecutor,
+)
 from china_a_share.core.contracts import (
     AnswerContract,
     AnalysisConversationTurn,
@@ -20,6 +24,7 @@ from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 
 class _CatalogProvider:
     name = "tushare"
+    operation_names = ("stock_basic", "daily_basic", "dividend")
 
     @staticmethod
     def supports(operation: str) -> bool:
@@ -712,19 +717,47 @@ def test_multi_turn_valuation_refinement_preserves_metric_and_explicit_order():
     plan.execution_plan = None
     plan.result_pipeline = None
     prompt = (
-        "<analysis_conversation_context>\n"
-        "<turn index=\"1\">\n"
-        "user_request=\"Find low PE, low PB, and high dividend yield stocks\"\n"
-        "validated_interpretation=\"Use trailing dividend yield.\"\n"
-        "</turn>\n"
-        "</analysis_conversation_context>\n"
-        "<current_analysis_request>\n"
         "\u53ea\u4fdd\u7559\u80a1\u606f\u7387\u5927\u4e8e0\u7684\uff0c\u6309\u80a1\u606f\u7387\u4ece\u9ad8\u5230\u4f4e\u7ed9\u6211\u524d5\u5bb6\uff0c"
-        "\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5e02\u76c8\u7387\u3001\u5e02\u51c0\u7387\u548c\u80a1\u606f\u7387\n"
-        "</current_analysis_request>"
+        "\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5e02\u76c8\u7387\u3001\u5e02\u51c0\u7387\u548c\u80a1\u606f\u7387"
+    )
+    class StaticPlanner:
+        name = "planner"
+
+        def plan_validated(self, request, operations, validate):
+            assert "<analysis_conversation_context>" in request.prompt
+            return validate(plan.model_copy(deep=True))
+
+    provider = _CatalogProvider()
+    service = AnalysisService(
+        planner=StaticPlanner(),
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    planning_prompt = (
+        prompt
+        + "\n\n<trusted_analysis_window>\n"
+        + "event_start_date=20260817\n"
+        + "event_end_date=20260817\n"
+        + "</trusted_analysis_window>"
     )
 
-    result = AnalysisService._normalize_plan_for_request(plan, prompt)
+    result = service._plan_with_request_context(
+        "multi-turn-test",
+        AnalysisRequest(
+            prompt=planning_prompt,
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt="\u627e\u4f4ePE\u3001\u4f4ePB\u3001\u9ad8\u80a1\u606f\u7387\u7684\u5341\u53ea\u80a1\u7968",
+                    interpretation=(
+                        "Using the completed 20260817 valuation snapshot."
+                    ),
+                )
+            ],
+        ),
+        prompt,
+        [],
+    )
 
     assert [query.operation for query in result.queries] == [
         "daily_basic",
@@ -732,18 +765,25 @@ def test_multi_turn_valuation_refinement_preserves_metric_and_explicit_order():
     ]
     assert result.queries[0].fields == [
         "ts_code",
-        "trade_date",
-        "dv_ttm",
         "pe",
         "pb",
+        "dv_ttm",
     ]
     assert [step.operation for step in result.result_pipeline.steps] == [
+        "drop_missing",
+        "filter",
+        "filter",
+        "quantile_filter",
+        "quantile_filter",
         "filter",
         "sort",
         "limit",
         "join_fields",
     ]
-    filter_step, sort_step, limit_step, join_step = result.result_pipeline.steps
+    filter_step = result.result_pipeline.steps[5]
+    sort_step = result.result_pipeline.steps[6]
+    limit_step = result.result_pipeline.steps[7]
+    join_step = result.result_pipeline.steps[8]
     assert (filter_step.field, filter_step.comparison, filter_step.value) == (
         "dv_ttm",
         "gt",
@@ -751,7 +791,7 @@ def test_multi_turn_valuation_refinement_preserves_metric_and_explicit_order():
     )
     assert (sort_step.field, sort_step.direction) == ("dv_ttm", "desc")
     assert limit_step.count == 5
-    assert join_step.right_source_query_id == "composite_valuation_names"
+    assert join_step.right_source_query_id == "conversation_valuation_names"
     assert {output.field for output in result.answer_contract.outputs} == {
         "ts_code",
         "name",
@@ -759,6 +799,9 @@ def test_multi_turn_valuation_refinement_preserves_metric_and_explicit_order():
         "pb",
         "dv_ttm",
     }
+    assert "previously confirmed valuation cohort" in result.interpretation
+    assert "dv_ttm > 0" in result.interpretation
+    assert "first 5 rows" in result.interpretation
     ASharePlanValidator(_CatalogProvider()).validate(result)
 
 
