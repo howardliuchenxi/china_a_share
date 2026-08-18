@@ -669,10 +669,10 @@ function ResultTable({
           {Object.entries(result.summary).map(([label, value]) => (
             <div key={label}>
               <dt>
-                <span>{LEGACY_SUMMARY_METADATA[label]?.label ?? label}</span>
+                <span>{LEGACY_SUMMARY_METADATA[label]?.label ?? resultColumnMetadata[label]?.label ?? label}</span>
                 {summaryDescription(label, result.summary_metadata?.[label]) && (
                   <TermHelp
-                    label={LEGACY_SUMMARY_METADATA[label]?.label ?? label}
+                    label={LEGACY_SUMMARY_METADATA[label]?.label ?? resultColumnMetadata[label]?.label ?? label}
                     description={summaryDescription(label, result.summary_metadata?.[label])!}
                   />
                 )}

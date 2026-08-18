@@ -220,15 +220,16 @@ def _assert_quality_invariants(
         }
         for aggregation in summary.aggregations:
             comparison = comparisons_by_output[aggregation.field]
-            series = pd.to_numeric(
-                source_frame[comparison.field], errors="coerce"
-            )
+            source_series = source_frame[comparison.field]
+            if comparison.comparison == "eq":
+                expected = int((source_series == comparison.value).sum())
+                assert result_row[aggregation.output_field] == expected
+                continue
+            series = pd.to_numeric(source_series, errors="coerce")
             if comparison.comparison == "gt":
                 expected = int((series > comparison.value).sum())
             elif comparison.comparison == "ge":
                 expected = int((series >= comparison.value).sum())
-            elif comparison.comparison == "eq":
-                expected = int((series == comparison.value).sum())
             elif comparison.comparison == "le":
                 expected = int((series <= comparison.value).sum())
             else:

@@ -87,6 +87,8 @@ export const DATA_DICTIONARY_ENTRIES: DictionaryEntry[] = [
   { label: "报告期", field: "end_date", description: "股东持股数据对应的报告期末日期。", formula: "-", source: "Tushare" },
   { label: "公告日期", field: "ann_date", description: "该期股东数据首次对市场公开的日期。", formula: "-", source: "Tushare" },
   { label: "\u80a1\u4e1c\u6237\u6570", field: "holder_num", description: "\u4e0a\u5e02\u516c\u53f8\u5728\u8be5\u62a5\u544a\u671f\u62ab\u9732\u7684\u80a1\u4e1c\u8d26\u6237\u603b\u6570\u3002", formula: "-", source: "Tushare" },
+  { label: "\u80a1\u4e1c\u589e\u6301\u62ab\u9732\u8bb0\u5f55\u6570", field: "purchase_count", description: "\u8bf7\u6c42\u671f\u95f4\u5185\u80a1\u4e1c\u589e\u6301\u65b9\u5411\u7684\u62ab\u9732\u8bb0\u5f55\u6570\u3002", formula: "sum(in_de = IN)", source: "A-Share Lab derived calculation" },
+  { label: "\u80a1\u4e1c\u51cf\u6301\u62ab\u9732\u8bb0\u5f55\u6570", field: "reduction_count", description: "\u8bf7\u6c42\u671f\u95f4\u5185\u80a1\u4e1c\u51cf\u6301\u65b9\u5411\u7684\u62ab\u9732\u8bb0\u5f55\u6570\u3002", formula: "sum(in_de = DE)", source: "A-Share Lab derived calculation" },
   { label: "\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2", field: "cash_div_tax", description: "\u516c\u53f8\u516c\u544a\u7684\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\uff1b\u7f3a\u5931\u503c\u4e0d\u4ee3\u8868\u96f6\u5206\u7ea2\u3002", formula: "\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2", source: "Tushare" },
   { label: "计算完整性", field: "calculation_status", description: "complete表示完整计算；partial_missing_ratio表示源比例缺失，仅能给出部分统计。", formula: "-", source: "A-Share Lab 衍生计算" },
 

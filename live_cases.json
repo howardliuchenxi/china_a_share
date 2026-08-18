@@ -1257,7 +1257,9 @@
       "operations": [
         "stk_holdertrade"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "conditional_category_counts"
+      ],
       "source": "matrix"
     },
     {

@@ -318,6 +318,34 @@ test("result table labels shareholder count in user-facing language", async ({
   await expect(page.getByRole("columnheader", { name: /\u80a1\u4e1c\u6237\u6570/ })).toBeVisible();
 });
 
+test("summary labels shareholder transaction counts in user-facing language", async ({
+  page,
+}) => {
+  const finalResult = successWithMultiRowFixture.results[0];
+  const holderTradeFixture: AnalysisResponse = {
+    ...successWithMultiRowFixture,
+    results: [
+      {
+        ...finalResult,
+        columns: ["purchase_count", "reduction_count"],
+        rows: [{ purchase_count: 958, reduction_count: 2042 }],
+        row_count: 1,
+        summary: { purchase_count: 958, reduction_count: 2042 },
+      },
+    ],
+  };
+  await mockApiRoutes(page, holderTradeFixture);
+
+  await page.goto("/analysis");
+  await page.locator("#analysis-prompt").fill("Count shareholder purchases and reductions");
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.locator(".summary-grid dt")).toContainText([
+    "\u80a1\u4e1c\u589e\u6301\u62ab\u9732\u8bb0\u5f55\u6570",
+    "\u80a1\u4e1c\u51cf\u6301\u62ab\u9732\u8bb0\u5f55\u6570",
+  ]);
+});
+
 test("administrator feedback dialog stays open while entering a suggestion", async ({
   page,
 }) => {
