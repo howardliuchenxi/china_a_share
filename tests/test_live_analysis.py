@@ -667,6 +667,69 @@ def test_live_reported_prompt_regression(
         "DeepSeek and Tushare APIs."
     ),
 )
+def test_live_multi_turn_valuation_refinement(live_analysis_service) -> None:
+    """Preserve the prior metric definition while applying current Top-N refinements."""
+    initial_prompt = "\u627e\u4f4ePE\u3001\u4f4ePB\u3001\u9ad8\u80a1\u606f\u7387\u7684\u5341\u53ea\u80a1\u7968"
+    initial = live_analysis_service.analyze(
+        request_id=f"live-multi-turn-initial-{uuid4()}",
+        request=AnalysisRequest(prompt=initial_prompt),
+        api_route="/local-live-multi-turn",
+        progress_callback=(lambda completed, total: None),
+    )
+    assert initial.status is AnalysisStatus.SUCCESS, _failure_message(initial)
+    assert initial.plan is not None
+
+    refinement_prompt = (
+        "\u53ea\u4fdd\u7559\u80a1\u606f\u7387\u5927\u4e8e0\u7684\uff0c\u6309\u80a1\u606f\u7387\u4ece\u9ad8\u5230\u4f4e\u7ed9\u6211\u524d5\u5bb6\uff0c"
+        "\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5e02\u76c8\u7387\u3001\u5e02\u51c0\u7387\u548c\u80a1\u606f\u7387"
+    )
+    refined = live_analysis_service.analyze(
+        request_id=f"live-multi-turn-refinement-{uuid4()}",
+        request=AnalysisRequest(
+            prompt=refinement_prompt,
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt=initial_prompt,
+                    interpretation=initial.plan.interpretation,
+                )
+            ],
+        ),
+        api_route="/local-live-multi-turn",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert refined.status is AnalysisStatus.SUCCESS, _failure_message(refined)
+    assert refined.error is None
+    assert refined.plan is not None
+    assert refined.plan.result_pipeline is not None
+    assert [step.operation for step in refined.plan.result_pipeline.steps] == [
+        "filter",
+        "sort",
+        "limit",
+        "join_fields",
+    ]
+    result = next(
+        item
+        for item in refined.results
+        if item.query_id == refined.plan.answer_contract.result_query_id
+    )
+    expected_fields = {"ts_code", "name", "pe", "pb", "dv_ttm"}
+    assert result.row_count == 5
+    assert len(result.rows) == 5
+    assert all(expected_fields.issubset(row) for row in result.rows)
+    values = [row["dv_ttm"] for row in result.rows]
+    assert all(value > 0 for value in values)
+    assert values == sorted(values, reverse=True)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
 def test_live_background_fanout_through_http_and_worker(
     live_analysis_service,
 ) -> None:

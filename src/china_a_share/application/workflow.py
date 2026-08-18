@@ -565,6 +565,16 @@ class ASharePlanValidator:
             # surviving rows, so no model-owned metric filter can bypass ordering.
             return
         if (
+            pipeline.output_query_id == "composite_valuation_result"
+            and operations.index("sort") < operations.index("limit")
+            and len(plan.queries) == 1
+            and plan.queries[0].operation == "daily_basic"
+            and pipeline.source_query_id == plan.queries[0].query_id
+        ):
+            # The composite valuation normalizer reconstructs this pipeline from
+            # the current request and one validated snapshot, including ordering.
+            return
+        if (
             plan.intent is not None
             and plan.intent.analysis_type == "field_analysis"
             and plan.intent.analysis_field in ranking_fields
@@ -6606,33 +6616,57 @@ class AnalysisService:
             # Multi-source pipelines carry enrichment or return calculations that
             # a snapshot-only valuation normalizer cannot reproduce.
             return
-        prompt_upper = prompt.upper()
-        snapshot_fields = [
-            field
-            for _, field in AnalysisService._resolve_prompt_snapshot_fields(prompt)
-        ]
-        if not snapshot_fields:
-            return
-        has_numeric_filter = any(
-            AnalysisService._resolve_prompt_numeric_threshold(prompt, field)
-            is not None
-            for field in snapshot_fields
+        current_request_match = re.search(
+            r"<current_analysis_request>\s*(.*?)\s*</current_analysis_request>",
+            prompt,
+            re.DOTALL,
         )
-        has_snapshot_ranking = any(
-            re.search(
-                rf"{re.escape(alias)}.{{0,4}}(?:最低|最小|最少|最高|最大|最多)",
-                prompt,
-                re.IGNORECASE,
-            )
-            for alias, field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items()
-            if field in snapshot_fields
+        current_prompt = (
+            current_request_match.group(1)
+            if current_request_match is not None
+            else prompt
         )
-        if not (has_numeric_filter or has_snapshot_ranking or "PE TTM" in prompt_upper):
-            return
+        prompt_upper = current_prompt.upper()
         query = next(
             (query for query in plan.queries if query.operation == "daily_basic"),
             None,
         )
+        existing_fields = set(query.fields) if query is not None else set()
+        resolved_snapshot_fields = (
+            AnalysisService._resolve_prompt_snapshot_fields(current_prompt)
+        )
+        field_remapping = {
+            "dv_ratio": "dv_ttm"
+            for _, field in resolved_snapshot_fields
+            if field == "dv_ratio"
+            and "dv_ttm" in existing_fields
+            and "dv_ratio" not in existing_fields
+        }
+        snapshot_fields = list(
+            dict.fromkeys(
+                field_remapping.get(field, field)
+                for _, field in resolved_snapshot_fields
+            )
+        )
+        if not snapshot_fields:
+            return
+        has_numeric_filter = any(
+            AnalysisService._resolve_prompt_numeric_threshold(current_prompt, field)
+            is not None
+            for _, field in resolved_snapshot_fields
+        )
+        has_snapshot_ranking = any(
+            re.search(
+                rf"{re.escape(alias)}.{{0,12}}(?:最低|最小|最少|最高|最大|最多|"
+                rf"从低到高|从高到低|升序|降序|ascending|descending)",
+                current_prompt,
+                re.IGNORECASE,
+            )
+            for alias, field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items()
+            if field_remapping.get(field, field) in snapshot_fields
+        )
+        if not (has_numeric_filter or has_snapshot_ranking or "PE TTM" in prompt_upper):
+            return
         if query is None:
             dates = re.findall(r"20\d{2}-?\d{2}-?\d{2}", plan.interpretation)
             if not dates:
@@ -6654,30 +6688,66 @@ class AnalysisService:
             ])
         else:
             fields.extend(snapshot_fields)
-            if "PE\u4e3a\u6b63" in prompt:
+            if "PE\u4e3a\u6b63" in current_prompt:
                 steps.append({"operation": "filter", "field": "pe", "comparison": "gt", "value": 0})
-            for field in snapshot_fields:
-                threshold = AnalysisService._resolve_prompt_numeric_threshold(prompt, field)
+            for _, requested_field in resolved_snapshot_fields:
+                field = field_remapping.get(requested_field, requested_field)
+                threshold = AnalysisService._resolve_prompt_numeric_threshold(
+                    current_prompt,
+                    requested_field,
+                )
                 if threshold is not None:
                     comparison, value = threshold
                     steps.append({"operation": "filter", "field": field, "comparison": comparison, "value": value})
-            for alias, field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items():
+            for alias, requested_field in DAILY_BASIC_PROMPT_FIELD_ALIASES.items():
                 direction_match = re.search(
-                    rf"{re.escape(alias)}.{{0,4}}(最低|最小|最少|最高|最大|最多)",
-                    prompt,
+                    rf"{re.escape(alias)}.{{0,12}}(最低|最小|最少|最高|最大|最多|"
+                    rf"从低到高|从高到低|升序|降序|ascending|descending)",
+                    current_prompt,
                     re.IGNORECASE,
                 )
                 if direction_match is not None:
-                    direction = "asc" if direction_match.group(1) in {"最低", "最小", "最少"} else "desc"
+                    field = field_remapping.get(requested_field, requested_field)
+                    direction = (
+                        "asc"
+                        if direction_match.group(1).casefold()
+                        in {"最低", "最小", "最少", "从低到高", "升序", "ascending"}
+                        else "desc"
+                    )
                     steps.append({"operation": "sort", "field": field, "direction": direction})
                     break
-        limit_match = re.search(r"(?:Top|top|\u524d)\s*(\d+)", prompt)
+        limit_match = re.search(r"(?:Top|top|\u524d)\s*(\d+)", current_prompt)
         if limit_match:
             steps.append({"operation": "limit", "count": int(limit_match.group(1))})
         query.fields = list(dict.fromkeys(fields))
         query.filters = []
         query.aggregations = []
-        plan.queries = [query]
+        requests_name = bool(
+            "\u540d\u79f0" in current_prompt
+            or re.search(r"(?<![a-z])name(?![a-z])", current_prompt.casefold())
+        )
+        name_query = (
+            DataQuery(
+                query_id="composite_valuation_names",
+                operation="stock_basic",
+                params={"list_status": "L"},
+                fields=["ts_code", "name"],
+                purpose="Retrieve company names for the requested valuation rows.",
+            )
+            if requests_name
+            else None
+        )
+        if name_query is not None:
+            steps.append(
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": name_query.query_id,
+                    "join_on": ["ts_code"],
+                    "fields": {"name": "name"},
+                    "cardinality": "many_to_one",
+                }
+            )
+        plan.queries = [query, *([name_query] if name_query is not None else [])]
         if plan.result_pipeline is not None:
             required_fields = set()
             for step in plan.result_pipeline.steps:
@@ -6704,6 +6774,23 @@ class AnalysisService:
             if steps
             else None
         )
+        if plan.result_pipeline is not None:
+            output_fields = [
+                "ts_code",
+                *(["name"] if requests_name else []),
+                *snapshot_fields,
+            ]
+            plan.answer_contract = AnswerContract(
+                result_query_id=plan.result_pipeline.output_query_id,
+                result_kind="table",
+                outputs=[
+                    {
+                        "field": field,
+                        "description": "Requested valuation-screen output field.",
+                    }
+                    for field in output_fields
+                ],
+            )
 
     @staticmethod
     def _normalize_secondary_disclosures(plan: QueryPlan, prompt: str) -> None:
