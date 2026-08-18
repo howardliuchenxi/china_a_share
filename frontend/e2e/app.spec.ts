@@ -264,6 +264,33 @@ test("multi-stage analysis keeps supporting datasets collapsed", async ({ page }
   await expect(supportingResults).toContainText("共 299 行");
 });
 
+test("result table preserves visible precision for tiny non-zero values", async ({
+  page,
+}) => {
+  const finalResult = successWithMultiRowFixture.results[0];
+  const precisionFixture: AnalysisResponse = {
+    ...successWithMultiRowFixture,
+    results: [
+      {
+        ...finalResult,
+        columns: ["ts_code", "cash_div_tax"],
+        rows: [
+          { ts_code: "000001.SZ", cash_div_tax: 0.001 },
+          { ts_code: "000002.SZ", cash_div_tax: 0.01 },
+        ],
+        row_count: 2,
+      },
+    ],
+  };
+  await mockApiRoutes(page, precisionFixture);
+
+  await page.goto("/analysis");
+  await page.locator("#analysis-prompt").fill("Show one positive dividend value");
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.getByRole("cell", { name: "0.001", exact: true })).toBeVisible();
+});
+
 test("administrator feedback dialog stays open while entering a suggestion", async ({
   page,
 }) => {

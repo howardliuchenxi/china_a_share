@@ -211,9 +211,15 @@ function formatAdaptiveNumber(value: number, unit = ""): string {
   if (absoluteValue >= 10_000) {
     return `${(value / 10_000).toFixed(2)}万${unit}`;
   }
-  return `${value.toLocaleString("zh-CN", {
-    maximumFractionDigits: 2,
-  })}${unit}`;
+  const formatted = value.toLocaleString("zh-CN", {
+    maximumFractionDigits: absoluteValue > 0 && absoluteValue < 0.01 ? 8 : 2,
+  });
+  // Preserve evidence that passed a strict non-zero filter instead of rendering
+  // a tiny finite value as a misleading zero.
+  if (value !== 0 && (formatted === "0" || formatted === "-0")) {
+    return `${value.toExponential(4)}${unit}`;
+  }
+  return `${formatted}${unit}`;
 }
 
 function isPercentageColumn(column: string): boolean {
