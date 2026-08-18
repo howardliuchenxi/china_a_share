@@ -8455,6 +8455,18 @@ class AnalysisService:
         date_replacements = {}
         for query in queries:
             if (
+                query.operation == "margin_secs"
+                and query.params.get("exchange")
+                and not any(
+                    query.params.get(parameter)
+                    for parameter in ("trade_date", "start_date", "end_date")
+                )
+            ):
+                # The provider documents exchange as optional but rejects an
+                # exchange-only request. Bind exchange snapshots to the latest
+                # completed session so the executable query matches its meaning.
+                query.params["trade_date"] = completed
+            if (
                 query.operation == "daily_basic"
                 and query.params.get("trade_date", safe_snapshot) > safe_snapshot
             ):

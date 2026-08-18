@@ -336,14 +336,14 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
         date_pair=("start_date", "end_date"),
         query_shapes=(
             ProviderQueryShape(
-                shape_id="market_snapshot",
-                required_params=("trade_date",),
+                shape_id="exchange_snapshot",
+                required_params=("trade_date", "exchange"),
                 execution_strategy="provider_query",
                 completeness_policy="paginate_until_short_page",
             ),
             ProviderQueryShape(
-                shape_id="exchange_snapshot",
-                required_params=("exchange",),
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
                 execution_strategy="provider_query",
                 completeness_policy="paginate_until_short_page",
             ),

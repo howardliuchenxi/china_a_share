@@ -245,7 +245,11 @@ def test_limit_list_capability_audits_complete_market_reads(
             "security",
         ),
         ("margin_detail", {"trade_date": "20260817"}, "market_snapshot"),
-        ("margin_secs", {"exchange": "SSE"}, "exchange_snapshot"),
+        (
+            "margin_secs",
+            {"trade_date": "20260817", "exchange": "SSE"},
+            "exchange_snapshot",
+        ),
         ("dividend", {"ts_code": "600519.SH"}, "security"),
         (
             "repurchase",

@@ -7,6 +7,7 @@ from china_a_share.application.workflow import ASharePlanValidator, AnalysisServ
 from china_a_share.core.contracts import (
     AnalysisConversationTurn,
     AnalysisRequest,
+    DataQuery,
     DataOperation,
     QueryPlan,
 )
@@ -442,6 +443,35 @@ def test_snapshot_date_normalization_updates_confirmation_text():
     assert plan.queries[1].params == {"trade_date": "20260817"}
     assert "20260817" in plan.interpretation
     assert "20260818" not in plan.interpretation
+
+
+def test_latest_margin_security_exchange_snapshot_binds_completed_session():
+    plan = QueryPlan(
+        interpretation="List the latest SSE margin securities.",
+        requirements=[
+            {
+                "requirement": "List the latest SSE margin securities.",
+                "status": "covered",
+                "evidence": "margin_secs provides exchange-level snapshots.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="margin-securities",
+                operation="margin_secs",
+                params={"exchange": "SSE"},
+                fields=["ts_code", "name"],
+                purpose="Retrieve the latest SSE margin securities.",
+            )
+        ],
+    )
+
+    AnalysisService._normalize_latest_plan_dates(plan, date(2026, 8, 17))
+
+    assert plan.queries[0].params == {
+        "exchange": "SSE",
+        "trade_date": "20260817",
+    }
 
 
 def test_repurchase_count_and_list_compiles_at_distinct_company_grain():
