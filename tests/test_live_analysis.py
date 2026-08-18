@@ -309,6 +309,20 @@ def _assert_quality_invariants(
             assert values == sorted(values, reverse=True)
         else:
             raise AssertionError("Ranked-limit invariant requires an explicit order.")
+    if "list_not_scalar" in invariants:
+        assert plan.answer_contract is not None
+        assert plan.answer_contract.result_kind == "table"
+        assert any(
+            output.field == "ts_code"
+            for output in plan.answer_contract.outputs
+        )
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.answer_contract.result_query_id
+        )
+        assert result.row_count == len(result.rows)
+        assert all("ts_code" in row for row in result.rows)
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:

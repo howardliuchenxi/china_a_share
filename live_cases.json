@@ -71,7 +71,9 @@
       "operations": [
         "limit_list_d"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "list_not_scalar"
+      ],
       "source": "matrix"
     },
     {
@@ -84,7 +86,9 @@
       "operations": [
         "limit_list_d"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "list_not_scalar"
+      ],
       "source": "matrix"
     },
     {
@@ -97,7 +101,9 @@
       "operations": [
         "limit_list_d"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "list_not_scalar"
+      ],
       "source": "matrix"
     },
     {
@@ -491,7 +497,9 @@
       "operations": [
         "block_trade"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "list_not_scalar"
+      ],
       "source": "matrix"
     },
     {
@@ -1168,7 +1176,9 @@
       "operations": [
         "repurchase"
       ],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "list_not_scalar"
+      ],
       "source": "matrix"
     },
     {
