@@ -142,6 +142,7 @@ def _assert_quality_invariants(
     prompt,
     invariants,
     live_market_data_provider=None,
+    live_analysis_service=None,
 ) -> None:
     """Check stable business meaning without binding exact planner JSON."""
     plan = response.plan
@@ -400,6 +401,69 @@ def _assert_quality_invariants(
         if any(term in prompt.casefold() for term in ("positive", ">0", "\u5927\u4e8e0")):
             assert all(value > 0 for value in values)
         assert values == sorted(values, reverse=not ascending)
+    if "holder_concentration_ranked_list" in invariants:
+        assert plan.result_pipeline is not None
+        expected_fields = {
+            "ts_code",
+            "name",
+            "ann_date",
+            "end_date",
+            "holder_num",
+            "holder_change_pct",
+        }
+        assert plan.answer_contract is not None
+        assert plan.answer_contract.result_kind == "table"
+        assert expected_fields == {
+            output.field for output in plan.answer_contract.outputs
+        }
+        limit_match = re.search(r"(?:\u524d|top)\s*(\d+)", prompt.casefold())
+        assert limit_match is not None
+        expected_count = int(limit_match.group(1))
+        source_query = next(
+            query
+            for query in plan.queries
+            if query.query_id == plan.result_pipeline.source_query_id
+        )
+        assert source_query.operation == "stk_holdernumber"
+        assert live_analysis_service is not None
+        source_result = live_analysis_service._execute_disclosure_range_by_date(
+            source_query,
+            api_route="/local-live-independent-validation",
+            request_id=f"live-oracle-{uuid4()}",
+        )
+        assert source_result.completeness == "complete"
+        assert source_result.row_count == len(source_result.rows)
+        source_frame = pd.DataFrame(source_result.rows)
+        ordered = source_frame.sort_values(
+            ["ts_code", "end_date"], kind="mergesort"
+        ).copy()
+        holder_numbers = pd.to_numeric(ordered["holder_num"], errors="coerce")
+        ordered["holder_change_pct"] = (
+            holder_numbers.groupby(ordered["ts_code"], sort=False, dropna=False)
+            .pct_change(periods=1, fill_method=None)
+            .multiply(100)
+        )
+        expected = (
+            ordered.sort_values("ann_date", kind="mergesort", na_position="last")
+            .drop_duplicates(["ts_code"], keep="last")
+            .dropna(subset=["holder_change_pct"])
+            .sort_values("holder_change_pct", kind="mergesort")
+            .head(expected_count)
+        )
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.answer_contract.result_query_id
+        )
+        assert result.row_count == expected_count
+        assert len(result.rows) == expected_count
+        assert all(row["name"] for row in result.rows)
+        assert [row["ts_code"] for row in result.rows] == expected[
+            "ts_code"
+        ].tolist()
+        assert [row["holder_change_pct"] for row in result.rows] == pytest.approx(
+            expected["holder_change_pct"].tolist()
+        )
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:
@@ -462,6 +526,7 @@ def _run_live_analysis_question(
         case["prompt"],
         set(case.get("quality_invariants", [])),
         live_market_data_provider,
+        live_analysis_service,
     )
 
 
@@ -590,6 +655,7 @@ def test_live_reported_prompt_regression(
         case["prompt"],
         set(case.get("quality_invariants", [])),
         live_market_data_provider,
+        live_analysis_service,
     )
 
 

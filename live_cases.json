@@ -1530,7 +1530,9 @@
       "expected_feasibility": "supported",
       "tier": "supported",
       "operations": [],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "holder_concentration_ranked_list"
+      ],
       "source": "reported_regression"
     },
     {
