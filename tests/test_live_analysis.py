@@ -740,6 +740,77 @@ def test_live_multi_turn_valuation_refinement(live_analysis_service) -> None:
         "DeepSeek and Tushare APIs."
     ),
 )
+def test_live_multi_turn_cash_dividend_refinement(live_analysis_service) -> None:
+    """Preserve a ranked dividend cohort before applying follow-up refinements."""
+    initial_prompt = (
+        "\u8bf7\u5217\u51fa2026\u5e74\u7b2c\u4e8c\u5b63\u5ea6\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\u6700\u9ad8\u7684\u524d20\u5bb6A\u80a1\u516c\u53f8\uff0c"
+        "\u7ed9\u51fa\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5206\u7ea2\u548c\u516c\u544a\u65e5\u671f"
+    )
+    initial = live_analysis_service.analyze(
+        request_id=f"live-dividend-turn-initial-{uuid4()}",
+        request=AnalysisRequest(prompt=initial_prompt),
+        api_route="/local-live-dividend-turn",
+        progress_callback=(lambda completed, total: None),
+    )
+    assert initial.status is AnalysisStatus.SUCCESS, _failure_message(initial)
+    assert initial.plan is not None
+    initial_result = next(
+        item
+        for item in initial.results
+        if item.query_id == initial.plan.answer_contract.result_query_id
+    )
+    assert initial_result.row_count == 20
+    initial_codes = {row["ts_code"] for row in initial_result.rows}
+
+    refinement_prompt = (
+        "\u53ea\u4fdd\u7559\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\u5927\u4e8e0.2\u7684\uff0c"
+        "\u6309\u5206\u7ea2\u4ece\u4f4e\u5230\u9ad8\u7ed9\u6211\u524d6\u5bb6\uff0c\u4ecd\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5206\u7ea2\u548c\u516c\u544a\u65e5\u671f"
+    )
+    refined = live_analysis_service.analyze(
+        request_id=f"live-dividend-turn-refinement-{uuid4()}",
+        request=AnalysisRequest(
+            prompt=refinement_prompt,
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt=initial_prompt,
+                    interpretation=initial.plan.interpretation,
+                )
+            ],
+        ),
+        api_route="/local-live-dividend-turn",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert refined.status is AnalysisStatus.SUCCESS, _failure_message(refined)
+    assert refined.error is None
+    assert refined.plan is not None
+    assert "previously confirmed cash-dividend cohort" in (
+        refined.plan.interpretation
+    )
+    result = next(
+        item
+        for item in refined.results
+        if item.query_id == refined.plan.answer_contract.result_query_id
+    )
+    assert result.row_count == 6
+    assert {row["ts_code"] for row in result.rows}.issubset(initial_codes)
+    assert all(
+        {"ts_code", "name", "cash_div_tax", "ann_date"}.issubset(row)
+        for row in result.rows
+    )
+    dividends = [row["cash_div_tax"] for row in result.rows]
+    assert all(value > 0.2 for value in dividends)
+    assert dividends == sorted(dividends)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
 def test_live_background_fanout_through_http_and_worker(
     live_analysis_service,
 ) -> None:

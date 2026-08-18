@@ -6180,6 +6180,8 @@ class AnalysisService:
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
+        if AnalysisService._compile_conversation_dividend_refinement(plan, prompt):
+            return plan
         if AnalysisService._compile_conversation_valuation_refinement(plan, prompt):
             return plan
         if AnalysisService._compile_industry_valuation_dividend(plan, prompt):
@@ -6273,6 +6275,176 @@ class AnalysisService:
         # accidentally revive a request for unavailable private or order-level data.
         AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         return plan
+
+    @staticmethod
+    def _compile_conversation_dividend_refinement(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> bool:
+        """Apply a dividend follow-up to the latest confirmed ranked cohort."""
+        current_match = re.search(
+            r"<current_analysis_request>\s*(.*?)\s*</current_analysis_request>",
+            prompt,
+            re.DOTALL,
+        )
+        turn_matches = re.findall(
+            r"<turn\s+index=\"\d+\">\s*(.*?)\s*</turn>",
+            prompt,
+            re.DOTALL,
+        )
+        if current_match is None or not turn_matches:
+            return False
+        current_prompt = current_match.group(1).strip()
+        if not any(
+            term in current_prompt
+            for term in ("\u53ea\u4fdd\u7559", "\u4ecd\u4fdd\u7559", "\u6309", "\u524d")
+        ) or not any(
+            term in current_prompt
+            for term in ("\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2", "\u6bcf\u80a1\u73b0\u91d1\u5206\u7ea2", "\u5206\u7ea2")
+        ):
+            return False
+
+        latest_turn = turn_matches[-1]
+        request_match = re.search(r"user_request=(.+)", latest_turn)
+        interpretation_match = re.search(
+            r"validated_interpretation=(.+)",
+            latest_turn,
+        )
+        if request_match is None or interpretation_match is None:
+            return False
+        try:
+            previous_prompt = json.loads(request_match.group(1).strip())
+            previous_interpretation = json.loads(
+                interpretation_match.group(1).strip()
+            )
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(previous_prompt, str) or not isinstance(
+            previous_interpretation,
+            str,
+        ):
+            return False
+
+        date_matches = re.findall(r"(?<!\d)(20\d{6})(?!\d)", previous_interpretation)
+        previous_compilation_prompt = previous_prompt
+        if len(date_matches) >= 2:
+            previous_compilation_prompt += (
+                "\n\n<trusted_analysis_window>\n"
+                f"event_start_date={date_matches[0]}\n"
+                f"event_end_date={date_matches[-1]}\n"
+                "</trusted_analysis_window>"
+            )
+        base_plan = AnalysisService._compile_known_cash_dividend_ranking(
+            previous_compilation_prompt
+        )
+        if base_plan is None or base_plan.result_pipeline is None:
+            return False
+
+        base_steps = base_plan.result_pipeline.steps
+        base_limit_index = next(
+            (
+                index
+                for index, step in enumerate(base_steps)
+                if step.operation == "limit"
+            ),
+            None,
+        )
+        if base_limit_index is None:
+            return False
+        refinement_steps = [
+            step.model_copy(deep=True)
+            for step in base_steps[: base_limit_index + 1]
+        ]
+
+        threshold_match = re.search(
+            r"(?:\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2|\u6bcf\u80a1\u73b0\u91d1\u5206\u7ea2|\u5206\u7ea2)"
+            r".{0,8}?(\u8d85\u8fc7|\u5927\u4e8e|\u9ad8\u4e8e|\u4e0d\u5c11\u4e8e|\u4f4e\u4e8e|\u5c0f\u4e8e|\u5c11\u4e8e|\u4e0d\u8d85\u8fc7|>=|<=|>|<)\s*"
+            r"(\d+(?:\.\d+)?)",
+            current_prompt,
+        )
+        filter_description = None
+        if threshold_match is not None:
+            operator, raw_value = threshold_match.groups()
+            comparison = (
+                "gt"
+                if operator in {"\u8d85\u8fc7", "\u5927\u4e8e", "\u9ad8\u4e8e", ">"}
+                else "ge"
+                if operator in {"\u4e0d\u5c11\u4e8e", ">="}
+                else "le"
+                if operator in {"\u4e0d\u8d85\u8fc7", "<="}
+                else "lt"
+            )
+            value = float(raw_value)
+            refinement_steps.append(
+                ResultPipelineStep(
+                    operation="filter",
+                    field="cash_div_tax",
+                    comparison=comparison,
+                    value=value,
+                )
+            )
+            symbol = {"gt": ">", "ge": ">=", "le": "<=", "lt": "<"}[
+                comparison
+            ]
+            filter_description = f"cash_div_tax {symbol} {value:g}"
+
+        direction = (
+            "asc"
+            if any(
+                term in current_prompt
+                for term in ("\u4ece\u4f4e\u5230\u9ad8", "\u5347\u5e8f", "\u6700\u4f4e", "ascending")
+            )
+            else "desc"
+        )
+        limit_match = re.search(r"(?:Top|top|\u524d)\s*(\d+)", current_prompt)
+        if limit_match is None:
+            return False
+        result_limit = int(limit_match.group(1))
+        refinement_steps.extend(
+            [
+                ResultPipelineStep(
+                    operation="sort",
+                    field="cash_div_tax",
+                    direction=direction,
+                ),
+                ResultPipelineStep(operation="limit", count=result_limit),
+                ResultPipelineStep(
+                    operation="select_fields",
+                    fields=["ts_code", "name", "cash_div_tax", "ann_date"],
+                ),
+            ]
+        )
+
+        plan.interpretation = (
+            "Starting from the previously confirmed cash-dividend cohort"
+            + (f", apply {filter_description}" if filter_description else "")
+            + f", sort cash_div_tax {'ascending' if direction == 'asc' else 'descending'}, "
+            + f"then return the first {result_limit} rows with the requested fields."
+        )
+        plan.intent = None
+        plan.feasibility = "supported"
+        plan.requirements = [
+            requirement.model_copy(deep=True)
+            for requirement in base_plan.requirements
+        ]
+        plan.constraints = []
+        plan.queries = [query.model_copy(deep=True) for query in base_plan.queries]
+        plan.execution_plan = None
+        plan.result_pipeline = ResultPipeline(
+            source_query_id=base_plan.result_pipeline.source_query_id,
+            output_query_id="conversation_cash_dividend_refinement",
+            steps=refinement_steps,
+        )
+        plan.answer_contract = AnswerContract(
+            result_query_id=plan.result_pipeline.output_query_id,
+            result_kind="table",
+            outputs=[
+                output.model_copy(deep=True)
+                for output in base_plan.answer_contract.outputs
+            ],
+        )
+        plan.limitations = list(base_plan.limitations)
+        return True
 
     @staticmethod
     def _compile_conversation_valuation_refinement(

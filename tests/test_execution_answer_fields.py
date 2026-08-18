@@ -805,6 +805,89 @@ def test_multi_turn_valuation_refinement_preserves_metric_and_explicit_order():
     ASharePlanValidator(_CatalogProvider()).validate(result)
 
 
+@pytest.mark.parametrize(
+    ("follow_up", "comparison", "threshold", "direction", "limit"),
+    [
+        (
+            "\u53ea\u4fdd\u7559\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\u5927\u4e8e0.2\u7684\uff0c"
+            "\u6309\u5206\u7ea2\u4ece\u4f4e\u5230\u9ad8\u7ed9\u6211\u524d6\u5bb6\uff0c\u4ecd\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5206\u7ea2\u548c\u516c\u544a\u65e5\u671f",
+            "gt",
+            0.2,
+            "asc",
+            6,
+        ),
+        (
+            "\u5206\u7ea2\u4e0d\u5c11\u4e8e2\u5143\uff0c\u6309\u5206\u7ea2\u4ece\u9ad8\u5230\u4f4e\u7ed9\u6211\u524d4\u5bb6",
+            "ge",
+            2.0,
+            "desc",
+            4,
+        ),
+    ],
+)
+def test_multi_turn_cash_dividend_refinement_preserves_confirmed_cohort(
+    follow_up,
+    comparison,
+    threshold,
+    direction,
+    limit,
+):
+    candidate = _execution_plan(label_field="name", detail_field="cash_div_tax")
+    candidate.intent = None
+    candidate.execution_plan = None
+    candidate.result_pipeline = None
+    context_prompt = (
+        "<analysis_conversation_context>\n"
+        '<turn index="1">\n'
+        "user_request=\"\\u8bf7\\u5217\\u51fa2026\\u5e74\\u7b2c\\u4e8c\\u5b63\\u5ea6\\u6bcf\\u80a1\\u7a0e\\u524d\\u73b0\\u91d1\\u5206\\u7ea2\\u6700\\u9ad8\\u7684\\u524d20\\u5bb6A\\u80a1\\u516c\\u53f8\"\n"
+        "validated_interpretation=\"Rank the top 20 A-share companies from 20260401 through 20260630.\"\n"
+        "</turn>\n"
+        "</analysis_conversation_context>\n"
+        "<current_analysis_request>\n"
+        f"{follow_up}\n"
+        "</current_analysis_request>"
+    )
+
+    normalized = AnalysisService._normalize_plan_for_request(
+        candidate,
+        context_prompt,
+    )
+
+    assert normalized.result_pipeline.source_query_id == (
+        "ranked_cash_dividend_disclosures"
+    )
+    assert [step.operation for step in normalized.result_pipeline.steps] == [
+        "drop_missing",
+        "inner_join",
+        "sort",
+        "distinct",
+        "sort",
+        "limit",
+        "filter",
+        "sort",
+        "limit",
+        "select_fields",
+    ]
+    filter_step = normalized.result_pipeline.steps[6]
+    sort_step = normalized.result_pipeline.steps[7]
+    limit_step = normalized.result_pipeline.steps[8]
+    assert (filter_step.field, filter_step.comparison, filter_step.value) == (
+        "cash_div_tax",
+        comparison,
+        threshold,
+    )
+    assert (sort_step.field, sort_step.direction) == ("cash_div_tax", direction)
+    assert limit_step.count == limit
+    assert normalized.result_pipeline.steps[5].count == 20
+    assert {output.field for output in normalized.answer_contract.outputs} == {
+        "ts_code",
+        "name",
+        "cash_div_tax",
+        "ann_date",
+    }
+    ASharePlanValidator(_CatalogProvider()).validate(normalized)
+
+
 def test_repurchase_count_and_list_compiles_at_distinct_company_grain():
     prompt = (
         "2026\u5e746\u6708\u5ba3\u5e03\u56de\u8d2d\u7684A\u80a1\u516c\u53f8\u6709\u591a\u5c11\u5bb6\uff1f\u8bf7\u5217\u51fa\u5168\u90e8"
