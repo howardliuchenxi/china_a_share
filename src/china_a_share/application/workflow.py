@@ -2224,6 +2224,11 @@ class AnalysisService:
         completed_repurchases = AnalysisService._compile_known_completed_repurchases(prompt)
         if completed_repurchases is not None:
             return completed_repurchases
+        repurchase_companies = AnalysisService._compile_known_repurchase_company_list(
+            prompt
+        )
+        if repurchase_companies is not None:
+            return repurchase_companies
         price_extrema = AnalysisService._compile_known_security_price_extrema(prompt)
         if price_extrema is not None:
             return price_extrema
@@ -3419,6 +3424,97 @@ class AnalysisService:
                 ],
             ),
         )
+
+    @staticmethod
+    def _compile_known_repurchase_company_list(prompt: str) -> Optional[QueryPlan]:
+        """Compile bounded repurchase disclosure requests at company grain."""
+        normalized = prompt.casefold()
+        if not any(term in normalized for term in ("repurchase", "repurchases", "\u56de\u8d2d")):
+            return None
+        if not any(
+            term in normalized
+            for term in ("list", "which", "companies", "\u5217\u51fa", "\u54ea\u4e9b", "\u516c\u53f8")
+        ):
+            return None
+        if any(
+            term in normalized
+            for term in ("rank", "top", "highest", "\u6392\u540d", "\u6700\u9ad8", "\u6700\u591a")
+        ):
+            return None
+        resolved = resolve_explicit_time_range(prompt)
+        if resolved is None:
+            return None
+
+        start_date = resolved[0].strftime("%Y%m%d")
+        end_date = resolved[1].strftime("%Y%m%d")
+        disclosure_query = DataQuery(
+            query_id="repurchase_company_disclosures",
+            operation="repurchase",
+            params={"start_date": start_date, "end_date": end_date},
+            fields=["ts_code", "ann_date", "proc", "vol", "amount"],
+            purpose="Retrieve repurchase disclosures announced inside the requested window.",
+        )
+        company_query = DataQuery(
+            query_id="repurchase_company_names",
+            operation="stock_basic",
+            params={"list_status": "L"},
+            fields=["ts_code", "name"],
+            purpose="Attach current public security names to repurchase disclosures.",
+        )
+        plan = QueryPlan(
+            interpretation=(
+                "List distinct A-share companies with repurchase disclosures "
+                f"announced from {start_date} through {end_date}."
+            ),
+            queries=[disclosure_query, company_query],
+            requirements=[
+                RequirementCoverage(
+                    requirement=(
+                        "Count and list distinct companies announcing repurchases "
+                        "inside the requested window."
+                    ),
+                    status="covered",
+                    implementation=(
+                        "Keep one latest disclosure per security and attach its "
+                        "public company name."
+                    ),
+                    evidence=(
+                        "repurchase provides announcement dates and security codes; "
+                        "stock_basic provides company names."
+                    ),
+                )
+            ],
+        )
+        AnalysisService._compile_composed_result(
+            plan,
+            source_query=disclosure_query,
+            output_query_id="repurchase_company_list",
+            steps=[
+                {
+                    "operation": "latest_by_group",
+                    "group_by": ["ts_code"],
+                    "order_by": "ann_date",
+                    "direction": "desc",
+                },
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": company_query.query_id,
+                    "join_on": ["ts_code"],
+                    "fields": {"name": "name"},
+                    "cardinality": "many_to_one",
+                },
+                {
+                    "operation": "select_fields",
+                    "fields": ["ts_code", "name", "ann_date"],
+                },
+            ],
+            output_descriptions={
+                "ts_code": "A-share security code.",
+                "name": "Current public security name when available.",
+                "ann_date": "Latest repurchase announcement date in the window.",
+            },
+        )
+        return plan
 
     @staticmethod
     def _compile_known_security_price_extrema(prompt: str) -> Optional[QueryPlan]:

@@ -418,6 +418,38 @@ def test_snapshot_date_normalization_updates_confirmation_text():
     assert "20260818" not in plan.interpretation
 
 
+def test_repurchase_count_and_list_compiles_at_distinct_company_grain():
+    prompt = (
+        "2026\u5e746\u6708\u5ba3\u5e03\u56de\u8d2d\u7684A\u80a1\u516c\u53f8\u6709\u591a\u5c11\u5bb6\uff1f\u8bf7\u5217\u51fa\u5168\u90e8"
+        "\u516c\u53f8\u4ee3\u7801\u548c\u540d\u79f0\uff0c\u4e0d\u8981\u53ea\u7ed9\u603b\u6570\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260601\n"
+        "event_end_date=20260630\n"
+        "</trusted_analysis_window>"
+    )
+
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert [query.operation for query in plan.queries] == ["repurchase", "stock_basic"]
+    assert plan.queries[0].params == {
+        "start_date": "20260601",
+        "end_date": "20260630",
+    }
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "latest_by_group",
+        "join_fields",
+        "select_fields",
+    ]
+    assert plan.result_pipeline.steps[0].group_by == ["ts_code"]
+    assert plan.answer_contract.result_kind == "table"
+    assert {output.field for output in plan.answer_contract.outputs} == {
+        "ts_code",
+        "name",
+        "ann_date",
+    }
+
+
 @pytest.mark.parametrize(
     ("prompt", "expected_limit"),
     [

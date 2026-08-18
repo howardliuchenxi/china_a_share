@@ -334,6 +334,15 @@ def _assert_quality_invariants(
             trade_date in plan.interpretation
             for trade_date in valuation_dates
         )
+    if "distinct_company_list" in invariants:
+        assert plan.answer_contract is not None
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.answer_contract.result_query_id
+        )
+        security_codes = [row["ts_code"] for row in result.rows]
+        assert len(security_codes) == len(set(security_codes))
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:
