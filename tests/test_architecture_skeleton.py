@@ -250,6 +250,15 @@ def test_limit_list_capability_audits_complete_market_reads(
             {"trade_date": "20260817", "exchange": "SSE"},
             "exchange_snapshot",
         ),
+        (
+            "stk_holdernumber",
+            {
+                "ts_code": "000001.SZ",
+                "start_date": "20240818",
+                "end_date": "20260818",
+            },
+            "security_history",
+        ),
         ("dividend", {"ts_code": "600519.SH"}, "security"),
         (
             "repurchase",

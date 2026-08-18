@@ -6015,6 +6015,46 @@ class AnalysisService:
         )
 
     @staticmethod
+    def _normalize_holder_count_history(plan: QueryPlan) -> None:
+        """Remove disclosures without the requested shareholder-count metric."""
+        pipeline = plan.result_pipeline
+        if (
+            pipeline is None
+            or plan.answer_contract is None
+            or "holder_num"
+            not in {output.field for output in plan.answer_contract.outputs}
+            or any(step.operation == "pct_change" for step in pipeline.steps)
+        ):
+            return
+        source_query = next(
+            (
+                query
+                for query in plan.queries
+                if query.query_id == pipeline.source_query_id
+            ),
+            None,
+        )
+        if source_query is None or source_query.operation != "stk_holdernumber":
+            return
+        if any(
+            step.operation == "drop_missing" and "holder_num" in step.fields
+            for step in pipeline.steps
+        ):
+            return
+        sort_index = next(
+            (
+                index
+                for index, step in enumerate(pipeline.steps)
+                if step.operation == "sort"
+            ),
+            0,
+        )
+        pipeline.steps.insert(
+            sort_index,
+            ResultPipelineStep(operation="drop_missing", fields=["holder_num"]),
+        )
+
+    @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
         if AnalysisService._compile_industry_valuation_dividend(plan, prompt):
@@ -6065,6 +6105,7 @@ class AnalysisService:
             return plan
 
         AnalysisService._compile_security_dividend(plan, prompt)
+        AnalysisService._normalize_holder_count_history(plan)
         AnalysisService._compile_block_trade_snapshot(plan, prompt)
         AnalysisService._compile_dividend_yield_ranking(plan, prompt)
         AnalysisService._compile_composite_valuation(plan, prompt)

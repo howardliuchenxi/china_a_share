@@ -58,6 +58,46 @@ COMMON_PAGINATION_PARAMS = ("limit", "offset")
 
 
 PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
+    "stk_holdernumber": ProviderOperationCapability(
+        operation="stk_holdernumber",
+        allowed_params=(
+            "ts_code",
+            "ann_date",
+            "enddate",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security_history",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="announcement_snapshot",
+                required_params=("ann_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="reporting_snapshot",
+                required_params=("enddate",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=3_000,
+        unique_key=("ts_code", "ann_date", "end_date"),
+    ),
     "block_trade": ProviderOperationCapability(
         operation="block_trade",
         allowed_params=(

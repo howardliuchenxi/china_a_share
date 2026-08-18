@@ -5,11 +5,13 @@ import pytest
 
 from china_a_share.application.workflow import ASharePlanValidator, AnalysisService
 from china_a_share.core.contracts import (
+    AnswerContract,
     AnalysisConversationTurn,
     AnalysisRequest,
     DataQuery,
     DataOperation,
     QueryPlan,
+    ResultPipeline,
 )
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 
@@ -472,6 +474,53 @@ def test_latest_margin_security_exchange_snapshot_binds_completed_session():
         "exchange": "SSE",
         "trade_date": "20260817",
     }
+
+
+def test_holder_count_history_drops_missing_metric_before_sorting():
+    plan = QueryPlan(
+        interpretation="Show shareholder-count history.",
+        requirements=[
+            {
+                "requirement": "Show shareholder-count history.",
+                "status": "covered",
+                "evidence": "stk_holdernumber provides shareholder counts.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="holder-history",
+                operation="stk_holdernumber",
+                params={"ts_code": "000001.SZ"},
+                fields=["ts_code", "end_date", "holder_num"],
+                purpose="Retrieve shareholder-count history.",
+            )
+        ],
+        result_pipeline=ResultPipeline.model_validate(
+            {
+                "source_query_id": "holder-history",
+                "output_query_id": "holder-trend",
+                "steps": [
+                    {"operation": "sort", "field": "end_date", "direction": "asc"}
+                ],
+            }
+        ),
+        answer_contract=AnswerContract(
+            result_query_id="holder-trend",
+            result_kind="table",
+            outputs=[
+                {"field": "end_date", "description": "Reporting date."},
+                {"field": "holder_num", "description": "Shareholder count."},
+            ],
+        ),
+    )
+
+    AnalysisService._normalize_plan_for_request(plan, "Show shareholder-count history.")
+
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "drop_missing",
+        "sort",
+    ]
+    assert plan.result_pipeline.steps[0].fields == ["holder_num"]
 
 
 def test_repurchase_count_and_list_compiles_at_distinct_company_grain():
