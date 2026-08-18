@@ -2289,6 +2289,11 @@ class AnalysisService:
         block_trade = AnalysisService._compile_known_block_trade(prompt)
         if block_trade is not None:
             return block_trade
+        valuation_thresholds = (
+            AnalysisService._compile_known_valuation_threshold_screen(prompt)
+        )
+        if valuation_thresholds is not None:
+            return valuation_thresholds
         normalized_prompt = prompt.casefold()
         if (
             any(term in normalized_prompt for term in ("cash dividend total", "现金分红总额"))
@@ -3538,6 +3543,96 @@ class AnalysisService:
                         "field": "net_mf_amount",
                         "description": "Native main-fund net inflow amount.",
                     },
+                ],
+            ),
+        )
+
+    @staticmethod
+    def _compile_known_valuation_threshold_screen(prompt: str) -> Optional[QueryPlan]:
+        """Compile a dated A-share screen with explicit PE and PB thresholds."""
+        normalized = prompt.casefold()
+        pe_match = re.search(
+            r"(?:\bpe\b|\u5e02\u76c8\u7387)\s*(?:below|under|less than|<|\u4f4e\u4e8e|\u5c0f\u4e8e)\s*(\d+(?:\.\d+)?)",
+            normalized,
+        )
+        pb_match = re.search(
+            r"(?:\bpb\b|\u5e02\u51c0\u7387)\s*(?:below|under|less than|<|\u4f4e\u4e8e|\u5c0f\u4e8e)\s*(\d+(?:\.\d+)?)",
+            normalized,
+        )
+        resolved = resolve_explicit_time_range(prompt)
+        if (
+            pe_match is None
+            or pb_match is None
+            or resolved is None
+            or resolved[0] != resolved[1]
+        ):
+            return None
+        trade_date = resolved[0].strftime("%Y%m%d")
+        metric_query = DataQuery(
+            query_id="valuation_threshold_snapshot",
+            operation="daily_basic",
+            params={"trade_date": trade_date},
+            fields=["ts_code", "trade_date", "pe", "pb"],
+            filters=[
+                DataFilter(field="pe", operator="lt", value=float(pe_match.group(1))),
+                DataFilter(field="pb", operator="lt", value=float(pb_match.group(1))),
+            ],
+            purpose="Retrieve and filter the requested valuation snapshot.",
+        )
+        company_query = DataQuery(
+            query_id="valuation_threshold_companies",
+            operation="stock_basic",
+            params={"list_status": "L"},
+            fields=["ts_code", "name"],
+            purpose="Attach listed-company names to the valuation screen.",
+        )
+        result_pipeline = ResultPipeline.model_validate(
+            {
+                "source_query_id": metric_query.query_id,
+                "output_query_id": "valuation_threshold_screen",
+                "steps": [
+                    {"operation": "drop_missing", "fields": ["pe", "pb"]},
+                    {
+                        "operation": "join_fields",
+                        "right_source_query_id": company_query.query_id,
+                        "join_on": ["ts_code"],
+                        "fields": {"name": "name"},
+                        "cardinality": "many_to_one",
+                    },
+                    {
+                        "operation": "select_fields",
+                        "fields": ["ts_code", "name", "trade_date", "pe", "pb"],
+                    },
+                ],
+            }
+        )
+        return QueryPlan(
+            interpretation=(
+                f"List A-shares on {trade_date} with PE below {pe_match.group(1)} "
+                f"and PB below {pb_match.group(1)}."
+            ),
+            queries=[metric_query, company_query],
+            result_pipeline=result_pipeline,
+            requirements=[
+                RequirementCoverage(
+                    requirement="List securities satisfying both valuation thresholds.",
+                    status="covered",
+                    implementation=(
+                        "Apply both native snapshot-field filters before attaching "
+                        "listed-company names."
+                    ),
+                    evidence="daily_basic provides PE and PB on one trading date.",
+                )
+            ],
+            answer_contract=AnswerContract(
+                result_query_id=result_pipeline.output_query_id,
+                result_kind="table",
+                outputs=[
+                    {"field": "ts_code", "description": "A-share security code."},
+                    {"field": "name", "description": "Listed-company name."},
+                    {"field": "trade_date", "description": "Trading date."},
+                    {"field": "pe", "description": "Price-to-earnings ratio."},
+                    {"field": "pb", "description": "Price-to-book ratio."},
                 ],
             ),
         )

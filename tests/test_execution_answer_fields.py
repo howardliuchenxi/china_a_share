@@ -1319,3 +1319,40 @@ def test_earnings_express_reporting_period_has_audited_completeness():
     assert shape is not None
     assert shape.shape_id == "security"
     assert shape.completeness_policy == "paginate_until_short_page"
+
+
+@pytest.mark.parametrize(
+    ("request_text", "expected_pe", "expected_pb"),
+    [
+        ("Find A-shares with PE below 15 and PB below 2", 15.0, 2.0),
+        ("\u7b5b\u9009\u5e02\u76c8\u7387\u4f4e\u4e8e12.5\u4e14\u5e02\u51c0\u7387\u5c0f\u4e8e1.8\u7684A\u80a1", 12.5, 1.8),
+    ],
+)
+def test_valuation_threshold_screen_compiles_both_filters(
+    request_text,
+    expected_pe,
+    expected_pb,
+):
+    prompt = (
+        f"{request_text}\n<trusted_analysis_window>\n"
+        "event_start_date=20260817\nevent_end_date=20260817\n"
+        "</trusted_analysis_window>"
+    )
+
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert [query.operation for query in plan.queries] == ["daily_basic", "stock_basic"]
+    assert plan.queries[0].params == {"trade_date": "20260817"}
+    assert [
+        (item.field, item.operator, item.value) for item in plan.queries[0].filters
+    ] == [("pe", "lt", expected_pe), ("pb", "lt", expected_pb)]
+    assert plan.answer_contract.result_kind == "table"
+    assert {output.field for output in plan.answer_contract.outputs} == {
+        "ts_code",
+        "name",
+        "trade_date",
+        "pe",
+        "pb",
+    }
+    ASharePlanValidator(_CatalogProvider()).validate(plan)
