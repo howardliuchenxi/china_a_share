@@ -8,8 +8,10 @@ from china_a_share.core.contracts import (
     AnswerContract,
     AnalysisConversationTurn,
     AnalysisRequest,
+    DataFilter,
     DataQuery,
     DataOperation,
+    QueryConstraint,
     QueryPlan,
     ResultPipeline,
 )
@@ -521,6 +523,161 @@ def test_holder_count_history_drops_missing_metric_before_sorting():
         "sort",
     ]
     assert plan.result_pipeline.steps[0].fields == ["holder_num"]
+
+
+def test_date_range_endpoints_do_not_become_membership_filter():
+    plan = QueryPlan(
+        interpretation="Count shareholder trades in one year.",
+        requirements=[
+            {
+                "requirement": "Count shareholder trades in one year.",
+                "status": "covered",
+                "evidence": "The provider exposes bounded announcement dates.",
+            }
+        ],
+        constraints=[
+            QueryConstraint(
+                constraint_id="year_window",
+                scope="result",
+                query_id="holder-trades",
+                field="ann_date",
+                operator="in",
+                value=["20260101", "20261231"],
+            )
+        ],
+        queries=[
+            DataQuery(
+                query_id="holder-trades",
+                operation="stk_holdertrade",
+                params={"start_date": "20260101", "end_date": "20261231"},
+                fields=["ts_code", "ann_date", "in_de"],
+                filters=[
+                    DataFilter(
+                        field="ann_date",
+                        operator="in",
+                        value=["20260101", "20261231"],
+                    )
+                ],
+                purpose="Retrieve shareholder trades in one year.",
+            )
+        ],
+    )
+
+    AnalysisService._normalize_plan_for_request(plan, "Count 2026 shareholder trades.")
+
+    assert plan.queries[0].filters == []
+    assert [(item.operator, item.value) for item in plan.constraints] == [
+        ("ge", "20260101"),
+        ("le", "20261231"),
+    ]
+    assert ASharePlanValidator._uses_bounded_date_fanout(plan.queries[0]) is False
+    assert ASharePlanValidator._uses_bounded_native_range(plan.queries[0]) is True
+
+
+def test_grouped_category_counts_remain_a_table():
+    plan = QueryPlan(
+        interpretation="Count purchases and reductions separately.",
+        requirements=[
+            {
+                "requirement": "Count purchases and reductions separately.",
+                "status": "covered",
+                "evidence": "The provider exposes a transaction direction.",
+            }
+        ],
+        queries=[
+            DataQuery(
+                query_id="holder-trades",
+                operation="stk_holdertrade",
+                params={"start_date": "20260101", "end_date": "20261231"},
+                fields=["ts_code", "in_de"],
+                purpose="Retrieve shareholder trades.",
+            )
+        ],
+        result_pipeline=ResultPipeline.model_validate(
+            {
+                "source_query_id": "holder-trades",
+                "output_query_id": "direction-counts",
+                "steps": [
+                    {
+                        "operation": "aggregate",
+                        "group_by": ["in_de"],
+                        "aggregations": [
+                            {
+                                "output_field": "count",
+                                "field": "ts_code",
+                                "function": "count",
+                            }
+                        ],
+                    },
+                    {
+                        "operation": "summarize",
+                        "aggregations": [
+                            {
+                                "output_field": "in_de",
+                                "field": "in_de",
+                                "function": "first",
+                            },
+                            {
+                                "output_field": "count",
+                                "field": "count",
+                                "function": "sum",
+                            },
+                        ],
+                    },
+                ],
+            }
+        ),
+        answer_contract=AnswerContract(
+            result_query_id="direction-counts",
+            result_kind="summary",
+            outputs=[
+                {"field": "in_de", "description": "Transaction direction."},
+                {"field": "count", "description": "Disclosure count."},
+            ],
+        ),
+    )
+
+    AnalysisService._normalize_plan_for_request(plan, "Count purchases and reductions.")
+
+    assert [step.operation for step in plan.result_pipeline.steps] == ["aggregate"]
+    assert plan.answer_contract.result_kind == "table"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_start", "expected_end"),
+    [
+        ("\u7edf\u8ba12026\u5e74\u80a1\u4e1c\u589e\u6301\u548c\u51cf\u6301\u6b21\u6570", "20260101", "20261231"),
+        (
+            "Count shareholder purchases and reductions in 2025.",
+            "20250101",
+            "20251231",
+        ),
+    ],
+)
+def test_annual_holder_trade_counts_compile_deterministically(
+    prompt,
+    expected_start,
+    expected_end,
+):
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert [query.operation for query in plan.queries] == ["stk_holdertrade"]
+    assert plan.queries[0].params == {
+        "start_date": expected_start,
+        "end_date": expected_end,
+    }
+    assert ASharePlanValidator._uses_bounded_date_fanout(plan.queries[0]) is False
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "compare_scalar",
+        "compare_scalar",
+        "summarize",
+    ]
+    assert [step.value for step in plan.result_pipeline.steps[:2]] == ["IN", "DE"]
+    assert {output.field for output in plan.answer_contract.outputs} == {
+        "purchase_count",
+        "reduction_count",
+    }
 
 
 def test_repurchase_count_and_list_compiles_at_distinct_company_grain():

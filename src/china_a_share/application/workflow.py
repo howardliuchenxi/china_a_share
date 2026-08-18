@@ -98,7 +98,6 @@ DATE_FANOUT_PARAMETERS = {
     "dividend": "ann_date",
     "share_float": "float_date",
     "stk_holdernumber": "ann_date",
-    "stk_holdertrade": "ann_date",
     "forecast": "ann_date",
 }
 UNIVERSE_OPERATIONS = {"stock_basic", "ths_member"}
@@ -293,6 +292,7 @@ class ASharePlanValidator:
             if query.operation in FANOUT_OPERATIONS
             and not query.params.get("ts_code")
             and not ASharePlanValidator._uses_bounded_date_fanout(query)
+            and not ASharePlanValidator._uses_bounded_native_range(query)
         ]
         has_universe_query = any(
             query.operation in UNIVERSE_OPERATIONS
@@ -931,6 +931,21 @@ class ASharePlanValidator:
             and not query.params.get("ts_code")
             and query.params.get("start_date")
             and query.params.get("end_date")
+        )
+
+    @staticmethod
+    def _uses_bounded_native_range(query: DataQuery) -> bool:
+        """Return whether an audited provider shape executes a complete native range."""
+        if not query.params.get("start_date") or not query.params.get("end_date"):
+            return False
+        try:
+            shape = resolve_query_shape(query.operation, query.params)
+        except ValueError:
+            return False
+        return bool(
+            shape is not None
+            and shape.shape_id == "bounded_range"
+            and shape.execution_strategy == "provider_query"
         )
 
     @staticmethod
@@ -2231,6 +2246,11 @@ class AnalysisService:
     @staticmethod
     def _compile_known_request(prompt: str) -> Optional[QueryPlan]:
         """Compile stable multi-source request families without model-generated DAGs."""
+        holder_trade_counts = (
+            AnalysisService._compile_known_holder_trade_direction_counts(prompt)
+        )
+        if holder_trade_counts is not None:
+            return holder_trade_counts
         cash_dividend_ranking = AnalysisService._compile_known_cash_dividend_ranking(
             prompt
         )
@@ -4564,6 +4584,7 @@ class AnalysisService:
             q.operation in FANOUT_OPERATIONS
             and not q.params.get("ts_code")
             and not ASharePlanValidator._uses_bounded_date_fanout(q)
+            and not ASharePlanValidator._uses_bounded_native_range(q)
             for q in plan.queries
         )
         return has_universe and has_security_template
@@ -4852,6 +4873,7 @@ class AnalysisService:
             q for q in plan.queries
             if q.operation in FANOUT_OPERATIONS and not q.params.get("ts_code")
             and not ASharePlanValidator._uses_bounded_date_fanout(q)
+            and not ASharePlanValidator._uses_bounded_native_range(q)
         ]
         daily_range_queries = [
             q for q in plan.queries
@@ -6055,6 +6077,90 @@ class AnalysisService:
         )
 
     @staticmethod
+    def _normalize_date_range_endpoint_membership(plan: QueryPlan) -> None:
+        """Replace a two-endpoint date membership predicate with range lineage."""
+        queries = list(plan.queries)
+        if plan.execution_plan is not None:
+            queries.extend(
+                node.query
+                for node in plan.execution_plan.nodes
+                if node.kind == "query" and node.query is not None
+            )
+        constraints_to_add = []
+        for query in queries:
+            start_date = query.params.get("start_date")
+            end_date = query.params.get("end_date")
+            if not start_date or not end_date:
+                continue
+            endpoint_values = [start_date, end_date]
+            endpoint_filters = [
+                row_filter
+                for row_filter in query.filters
+                if row_filter.operator == "in"
+                and row_filter.field.endswith("date")
+                and row_filter.value == endpoint_values
+            ]
+            if not endpoint_filters:
+                continue
+            endpoint_fields = {row_filter.field for row_filter in endpoint_filters}
+            query.filters = [
+                row_filter
+                for row_filter in query.filters
+                if row_filter not in endpoint_filters
+            ]
+            for constraint in plan.constraints:
+                if (
+                    constraint.query_id == query.query_id
+                    and constraint.field in endpoint_fields
+                    and constraint.operator == "in"
+                    and constraint.value == endpoint_values
+                ):
+                    constraint.operator = "ge"
+                    constraint.value = start_date
+                    constraints_to_add.append(
+                        QueryConstraint(
+                            constraint_id=f"{constraint.constraint_id}_end",
+                            scope=constraint.scope,
+                            query_id=constraint.query_id,
+                            field=constraint.field,
+                            operator="le",
+                            value=end_date,
+                        )
+                    )
+        plan.constraints.extend(constraints_to_add)
+
+    @staticmethod
+    def _normalize_grouped_aggregate_result(plan: QueryPlan) -> None:
+        """Keep categorical grouped aggregates as rows instead of scalar summaries."""
+        pipeline = plan.result_pipeline
+        if pipeline is None or len(pipeline.steps) < 2:
+            return
+        aggregate = next(
+            (step for step in pipeline.steps if step.operation == "aggregate"),
+            None,
+        )
+        if aggregate is None or not aggregate.group_by:
+            return
+        grouped_fields = set(aggregate.group_by)
+        invalid_summaries = [
+            step
+            for step in pipeline.steps
+            if step.operation == "summarize"
+            and any(
+                aggregation.function == "first"
+                and aggregation.field in grouped_fields
+                for aggregation in step.aggregations
+            )
+        ]
+        if not invalid_summaries:
+            return
+        pipeline.steps = [
+            step for step in pipeline.steps if step not in invalid_summaries
+        ]
+        if plan.answer_contract is not None:
+            plan.answer_contract.result_kind = "table"
+
+    @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
         if AnalysisService._compile_industry_valuation_dividend(plan, prompt):
@@ -6106,6 +6212,8 @@ class AnalysisService:
 
         AnalysisService._compile_security_dividend(plan, prompt)
         AnalysisService._normalize_holder_count_history(plan)
+        AnalysisService._normalize_date_range_endpoint_membership(plan)
+        AnalysisService._normalize_grouped_aggregate_result(plan)
         AnalysisService._compile_block_trade_snapshot(plan, prompt)
         AnalysisService._compile_dividend_yield_ranking(plan, prompt)
         AnalysisService._compile_composite_valuation(plan, prompt)
@@ -7334,6 +7442,142 @@ class AnalysisService:
                 value *= {"亿": 10_000, "万": 1, "元": 0.0001, None: 1}[unit]
             return comparison, value
         return None
+
+    @staticmethod
+    def _compile_known_holder_trade_direction_counts(
+        prompt: str,
+    ) -> Optional[QueryPlan]:
+        """Compile annual shareholder purchase and reduction disclosure counts."""
+        normalized = prompt.casefold()
+        year_match = re.search(r"(?<!\d)(20\d{2})(?!\d)", prompt)
+        requests_counts = any(
+            term in normalized for term in ("count", "counts", "统计", "次数", "数量")
+        )
+        requests_holder_trades = (
+            (
+                "股东" in prompt
+                and "增持" in prompt
+                and "减持" in prompt
+            )
+            or (
+                "shareholder" in normalized
+                and any(term in normalized for term in ("purchase", "increase"))
+                and any(term in normalized for term in ("reduction", "decrease"))
+            )
+        )
+        if year_match is None or not requests_counts or not requests_holder_trades:
+            return None
+        year = year_match.group(1)
+        start_date = f"{year}0101"
+        end_date = f"{year}1231"
+        query = DataQuery(
+            query_id="holder_trade_disclosures",
+            operation="stk_holdertrade",
+            params={"start_date": start_date, "end_date": end_date},
+            fields=["ts_code", "ann_date", "in_de"],
+            purpose=(
+                "Retrieve shareholder purchase and reduction disclosures inside "
+                "the requested calendar year."
+            ),
+        )
+        output_query_id = "holder_trade_direction_counts"
+        return QueryPlan(
+            interpretation=(
+                "Count shareholder purchase and reduction disclosure records "
+                f"separately from {start_date} through {end_date}."
+            ),
+            requirements=[
+                RequirementCoverage(
+                    requirement=(
+                        "Count shareholder purchase and reduction disclosures "
+                        "separately."
+                    ),
+                    status="covered",
+                    implementation=(
+                        "Compare the provider direction code with IN and DE, then "
+                        "sum each indicator independently."
+                    ),
+                    evidence=(
+                        "stk_holdertrade exposes bounded announcement dates and the "
+                        "native in_de direction code."
+                    ),
+                )
+            ],
+            constraints=[
+                QueryConstraint(
+                    constraint_id="holder_trade_year_start",
+                    scope="result",
+                    query_id=query.query_id,
+                    field="ann_date",
+                    operator="ge",
+                    value=start_date,
+                ),
+                QueryConstraint(
+                    constraint_id="holder_trade_year_end",
+                    scope="result",
+                    query_id=query.query_id,
+                    field="ann_date",
+                    operator="le",
+                    value=end_date,
+                ),
+            ],
+            queries=[query],
+            result_pipeline=ResultPipeline.model_validate(
+                {
+                    "source_query_id": query.query_id,
+                    "output_query_id": output_query_id,
+                    "steps": [
+                        {
+                            "operation": "compare_scalar",
+                            "field": "in_de",
+                            "output_field": "is_purchase",
+                            "comparison": "eq",
+                            "value": "IN",
+                            "true_value": 1,
+                            "false_value": 0,
+                        },
+                        {
+                            "operation": "compare_scalar",
+                            "field": "in_de",
+                            "output_field": "is_reduction",
+                            "comparison": "eq",
+                            "value": "DE",
+                            "true_value": 1,
+                            "false_value": 0,
+                        },
+                        {
+                            "operation": "summarize",
+                            "aggregations": [
+                                {
+                                    "output_field": "purchase_count",
+                                    "field": "is_purchase",
+                                    "function": "sum",
+                                },
+                                {
+                                    "output_field": "reduction_count",
+                                    "field": "is_reduction",
+                                    "function": "sum",
+                                },
+                            ],
+                        },
+                    ],
+                }
+            ),
+            answer_contract=AnswerContract(
+                result_query_id=output_query_id,
+                result_kind="summary",
+                outputs=[
+                    {
+                        "field": "purchase_count",
+                        "description": "Shareholder purchase disclosure count.",
+                    },
+                    {
+                        "field": "reduction_count",
+                        "description": "Shareholder reduction disclosure count.",
+                    },
+                ],
+            ),
+        )
 
     @staticmethod
     def _compile_valuation_period_return(plan: QueryPlan, prompt: str) -> None:
