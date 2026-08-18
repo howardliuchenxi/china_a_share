@@ -291,6 +291,33 @@ test("result table preserves visible precision for tiny non-zero values", async 
   await expect(page.getByRole("cell", { name: "0.001", exact: true })).toBeVisible();
 });
 
+test("result table labels shareholder count in user-facing language", async ({
+  page,
+}) => {
+  const finalResult = successWithMultiRowFixture.results[0];
+  const holderCountFixture: AnalysisResponse = {
+    ...successWithMultiRowFixture,
+    results: [
+      {
+        ...finalResult,
+        columns: ["ts_code", "end_date", "holder_num"],
+        rows: [
+          { ts_code: "000001.SZ", end_date: "20250331", holder_num: 504267 },
+          { ts_code: "000001.SZ", end_date: "20250630", holder_num: 443583 },
+        ],
+        row_count: 2,
+      },
+    ],
+  };
+  await mockApiRoutes(page, holderCountFixture);
+
+  await page.goto("/analysis");
+  await page.locator("#analysis-prompt").fill("Show shareholder count history");
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.getByRole("columnheader", { name: /\u80a1\u4e1c\u6237\u6570/ })).toBeVisible();
+});
+
 test("administrator feedback dialog stays open while entering a suggestion", async ({
   page,
 }) => {
