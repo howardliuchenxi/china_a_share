@@ -8,6 +8,7 @@ from china_a_share.application.workflow import (
     AnalysisService,
     DataQueryExecutor,
 )
+from china_a_share.capabilities import resolve_query_shape
 from china_a_share.core.contracts import (
     AnswerContract,
     AnalysisConversationTurn,
@@ -1307,3 +1308,14 @@ def test_security_resolution_matches_normalized_official_english_name():
 
     assert "name=kweichow moutai" in enriched
     assert "ts_code=600519.SH" in enriched
+
+
+def test_earnings_express_reporting_period_has_audited_completeness():
+    shape = resolve_query_shape(
+        "express",
+        {"ts_code": "000001.SZ", "period": "20251231"},
+    )
+
+    assert shape is not None
+    assert shape.shape_id == "security"
+    assert shape.completeness_policy == "paginate_until_short_page"
