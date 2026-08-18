@@ -177,6 +177,111 @@ def test_stock_basic_capability_audits_the_listed_security_universe():
     assert shape.completeness_policy == "paginate_until_short_page"
 
 
+@pytest.mark.parametrize(
+    ("params", "expected_shape"),
+    [
+        ({"trade_date": "20260817", "limit_type": "U"}, "market_snapshot"),
+        (
+            {
+                "start_date": "20260717",
+                "end_date": "20260817",
+                "limit_type": "U",
+            },
+            "bounded_range",
+        ),
+    ],
+)
+def test_limit_list_capability_audits_complete_market_reads(
+    params,
+    expected_shape,
+):
+    shape = resolve_query_shape("limit_list_d", params)
+
+    assert shape is not None
+    assert shape.shape_id == expected_shape
+    assert shape.execution_strategy == "provider_query"
+    assert shape.completeness_policy == "paginate_until_short_page"
+
+
+@pytest.mark.parametrize(
+    ("operation", "params", "expected_shape"),
+    [
+        ("block_trade", {"trade_date": "20260814"}, "market_snapshot"),
+        (
+            "block_trade",
+            {
+                "ts_code": "000001.SZ",
+                "start_date": "20260517",
+                "end_date": "20260817",
+            },
+            "security",
+        ),
+        ("moneyflow", {"trade_date": "20260817"}, "market_snapshot"),
+        (
+            "moneyflow",
+            {
+                "ts_code": "600519.SH",
+                "start_date": "20260717",
+                "end_date": "20260817",
+            },
+            "security",
+        ),
+        (
+            "weekly",
+            {
+                "ts_code": "000001.SZ",
+                "start_date": "20260101",
+                "end_date": "20260630",
+            },
+            "security",
+        ),
+        (
+            "monthly",
+            {
+                "ts_code": "601318.SH",
+                "start_date": "20250101",
+                "end_date": "20251231",
+            },
+            "security",
+        ),
+        ("margin_detail", {"trade_date": "20260817"}, "market_snapshot"),
+        ("margin_secs", {"exchange": "SSE"}, "exchange_snapshot"),
+        ("dividend", {"ts_code": "600519.SH"}, "security"),
+        (
+            "repurchase",
+            {"start_date": "20260601", "end_date": "20260630"},
+            "bounded_range",
+        ),
+        (
+            "suspend_d",
+            {"start_date": "20260717", "end_date": "20260817"},
+            "bounded_range",
+        ),
+        (
+            "stk_holdertrade",
+            {"start_date": "20260601", "end_date": "20260630"},
+            "bounded_range",
+        ),
+        (
+            "fina_mainbz",
+            {"ts_code": "600519.SH", "period": "20251231", "type": "P"},
+            "security",
+        ),
+    ],
+)
+def test_common_market_data_capabilities_prove_paginated_reads(
+    operation,
+    params,
+    expected_shape,
+):
+    shape = resolve_query_shape(operation, params)
+
+    assert shape is not None
+    assert shape.shape_id == expected_shape
+    assert shape.execution_strategy == "provider_query"
+    assert shape.completeness_policy == "paginate_until_short_page"
+
+
 def test_registered_capability_rejects_partial_date_range():
     with pytest.raises(ValueError, match="start_date and end_date together"):
         resolve_query_shape("share_float", {"start_date": "20261001"})
@@ -209,7 +314,7 @@ def test_capability_manifest_exposes_machine_verifiable_operation_contracts():
     )
 
     capability = manifest["provider_operation_capabilities"]["share_float"]
-    assert capability["page_size"] == 6000
+    assert capability["page_size"] == 5000
     assert capability["unique_key"] == [
         "ts_code",
         "float_date",
@@ -298,6 +403,34 @@ def test_tushare_provider_uses_operation_specific_page_limit():
     assert len(frame) == 1001
     assert calls[1]["limit"] == 1000
     assert calls[1]["offset"] == 1000
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected_limit"),
+    [("share_float", 5_000), ("repurchase", 2_000), ("fina_mainbz", 100)],
+)
+def test_tushare_provider_uses_capability_page_limits(
+    operation,
+    expected_limit,
+):
+    provider = TushareDataProvider("test-token", FakeCache())
+    calls = []
+
+    class FakeTransport:
+        def query(self, operation, params, fields):
+            calls.append(dict(params))
+            row_count = expected_limit if "offset" not in params else 1
+            return pd.DataFrame(
+                [{"ts_code": f"{index:06d}.SZ"} for index in range(row_count)]
+            )
+
+    provider._transport = FakeTransport()
+
+    frame = provider._fetch_complete(operation, {}, ["ts_code"])
+
+    assert len(frame) == expected_limit + 1
+    assert calls[1]["limit"] == expected_limit
+    assert calls[1]["offset"] == expected_limit
 
 
 def test_tushare_policy_has_provider_specific_boundary():

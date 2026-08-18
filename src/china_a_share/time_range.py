@@ -37,6 +37,36 @@ EXPLICIT_MONTH_PATTERN = re.compile(
 PARTIAL_MONTH_PATTERN = re.compile(
     r"(?<!\d)(?P<month>1[0-2]|0?[1-9])\s*\u6708(?!\s*[\d\u4e2a])"
 )
+ENGLISH_MONTH_PATTERN = re.compile(
+    r"\b(?P<month>january|february|march|april|may|june|july|august|"
+    r"september|october|november|december)\s+(?P<year>20\d{2})\b",
+    re.IGNORECASE,
+)
+ENGLISH_MONTHS = {
+    name: index
+    for index, name in enumerate(
+        (
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+        ),
+        start=1,
+    )
+}
+QUARTER_PATTERN = re.compile(
+    r"(?:\bQ(?P<quarter>[1-4])(?:\s+(?P<year>20\d{2}))?\b|"
+    r"\b(?P<leading_year>20\d{2})\s*Q(?P<leading_quarter>[1-4])\b)",
+    re.IGNORECASE,
+)
 FUTURE_HORIZON_PATTERN = re.compile(
     r"(?:接下来|未来|之后|此后)(?P<amount>\d{1,3}|[一二三四五六七八九十两]+)"
     r"(?P<unit>个?交易日|天|周|个?月|季度|年)"
@@ -66,6 +96,12 @@ def resolve_relative_time_range(
 ) -> Optional[Tuple[date, date]]:
     """Resolve one explicit relative duration into inclusive calendar boundaries."""
     normalized = re.sub(r"年{2,}", "年", re.sub(r"\s+", "", prompt))
+    normalized_casefold = normalized.casefold()
+    if any(
+        token in normalized_casefold
+        for token in ("本月", "thismonth", "month-to-date", "monthtodate")
+    ):
+        return date(end_date.year, end_date.month, 1), end_date
     match = RELATIVE_RANGE_PATTERN.search(normalized)
     if match is None:
         return None
@@ -108,6 +144,27 @@ def resolve_explicit_time_range(
         year = int(month_match.group("year"))
         month = int(month_match.group("month"))
         return date(year, month, 1), date(year, month, monthrange(year, month)[1])
+    english_month_match = ENGLISH_MONTH_PATTERN.search(prompt)
+    if english_month_match is not None:
+        year = int(english_month_match.group("year"))
+        month = ENGLISH_MONTHS[english_month_match.group("month").casefold()]
+        return date(year, month, 1), date(year, month, monthrange(year, month)[1])
+    quarter_match = QUARTER_PATTERN.search(prompt)
+    if quarter_match is not None:
+        year_token = quarter_match.group("year") or quarter_match.group("leading_year")
+        if year_token is None and reference_date is None:
+            return None
+        year = int(year_token) if year_token is not None else reference_date.year
+        quarter = int(
+            quarter_match.group("quarter")
+            or quarter_match.group("leading_quarter")
+        )
+        start_month = (quarter - 1) * 3 + 1
+        end_month = start_month + 2
+        return (
+            date(year, start_month, 1),
+            date(year, end_month, monthrange(year, end_month)[1]),
+        )
     partial_match = PARTIAL_MONTH_PATTERN.search(prompt)
     if partial_match is None or reference_date is None:
         return None

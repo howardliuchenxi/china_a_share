@@ -1540,14 +1540,31 @@ class DataQueryExecutor:
                 "describe_result_completeness",
                 None,
             )
-            completeness = (
-                describe_completeness(query.operation, query.params)
-                if callable(describe_completeness)
-                else {
-                    "completeness": "unknown",
-                    "completeness_evidence": [],
-                }
-            )
+            if callable(describe_completeness):
+                completeness = describe_completeness(query.operation, query.params)
+            else:
+                try:
+                    audited_shape = resolve_query_shape(query.operation, query.params)
+                except ValueError:
+                    # Lightweight in-memory providers used outside validated plans
+                    # do not inherit Tushare request-shape guarantees.
+                    audited_shape = None
+                completeness = (
+                    {
+                        "completeness": "complete",
+                        "completeness_evidence": [
+                            f"query_shape={audited_shape.shape_id}",
+                            f"execution_strategy={audited_shape.execution_strategy}",
+                            f"completeness_policy={audited_shape.completeness_policy}",
+                        ],
+                    }
+                    if audited_shape is not None
+                    and audited_shape.execution_strategy == "provider_query"
+                    else {
+                        "completeness": "unknown",
+                        "completeness_evidence": [],
+                    }
+                )
             # Object dtype converts missing numeric values to JSON null instead of NaN.
             safe_frame = frame.astype(object).where(pd.notnull(frame), None)
             return QueryResult(
@@ -4554,11 +4571,30 @@ class AnalysisService:
             )
 
         rows: List[Dict[str, Any]] = []
+        snapshot_results: List[QueryResult] = []
         with ThreadPoolExecutor(max_workers=MAX_QUERIES_PER_ANALYSIS) as pool:
             for result in pool.map(_fetch_date, trade_dates):
                 if result.status != QueryStatus.SUCCESS:
                     return result
+                if result.completeness != "complete":
+                    return QueryResult(
+                        query_id=query.query_id,
+                        provider=self._provider.name,
+                        operation=query.operation,
+                        status=QueryStatus.ERROR,
+                        error=ServiceError(
+                            source="system",
+                            message=(
+                                "A market snapshot lacks the audited completeness "
+                                "proof required for a full-market date range."
+                            ),
+                        ),
+                    )
+                snapshot_results.append(result)
                 rows.extend(result.rows)
+        covered_dates = (
+            f"{trade_dates[0]}..{trade_dates[-1]}" if trade_dates else "none"
+        )
         return QueryResult(
             query_id=query.query_id,
             provider=self._provider.name,
@@ -4567,6 +4603,13 @@ class AnalysisService:
             columns=list(query.fields),
             rows=rows,
             row_count=len(rows),
+            completeness="complete",
+            completeness_evidence=[
+                "execution_strategy=full_market_trading_date_fanout",
+                f"covered_trading_dates={covered_dates}",
+                "completeness_policy=all_trading_date_snapshots_complete",
+            ],
+            retrieval_partition_count=len(snapshot_results),
         )
 
     def _execute_full_market_period_return(
@@ -5488,6 +5531,13 @@ class AnalysisService:
     @staticmethod
     def _compile_composite_valuation(plan: QueryPlan, prompt: str) -> None:
         """Compile common multi-metric valuation screens over one daily snapshot."""
+        if plan.result_pipeline is not None and any(
+            step.right_source_query_id is not None
+            for step in plan.result_pipeline.steps
+        ):
+            # Multi-source pipelines carry enrichment or return calculations that
+            # a snapshot-only valuation normalizer cannot reproduce.
+            return
         prompt_upper = prompt.upper()
         snapshot_fields = [
             field
@@ -5613,6 +5663,10 @@ class AnalysisService:
         if operation is None:
             return
         query = next((query for query in plan.queries if query.operation == operation), None)
+        if query is not None and query.filters and plan.answer_contract is not None:
+            # Deterministic disclosure filters encode user-visible status or cohort
+            # semantics and must survive generic field normalization.
+            return
         security_code = AnalysisService._resolve_prompt_security_code(prompt)
         if operation == "stk_holdertrade" and security_code is None:
             plan.feasibility = "unsupported"
@@ -5770,6 +5824,12 @@ class AnalysisService:
     def _compile_block_trade_snapshot(plan: QueryPlan, prompt: str) -> None:
         """Compile a full-market block-trade snapshot for one resolved date."""
         if "\u5927\u5b97\u4ea4\u6613" not in prompt:
+            return
+        if plan.result_pipeline is not None and any(
+            query.operation == "block_trade" for query in plan.queries
+        ):
+            # A validated block-trade pipeline carries user-requested aggregation
+            # semantics that a detail-snapshot normalizer must not discard.
             return
         dates = re.findall(r"20\d{2}-?\d{2}-?\d{2}", plan.interpretation)
         existing = next(
@@ -7271,6 +7331,14 @@ class AnalysisService:
         )
         if resolved is None and "今年以来" in prompt:
             resolved = (date(end_date.year, 1, 1), end_date)
+        if resolved is None and any(
+            term in prompt.casefold()
+            for term in ("unlock", "unlocks", "解禁", "限售股")
+        ):
+            unlock_year = re.search(r"(?<!\d)(20\d{2})\s*年?", prompt)
+            if unlock_year is not None:
+                year = int(unlock_year.group(1))
+                resolved = (date(year, 1, 1), date(year, 12, 31))
         if resolved is None:
             since_year = re.search(r"(?:since|\u81ea)\s*(20\d{2})", prompt, re.IGNORECASE)
             if since_year is not None:

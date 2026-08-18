@@ -4073,15 +4073,15 @@ def test_workflow_completes_valuation_return_plan_from_trusted_window():
 
 
 def test_workflow_precompiles_known_valuation_return_family():
-    result = AnalysisService._compile_known_request(
-        (
+    prompt = (
             "市净率最低的50家公司今年以来的收益率\n"
             "<trusted_analysis_window>\n"
             "event_start_date=20260101\n"
             "event_end_date=20260807\n"
             "</trusted_analysis_window>"
-        )
     )
+    result = AnalysisService._compile_known_request(prompt)
+    result = AnalysisService._normalize_plan_for_request(result, prompt)
 
     assert result is not None
     assert [query.operation for query in result.queries] == ["daily_basic", "daily"]
@@ -6175,6 +6175,70 @@ def test_disclosure_range_uses_exact_calendar_date_queries():
         ("share_float", {"float_date": "20261002"}),
         ("share_float", {"float_date": "20261003"}),
     ]
+
+
+def test_full_market_range_proves_all_trading_date_snapshots_complete():
+    class CompleteSnapshotProvider(FakeMarketDataProvider):
+        def query(
+            self,
+            operation,
+            params,
+            fields,
+            *,
+            api_route,
+            request_id,
+            query_id,
+        ):
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": params["trade_date"],
+                        "close": 10.0,
+                    }
+                ]
+            )
+
+        def describe_result_completeness(self, operation, params):
+            return {
+                "completeness": "complete",
+                "completeness_evidence": ["query_shape=market_snapshot"],
+            }
+
+    provider = CompleteSnapshotProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    service._trading_dates = Mock(
+        return_value=[date(2026, 8, 14), date(2026, 8, 17)]
+    )
+    query = DataQuery(
+        query_id="market-range",
+        operation="daily",
+        params={"start_date": "20260814", "end_date": "20260817"},
+        fields=["ts_code", "trade_date", "close"],
+        purpose="Read every full-market trading-date snapshot.",
+    )
+
+    result = service._execute_full_market_range_by_date(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.completeness == "complete"
+    assert result.retrieval_partition_count == 2
+    assert (
+        "execution_strategy=full_market_trading_date_fanout"
+        in result.completeness_evidence
+    )
+    assert "covered_trading_dates=20260814..20260817" in (
+        result.completeness_evidence
+    )
 
 
 def test_full_market_period_return_reads_only_boundary_snapshots():

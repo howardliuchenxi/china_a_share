@@ -72,6 +72,15 @@ class TransientSession:
         return SuccessfulResponse()
 
 
+class SuccessfulSession:
+    def __init__(self):
+        self.calls = 0
+
+    def post(self, *args, **kwargs):
+        self.calls += 1
+        return SuccessfulResponse()
+
+
 def test_daily_forwards_query_parameters():
     api = FakeProApi()
     client = TushareTransport("test-token", pro_api=api)
@@ -121,6 +130,40 @@ def test_tushare_transport_retries_transient_connection_failures(monkeypatch):
     assert result.to_dict(orient="records") == [
         {"ts_code": "000001.SZ", "close": 10.5}
     ]
+
+
+def test_tushare_transport_waits_before_exceeding_an_operation_rate_limit(
+    monkeypatch,
+):
+    current_time = [0.0]
+    waits = []
+
+    def advance_time(seconds):
+        waits.append(seconds)
+        current_time[0] += seconds
+
+    monkeypatch.setattr("china_a_share.client.TUSHARE_OPERATION_RATE_LIMIT", 2)
+    monkeypatch.setattr(
+        "china_a_share.client.TUSHARE_OPERATION_RATE_WINDOW_SECONDS",
+        1,
+    )
+    monkeypatch.setattr(
+        "china_a_share.client.monotonic",
+        lambda: current_time[0],
+    )
+    monkeypatch.setattr("china_a_share.client.sleep", advance_time)
+    session = SuccessfulSession()
+    client = TushareTransport(
+        "test-token",
+        pro_api=FakeProApi(),
+        session=session,
+    )
+
+    for _ in range(3):
+        client.query("share_float", {"float_date": "20260901"}, ["ts_code"])
+
+    assert session.calls == 3
+    assert waits == [1.0]
 
 
 def test_tushare_provider_delegates_to_provider_aware_cache():

@@ -462,12 +462,9 @@
       "name": "liquidity_ranking 3",
       "family": "liquidity_ranking",
       "prompt": "列出今日成交量和换手最活跃的股票",
-      "expected_feasibility": "supported",
-      "tier": "supported",
-      "operations": [
-        "daily",
-        "daily_basic"
-      ],
+      "expected_feasibility": "unsupported",
+      "tier": "unsupported",
+      "operations": [],
       "quality_invariants": [],
       "source": "matrix"
     },

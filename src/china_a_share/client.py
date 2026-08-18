@@ -1,7 +1,9 @@
 """Low-level Tushare transport with raw upstream error preservation."""
 
 import logging
-from time import sleep
+from collections import defaultdict, deque
+from threading import Lock
+from time import monotonic, sleep
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
@@ -15,9 +17,44 @@ TUSHARE_API_BASE_URL = "http://api.waditu.com/dataapi"
 TUSHARE_REQUEST_TIMEOUT_SECONDS = 60
 TUSHARE_MAX_ATTEMPTS = 3
 TUSHARE_RETRY_DELAY_SECONDS = 1
+TUSHARE_OPERATION_RATE_LIMIT = 450
+TUSHARE_OPERATION_RATE_WINDOW_SECONDS = 60
 
 
 logger = logging.getLogger(__name__)
+
+
+class _TushareOperationRateLimiter:
+    """Keep each provider operation below its documented per-minute ceiling."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._request_times = defaultdict(deque)
+
+    def acquire(self, api_name: str) -> None:
+        """Wait until one operation-specific request slot is available."""
+        while True:
+            now = monotonic()
+            with self._lock:
+                request_times = self._request_times[api_name]
+                cutoff = now - TUSHARE_OPERATION_RATE_WINDOW_SECONDS
+                while request_times and request_times[0] <= cutoff:
+                    request_times.popleft()
+                if len(request_times) < TUSHARE_OPERATION_RATE_LIMIT:
+                    request_times.append(now)
+                    return
+                wait_seconds = max(
+                    request_times[0]
+                    + TUSHARE_OPERATION_RATE_WINDOW_SECONDS
+                    - now,
+                    0,
+                )
+            logger.info(
+                "tushare_rate_limit_wait api_name=%s wait_seconds=%.3f",
+                api_name,
+                wait_seconds,
+            )
+            sleep(wait_seconds)
 
 
 class TushareApiError(DataProviderError):
@@ -53,6 +90,7 @@ class TushareTransport:
         self._token = token
         self.pro = pro_api if pro_api is not None else ts.pro_api(token)
         self.session = session if session is not None else requests.Session()
+        self._rate_limiter = _TushareOperationRateLimiter()
 
     def check_connection(self) -> pd.DataFrame:
         """Verify the token, network, and basic daily-data permission."""
@@ -104,6 +142,7 @@ class TushareTransport:
             "params": params,
             "fields": ",".join(fields),
         }
+        self._rate_limiter.acquire(api_name)
         response = None
         for attempt in range(TUSHARE_MAX_ATTEMPTS):
             try:

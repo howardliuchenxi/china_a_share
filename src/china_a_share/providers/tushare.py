@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from china_a_share.capabilities import resolve_query_shape
+from china_a_share.capabilities import get_operation_capability, resolve_query_shape
 from china_a_share.client import TushareTransport
 from china_a_share.core.contracts import DataOperation
 from china_a_share.core.ports import DataResponseCache
@@ -299,7 +299,12 @@ class TushareDataProvider:
     ) -> pd.DataFrame:
         """Fetch every provider page for operations with a documented row cap."""
         first_page = self._transport.query(operation, params, fields)
-        page_limit = PAGINATED_OPERATION_LIMITS.get(operation)
+        capability = get_operation_capability(operation)
+        page_limit = (
+            capability.page_size
+            if capability is not None and capability.page_size is not None
+            else PAGINATED_OPERATION_LIMITS.get(operation)
+        )
         if page_limit is None or len(first_page) < page_limit:
             return first_page
 

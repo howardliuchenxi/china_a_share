@@ -58,6 +58,39 @@ COMMON_PAGINATION_PARAMS = ("limit", "offset")
 
 
 PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
+    "block_trade": ProviderOperationCapability(
+        operation="block_trade",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=1_000,
+        unique_key=("ts_code", "trade_date", "price", "buyer", "seller"),
+    ),
     "stock_basic": ProviderOperationCapability(
         operation="stock_basic",
         allowed_params=(
@@ -152,6 +185,331 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
         page_size=6_000,
         unique_key=("ts_code", "trade_date"),
     ),
+    "limit_list_d": ProviderOperationCapability(
+        operation="limit_list_d",
+        allowed_params=(
+            "trade_date",
+            "ts_code",
+            "limit_type",
+            "exchange",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=5_000,
+        unique_key=("ts_code", "trade_date", "limit_type"),
+    ),
+    "moneyflow": ProviderOperationCapability(
+        operation="moneyflow",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "weekly": ProviderOperationCapability(
+        operation="weekly",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "monthly": ProviderOperationCapability(
+        operation="monthly",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "margin_detail": ProviderOperationCapability(
+        operation="margin_detail",
+        allowed_params=(
+            "trade_date",
+            "ts_code",
+            "exchange",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "margin_secs": ProviderOperationCapability(
+        operation="margin_secs",
+        allowed_params=(
+            "trade_date",
+            "ts_code",
+            "exchange",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="exchange_snapshot",
+                required_params=("exchange",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "dividend": ProviderOperationCapability(
+        operation="dividend",
+        allowed_params=(
+            "ts_code",
+            "ann_date",
+            "record_date",
+            "ex_date",
+            "imp_ann_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="announcement_date",
+                required_params=("ann_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security_fanout_template",
+                required_params=(),
+                execution_strategy="security_fanout",
+                completeness_policy="all_security_queries_complete",
+            ),
+        ),
+        page_size=5_000,
+        unique_key=("ts_code", "end_date", "ann_date", "div_proc"),
+    ),
+    "repurchase": ProviderOperationCapability(
+        operation="repurchase",
+        allowed_params=(
+            "ts_code",
+            "ann_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="announcement_date",
+                required_params=("ann_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=2_000,
+        unique_key=("ts_code", "ann_date", "end_date", "proc"),
+    ),
+    "suspend_d": ProviderOperationCapability(
+        operation="suspend_d",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "suspend_type",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=5_000,
+        unique_key=("ts_code", "trade_date", "suspend_type"),
+    ),
+    "stk_holdertrade": ProviderOperationCapability(
+        operation="stk_holdertrade",
+        allowed_params=(
+            "ts_code",
+            "ann_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="announcement_date",
+                required_params=("ann_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security_fanout_template",
+                required_params=(),
+                execution_strategy="security_fanout",
+                completeness_policy="all_security_queries_complete",
+            ),
+        ),
+        page_size=5_000,
+        unique_key=("ts_code", "ann_date", "holder_name", "in_de"),
+    ),
+    "fina_mainbz": ProviderOperationCapability(
+        operation="fina_mainbz",
+        allowed_params=(
+            "ts_code",
+            "period",
+            "type",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=100,
+        unique_key=("ts_code", "end_date", "bz_item", "curr_type"),
+    ),
     "share_float": ProviderOperationCapability(
         operation="share_float",
         allowed_params=(
@@ -189,7 +547,7 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
                 completeness_policy="all_dates_complete",
             ),
         ),
-        page_size=6_000,
+        page_size=5_000,
         unique_key=("ts_code", "float_date", "holder_name", "share_type"),
     ),
 }
@@ -230,6 +588,8 @@ def resolve_query_shape(
         if all(params.get(name) not in (None, "") for name in shape.required_params)
     ]
     if not matching:
+        if operation in {"weekly", "monthly"}:
+            raise ValueError(f"{operation} requires ts_code or trade_date.")
         expected = " or ".join(
             "+".join(shape.required_params) for shape in capability.query_shapes
         )

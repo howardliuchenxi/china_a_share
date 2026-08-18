@@ -71,6 +71,17 @@ def test_relative_window_parameters_are_not_fixed():
     )
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    ["本月大宗交易", "This month block trades", "Month-to-date turnover"],
+)
+def test_relative_ranges_support_current_month_to_date(prompt):
+    assert resolve_relative_time_range(prompt, date(2026, 8, 17)) == (
+        date(2026, 8, 1),
+        date(2026, 8, 17),
+    )
+
+
 def test_complex_event_study_keeps_event_window_and_outcome_horizon_separate():
     prompt = "A股20260101～20260601连续涨停三天的情况下，接下来一个月的上涨情况数据分析"
 
@@ -101,6 +112,28 @@ def test_explicit_calendar_month_expands_to_its_full_date_range():
     assert resolve_explicit_time_range("查看2025年2月的完整数据") == (
         date(2025, 2, 1),
         date(2025, 2, 28),
+    )
+
+
+def test_english_calendar_month_expands_to_its_full_date_range():
+    assert resolve_explicit_time_range("Top September 2026 unlocks") == (
+        date(2026, 9, 1),
+        date(2026, 9, 30),
+    )
+
+
+@pytest.mark.parametrize("prompt", ["Q4 2026 unlocks", "2026 Q4 unlocks"])
+def test_explicit_quarter_expands_to_its_full_date_range(prompt):
+    assert resolve_explicit_time_range(prompt) == (
+        date(2026, 10, 1),
+        date(2026, 12, 31),
+    )
+
+
+def test_quarter_without_year_uses_reference_year():
+    assert resolve_explicit_time_range("Q4 有多少家公司解禁", date(2026, 8, 17)) == (
+        date(2026, 10, 1),
+        date(2026, 12, 31),
     )
 
 
