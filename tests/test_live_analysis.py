@@ -374,6 +374,24 @@ def _assert_quality_invariants(
         )
         date_values = [row[date_field] for row in result.rows]
         assert date_values == sorted(date_values, reverse=descending)
+    if "explicit_cash_dividend_ranked_limit" in invariants:
+        assert plan.answer_contract is not None
+        result = next(
+            item
+            for item in response.results
+            if item.query_id == plan.answer_contract.result_query_id
+        )
+        limit_match = re.search(r"(?:\u524d|top)\s*(\d+)", prompt.casefold())
+        assert limit_match is not None
+        expected_count = int(limit_match.group(1))
+        expected_fields = {"ts_code", "name", "cash_div_tax", "ann_date"}
+        assert expected_fields.issubset(
+            {output.field for output in plan.answer_contract.outputs}
+        )
+        values = [row["cash_div_tax"] for row in result.rows]
+        assert len(values) == expected_count
+        assert all(value is not None for value in values)
+        assert values == sorted(values, reverse=True)
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:

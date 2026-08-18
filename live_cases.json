@@ -1559,6 +1559,21 @@
         "explicit_date_order"
       ],
       "source": "reported_regression"
+    },
+    {
+      "id": "quarterly-cash-dividend-ranked-company-list",
+      "name": "quarterly_cash_dividend_ranked_company_list",
+      "family": "reported_regression",
+      "prompt": "\u8bf7\u5217\u51fa2026\u5e74\u7b2c\u4e8c\u5b63\u5ea6\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\u6700\u9ad8\u7684\u524d20\u5bb6A\u80a1\u516c\u53f8\uff0c\u7ed9\u51fa\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5206\u7ea2\u548c\u516c\u544a\u65e5\u671f",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [],
+      "quality_invariants": [
+        "list_not_scalar",
+        "distinct_company_list",
+        "explicit_cash_dividend_ranked_limit"
+      ],
+      "source": "reported_regression"
     }
   ]
 }

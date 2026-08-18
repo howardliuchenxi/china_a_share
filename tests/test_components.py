@@ -6318,6 +6318,64 @@ def test_disclosure_range_uses_exact_calendar_date_queries():
     ]
 
 
+def test_dividend_range_uses_exact_announcement_date_queries():
+    class DividendProvider(FakeMarketDataProvider):
+        def supports(self, operation):
+            return operation == "dividend"
+
+        def query(
+            self,
+            operation,
+            params,
+            fields,
+            *,
+            api_route,
+            request_id,
+            query_id,
+        ):
+            self.calls.append((operation, dict(params)))
+            return pd.DataFrame(
+                [{"ts_code": "000001.SZ", "ann_date": params["ann_date"]}]
+            )
+
+    provider = DividendProvider()
+    service = AnalysisService(
+        planner=None,
+        provider=provider,
+        validator=ASharePlanValidator(provider),
+        executor=DataQueryExecutor(provider),
+    )
+    query = DataQuery(
+        query_id="dividend-range",
+        operation="dividend",
+        params={"start_date": "20260601", "end_date": "20260603"},
+        fields=["ts_code", "ann_date"],
+        purpose="Read a bounded dividend disclosure window.",
+    )
+
+    result = service._execute_disclosure_range_by_date(
+        query,
+        api_route="/api/analysis",
+        request_id="request-1",
+    )
+
+    assert result.status == "success"
+    assert result.row_count == 3
+    assert result.completeness == "complete"
+    assert result.retrieval_partition_count == 3
+    assert "query_shape=bounded_announcement_date_range" in (
+        result.completeness_evidence
+    )
+    assert "execution_strategy=exact_ann_date_fanout" in (
+        result.completeness_evidence
+    )
+    assert provider.calls == [
+        ("dividend", {"ann_date": "20260601"}),
+        ("dividend", {"ann_date": "20260602"}),
+        ("dividend", {"ann_date": "20260603"}),
+    ]
+
+
 def test_saturated_unlock_range_recovers_once_by_complete_security_window():
     class SaturatedUnlockProvider(FakeMarketDataProvider):
         def supports(self, operation):

@@ -95,6 +95,7 @@ SECURITY_SCOPED_OPERATIONS = {
     "stk_holdertrade",
 }
 DATE_FANOUT_PARAMETERS = {
+    "dividend": "ann_date",
     "share_float": "float_date",
     "stk_holdernumber": "ann_date",
     "stk_holdertrade": "ann_date",
@@ -1417,9 +1418,18 @@ class ASharePlanValidator:
         except ValueError as exc:
             raise PlanValidationError(str(exc)) from exc
         if operation == "dividend":
-            invalid_params = set(params).difference(
-                {"ts_code", "ann_date", "record_date", "ex_date", "imp_ann_date"}
-            )
+            allowed_params = {
+                "ts_code",
+                "ann_date",
+                "record_date",
+                "ex_date",
+                "imp_ann_date",
+            }
+            if params.get("start_date") and params.get("end_date"):
+                # The executor converts this bounded local contract into exact
+                # native ann_date calls; the range is never sent upstream.
+                allowed_params.update({"start_date", "end_date"})
+            invalid_params = set(params).difference(allowed_params)
             if invalid_params:
                 raise PlanValidationError(
                     "dividend uses unsupported provider parameters: "
@@ -2221,6 +2231,11 @@ class AnalysisService:
     @staticmethod
     def _compile_known_request(prompt: str) -> Optional[QueryPlan]:
         """Compile stable multi-source request families without model-generated DAGs."""
+        cash_dividend_ranking = AnalysisService._compile_known_cash_dividend_ranking(
+            prompt
+        )
+        if cash_dividend_ranking is not None:
+            return cash_dividend_ranking
         completed_repurchases = AnalysisService._compile_known_completed_repurchases(prompt)
         if completed_repurchases is not None:
             return completed_repurchases
@@ -3513,6 +3528,7 @@ class AnalysisService:
             result_steps.append(
                 {"operation": "sort", "field": "ann_date", "direction": "desc"}
             )
+            plan.interpretation += " Results are ordered by announcement date descending."
         elif any(
             term in normalized
             for term in (
@@ -3526,6 +3542,7 @@ class AnalysisService:
             result_steps.append(
                 {"operation": "sort", "field": "ann_date", "direction": "asc"}
             )
+            plan.interpretation += " Results are ordered by announcement date ascending."
         result_steps.append(
             {
                 "operation": "select_fields",
@@ -3541,6 +3558,118 @@ class AnalysisService:
                 "ts_code": "A-share security code.",
                 "name": "Current public security name when available.",
                 "ann_date": "Latest repurchase announcement date in the window.",
+            },
+        )
+        return plan
+
+    @staticmethod
+    def _compile_known_cash_dividend_ranking(prompt: str) -> Optional[QueryPlan]:
+        """Compile bounded per-share cash-dividend company rankings."""
+        normalized = prompt.casefold()
+        requests_per_share_dividend = any(
+            term in normalized
+            for term in (
+                "per-share cash dividend",
+                "cash dividend per share",
+                "\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2",
+                "\u6bcf\u80a1\u73b0\u91d1\u5206\u7ea2",
+            )
+        )
+        requests_ranking = any(
+            term in normalized
+            for term in (
+                "top",
+                "highest",
+                "largest",
+                "\u524d",
+                "\u6700\u9ad8",
+                "\u6700\u591a",
+            )
+        )
+        if not requests_per_share_dividend or not requests_ranking:
+            return None
+        resolved = resolve_explicit_time_range(prompt)
+        limit_match = re.search(r"(?:top|\u524d)\s*(\d+)", normalized)
+        if resolved is None or limit_match is None:
+            return None
+
+        start_date = resolved[0].strftime("%Y%m%d")
+        end_date = resolved[1].strftime("%Y%m%d")
+        result_limit = int(limit_match.group(1))
+        dividend_query = DataQuery(
+            query_id="ranked_cash_dividend_disclosures",
+            operation="dividend",
+            params={"start_date": start_date, "end_date": end_date},
+            fields=["ts_code", "ann_date", "cash_div_tax"],
+            purpose="Retrieve per-share cash-dividend disclosures in the requested window.",
+        )
+        company_query = DataQuery(
+            query_id="ranked_cash_dividend_company_names",
+            operation="stock_basic",
+            params={"list_status": "L"},
+            fields=["ts_code", "name"],
+            purpose="Attach current public security names to dividend disclosures.",
+        )
+        plan = QueryPlan(
+            interpretation=(
+                f"Rank the top {result_limit} currently listed A-share companies by "
+                "their highest announced per-share pre-tax cash dividend from "
+                f"{start_date} through {end_date}."
+            ),
+            queries=[dividend_query, company_query],
+            requirements=[
+                RequirementCoverage(
+                    requirement=(
+                        "Rank distinct companies by per-share pre-tax cash dividend "
+                        "and retain the matching announcement date."
+                    ),
+                    status="covered",
+                    implementation=(
+                        "Keep each company's highest non-missing disclosure before "
+                        "applying the requested global ranking limit."
+                    ),
+                    evidence=(
+                        "dividend supplies per-share pre-tax cash distributions and "
+                        "announcement dates; stock_basic supplies company names."
+                    ),
+                )
+            ],
+        )
+        AnalysisService._compile_composed_result(
+            plan,
+            source_query=dividend_query,
+            output_query_id="cash_dividend_company_ranking",
+            steps=[
+                {"operation": "drop_missing", "fields": ["cash_div_tax"]},
+                {
+                    "operation": "sort",
+                    "field": "cash_div_tax",
+                    "direction": "desc",
+                },
+                {"operation": "distinct", "fields": ["ts_code"], "keep": "first"},
+                {
+                    "operation": "sort",
+                    "field": "cash_div_tax",
+                    "direction": "desc",
+                },
+                {"operation": "limit", "count": result_limit},
+                {
+                    "operation": "join_fields",
+                    "right_source_query_id": company_query.query_id,
+                    "join_on": ["ts_code"],
+                    "fields": {"name": "name"},
+                    "cardinality": "many_to_one",
+                },
+                {
+                    "operation": "select_fields",
+                    "fields": ["ts_code", "name", "cash_div_tax", "ann_date"],
+                },
+            ],
+            output_descriptions={
+                "ts_code": "A-share security code.",
+                "name": "Current public security name when available.",
+                "cash_div_tax": "Highest announced per-share pre-tax cash dividend in the window.",
+                "ann_date": "Announcement date matching the ranked dividend disclosure.",
             },
         )
         return plan

@@ -494,6 +494,41 @@ def test_repurchase_company_list_preserves_explicit_announcement_date_order():
     )
     assert sort_step.field == "ann_date"
     assert sort_step.direction == "desc"
+    assert "announcement date descending" in plan.interpretation
+
+
+def test_quarterly_cash_dividend_ranking_keeps_one_highest_disclosure_per_company():
+    prompt = (
+        "\u8bf7\u5217\u51fa2026\u5e74\u7b2c\u4e8c\u5b63\u5ea6\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\u6700\u9ad8\u7684"
+        "\u524d20\u5bb6A\u80a1\u516c\u53f8\uff0c\u7ed9\u51fa\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5206\u7ea2\u548c\u516c\u544a\u65e5\u671f"
+    )
+
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert [query.operation for query in plan.queries] == ["dividend", "stock_basic"]
+    assert plan.queries[0].params == {
+        "start_date": "20260401",
+        "end_date": "20260630",
+    }
+    assert ASharePlanValidator._uses_bounded_date_fanout(plan.queries[0]) is True
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "drop_missing",
+        "sort",
+        "distinct",
+        "sort",
+        "limit",
+        "join_fields",
+        "select_fields",
+    ]
+    assert plan.result_pipeline.steps[2].fields == ["ts_code"]
+    assert plan.result_pipeline.steps[4].count == 20
+    assert {output.field for output in plan.answer_contract.outputs} == {
+        "ts_code",
+        "name",
+        "cash_div_tax",
+        "ann_date",
+    }
 
 
 @pytest.mark.parametrize(

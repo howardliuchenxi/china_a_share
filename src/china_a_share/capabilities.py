@@ -359,8 +359,11 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
             "record_date",
             "ex_date",
             "imp_ann_date",
+            "start_date",
+            "end_date",
             *COMMON_PAGINATION_PARAMS,
         ),
+        date_pair=("start_date", "end_date"),
         query_shapes=(
             ProviderQueryShape(
                 shape_id="security",
@@ -373,6 +376,12 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
                 required_params=("ann_date",),
                 execution_strategy="provider_query",
                 completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_announcement_date_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="exact_ann_date_fanout",
+                completeness_policy="all_dates_complete",
             ),
             ProviderQueryShape(
                 shape_id="security_fanout_template",
