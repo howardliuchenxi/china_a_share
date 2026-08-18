@@ -391,7 +391,13 @@ def _assert_quality_invariants(
         values = [row["cash_div_tax"] for row in result.rows]
         assert len(values) == expected_count
         assert all(value is not None for value in values)
-        assert values == sorted(values, reverse=True)
+        ascending = any(
+            term in prompt.casefold()
+            for term in ("lowest", "smallest", "ascending", "\u6700\u4f4e", "\u5347\u5e8f")
+        )
+        if any(term in prompt.casefold() for term in ("positive", ">0", "\u5927\u4e8e0")):
+            assert all(value > 0 for value in values)
+        assert values == sorted(values, reverse=not ascending)
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:

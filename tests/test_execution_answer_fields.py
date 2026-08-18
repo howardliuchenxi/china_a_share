@@ -531,6 +531,37 @@ def test_quarterly_cash_dividend_ranking_keeps_one_highest_disclosure_per_compan
     }
 
 
+def test_positive_cash_dividend_ranking_filters_before_ascending_company_rank():
+    prompt = (
+        "\u8bf7\u5217\u51fa2026\u5e74\u7b2c\u4e00\u5b63\u5ea6\u6bcf\u80a1\u7a0e\u524d\u73b0\u91d1\u5206\u7ea2\u6700\u4f4e\u4e14"
+        "\u5927\u4e8e0\u7684\u524d8\u5bb6A\u80a1\u516c\u53f8\uff0c\u7ed9\u51fa\u4ee3\u7801\u3001\u540d\u79f0\u3001\u5206\u7ea2\u548c\u516c\u544a\u65e5\u671f"
+    )
+
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert [step.operation for step in plan.result_pipeline.steps] == [
+        "drop_missing",
+        "filter",
+        "sort",
+        "distinct",
+        "sort",
+        "limit",
+        "join_fields",
+        "select_fields",
+    ]
+    positive_filter = plan.result_pipeline.steps[1]
+    assert (positive_filter.field, positive_filter.comparison, positive_filter.value) == (
+        "cash_div_tax",
+        "gt",
+        0,
+    )
+    assert plan.result_pipeline.steps[2].direction == "asc"
+    assert plan.result_pipeline.steps[4].direction == "asc"
+    assert plan.result_pipeline.steps[5].count == 8
+    assert "lowest positive" in plan.interpretation
+
+
 @pytest.mark.parametrize(
     ("prompt", "expected_limit"),
     [

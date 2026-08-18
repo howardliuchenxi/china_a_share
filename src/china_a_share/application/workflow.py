@@ -3596,6 +3596,24 @@ class AnalysisService:
         start_date = resolved[0].strftime("%Y%m%d")
         end_date = resolved[1].strftime("%Y%m%d")
         result_limit = int(limit_match.group(1))
+        ranking_direction = (
+            "asc"
+            if any(
+                term in normalized
+                for term in (
+                    "lowest",
+                    "smallest",
+                    "ascending",
+                    "\u6700\u4f4e",
+                    "\u5347\u5e8f",
+                )
+            )
+            else "desc"
+        )
+        requires_positive_dividend = any(
+            term in normalized
+            for term in ("positive", "greater than zero", ">0", "\u5927\u4e8e0")
+        )
         dividend_query = DataQuery(
             query_id="ranked_cash_dividend_disclosures",
             operation="dividend",
@@ -3613,7 +3631,9 @@ class AnalysisService:
         plan = QueryPlan(
             interpretation=(
                 f"Rank the top {result_limit} currently listed A-share companies by "
-                "their highest announced per-share pre-tax cash dividend from "
+                f"their {'lowest' if ranking_direction == 'asc' else 'highest'} "
+                f"{'positive ' if requires_positive_dividend else ''}announced "
+                "per-share pre-tax cash dividend from "
                 f"{start_date} through {end_date}."
             ),
             queries=[dividend_query, company_query],
@@ -3635,24 +3655,38 @@ class AnalysisService:
                 )
             ],
         )
-        AnalysisService._compile_composed_result(
-            plan,
-            source_query=dividend_query,
-            output_query_id="cash_dividend_company_ranking",
-            steps=[
-                {"operation": "drop_missing", "fields": ["cash_div_tax"]},
+        ranking_steps = [{"operation": "drop_missing", "fields": ["cash_div_tax"]}]
+        if requires_positive_dividend:
+            ranking_steps.append(
+                {
+                    "operation": "filter",
+                    "field": "cash_div_tax",
+                    "comparison": "gt",
+                    "value": 0,
+                }
+            )
+        ranking_steps.extend(
+            [
                 {
                     "operation": "sort",
                     "field": "cash_div_tax",
-                    "direction": "desc",
+                    "direction": ranking_direction,
                 },
                 {"operation": "distinct", "fields": ["ts_code"], "keep": "first"},
                 {
                     "operation": "sort",
                     "field": "cash_div_tax",
-                    "direction": "desc",
+                    "direction": ranking_direction,
                 },
                 {"operation": "limit", "count": result_limit},
+            ]
+        )
+        AnalysisService._compile_composed_result(
+            plan,
+            source_query=dividend_query,
+            output_query_id="cash_dividend_company_ranking",
+            steps=[
+                *ranking_steps,
                 {
                     "operation": "join_fields",
                     "right_source_query_id": company_query.query_id,
