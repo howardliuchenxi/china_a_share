@@ -115,10 +115,16 @@ const LEGACY_SUMMARY_METADATA: Record<
 
 const SUMMARY_FUNCTION_LABELS = {
   count: "\u8ba1\u6570",
+  count_distinct: "\u53bb\u91cd\u8ba1\u6570",
   sum: "\u6c42\u548c",
   mean: "\u5e73\u5747\u503c",
+  median: "\u4e2d\u4f4d\u6570",
   min: "\u6700\u5c0f\u503c",
   max: "\u6700\u5927\u503c",
+  std: "\u6807\u51c6\u5dee",
+  quantile: "\u5206\u4f4d\u6570",
+  first: "\u9996\u4e2a\u503c",
+  last: "\u6700\u540e\u4e00\u4e2a\u503c",
 } as const;
 
 const SUMMARY_OUTPUT_DESCRIPTIONS: Record<string, string> = {

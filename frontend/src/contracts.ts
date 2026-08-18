@@ -163,7 +163,18 @@ export interface ResultPipelineStepContract {
     output_field: string;
     label?: string | null;
     field: string;
-    function: "count" | "sum" | "mean" | "min" | "max";
+    function:
+      | "count"
+      | "count_distinct"
+      | "sum"
+      | "mean"
+      | "median"
+      | "min"
+      | "max"
+      | "std"
+      | "quantile"
+      | "first"
+      | "last";
   }>;
 }
 
