@@ -1024,3 +1024,96 @@ def test_live_industry_followup_filters_all_requested_nonmissing_metrics(
     assert [row["pe"] for row in result.rows] == sorted(
         row["pe"] for row in result.rows
     )
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
+def test_live_security_moneyflow_snapshot_and_component_followup(
+    live_analysis_service,
+    live_market_data_provider,
+) -> None:
+    """Verify deterministic money-flow planning and follow-up arithmetic."""
+    initial_prompt = "\u67e5\u8be2\u5e73\u5b89\u94f6\u884c\u6628\u5929\u4e3b\u529b\u8d44\u91d1\u51c0\u6d41\u5165"
+    initial = live_analysis_service.analyze(
+        request_id=f"live-security-moneyflow-{uuid4()}",
+        request=AnalysisRequest(prompt=initial_prompt),
+        api_route="/local-live-security-moneyflow",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert initial.status is AnalysisStatus.SUCCESS, _failure_message(initial)
+    assert initial.plan is not None
+    initial_query = initial.plan.queries[0]
+    assert initial_query.operation == "moneyflow"
+    assert initial_query.params["ts_code"] == "000001.SZ"
+    assert set(initial_query.params) == {"ts_code", "trade_date"}
+    assert initial.plan.answer_contract is not None
+    initial_result = next(
+        result
+        for result in initial.results
+        if result.query_id == initial.plan.answer_contract.result_query_id
+    )
+    assert initial_result.row_count == 1
+    assert {
+        "ts_code",
+        "trade_date",
+        "net_mf_amount",
+    }.issubset(initial_result.rows[0])
+
+    followup = live_analysis_service.analyze(
+        request_id=f"live-security-moneyflow-followup-{uuid4()}",
+        request=AnalysisRequest(
+            prompt=(
+                "\u518d\u628a\u5927\u5355\u548c\u5c0f\u5355\u51c0\u6d41\u5165\u4e00\u8d77\u5217\u51fa\u6765\uff0c"
+                "\u5e76\u7ed9\u51fa\u4ea4\u6613\u65e5\u671f"
+            ),
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt=initial_prompt,
+                    interpretation=initial.plan.interpretation,
+                )
+            ],
+        ),
+        api_route="/local-live-security-moneyflow-followup",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert followup.status is AnalysisStatus.SUCCESS, _failure_message(followup)
+    assert followup.plan is not None
+    assert followup.plan.answer_contract is not None
+    output = next(
+        result
+        for result in followup.results
+        if result.query_id == followup.plan.answer_contract.result_query_id
+    )
+    assert output.row_count == 1
+    source_query = followup.plan.queries[0]
+    source_frame = live_market_data_provider.query(
+        source_query.operation,
+        source_query.params,
+        source_query.fields,
+        api_route="/local-live-independent-moneyflow-validation",
+        request_id=f"live-moneyflow-oracle-{uuid4()}",
+        query_id="moneyflow-independent-validation",
+    )
+    assert len(source_frame.index) == 1
+    source_row = source_frame.iloc[0].to_dict()
+    output_row = output.rows[0]
+    assert set(output_row) == {
+        "ts_code",
+        "trade_date",
+        "net_lg_amount",
+        "net_sm_amount",
+    }
+    assert output_row["net_lg_amount"] == pytest.approx(
+        source_row["buy_lg_amount"] - source_row["sell_lg_amount"]
+    )
+    assert output_row["net_sm_amount"] == pytest.approx(
+        source_row["buy_sm_amount"] - source_row["sell_sm_amount"]
+    )

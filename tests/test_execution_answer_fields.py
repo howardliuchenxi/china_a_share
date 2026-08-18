@@ -24,7 +24,13 @@ from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 
 class _CatalogProvider:
     name = "tushare"
-    operation_names = ("stock_basic", "daily_basic", "dividend", "repurchase")
+    operation_names = (
+        "stock_basic",
+        "daily_basic",
+        "dividend",
+        "repurchase",
+        "moneyflow",
+    )
 
     @staticmethod
     def supports(operation: str) -> bool:
@@ -33,6 +39,7 @@ class _CatalogProvider:
             "daily_basic",
             "dividend",
             "repurchase",
+            "moneyflow",
         }
 
 
@@ -1143,3 +1150,71 @@ def test_trusted_snapshot_date_compiles_without_model_query_nodes():
     assert plan.feasibility == "supported"
     assert plan.queries[1].params == {"trade_date": "20260807"}
     assert plan.result_pipeline.output_query_id == "industry_valuation_dividend_result"
+
+
+def test_single_security_main_moneyflow_compiles_from_trusted_context():
+    prompt = (
+        "\u67e5\u8be2\u5e73\u5b89\u94f6\u884c\u6628\u5929\u4e3b\u529b\u8d44\u91d1\u51c0\u6d41\u5165\n"
+        "<trusted_security>\nname=Ping An Bank\nts_code=000001.SZ\n"
+        "</trusted_security>\n<trusted_analysis_window>\n"
+        "event_start_date=20260817\nevent_end_date=20260817\n"
+        "</trusted_analysis_window>"
+    )
+
+    plan = AnalysisService._compile_known_request(prompt)
+
+    assert plan is not None
+    assert len(plan.queries) == 1
+    query = plan.queries[0]
+    assert query.operation == "moneyflow"
+    assert query.params == {"ts_code": "000001.SZ", "trade_date": "20260817"}
+    assert query.fields == ["ts_code", "trade_date", "net_mf_amount"]
+    assert plan.answer_contract.result_kind == "table"
+    assert [output.field for output in plan.answer_contract.outputs] == [
+        "ts_code",
+        "trade_date",
+        "net_mf_amount",
+    ]
+    ASharePlanValidator(_CatalogProvider()).validate(plan)
+
+
+def test_moneyflow_followup_inherits_security_and_date_and_derives_components():
+    plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
+    contextual_prompt = (
+        "<analysis_conversation_context>\n<turn index=\"1\">\n"
+        "user_request=\"query\"\n"
+        "validated_interpretation=\"Return the native main-fund net inflow for "
+        "000001.SZ on 20260817.\"\n</turn>\n"
+        "</analysis_conversation_context>\n<current_analysis_request>\n"
+        "\u518d\u628a\u5927\u5355\u548c\u5c0f\u5355\u51c0\u6d41\u5165\u4e00\u8d77\u5217\u51fa\u6765\uff0c"
+        "\u5e76\u7ed9\u51fa\u4ea4\u6613\u65e5\u671f\n</current_analysis_request>"
+    )
+
+    normalized = AnalysisService._normalize_plan_for_request(
+        plan,
+        contextual_prompt,
+    )
+
+    query = normalized.queries[0]
+    assert query.operation == "moneyflow"
+    assert query.params == {"ts_code": "000001.SZ", "trade_date": "20260817"}
+    assert query.fields == [
+        "ts_code",
+        "trade_date",
+        "buy_lg_amount",
+        "sell_lg_amount",
+        "buy_sm_amount",
+        "sell_sm_amount",
+    ]
+    assert [step.operation for step in normalized.result_pipeline.steps] == [
+        "derive",
+        "derive",
+        "select_fields",
+    ]
+    assert [output.field for output in normalized.answer_contract.outputs] == [
+        "ts_code",
+        "trade_date",
+        "net_lg_amount",
+        "net_sm_amount",
+    ]
+    ASharePlanValidator(_CatalogProvider()).validate(normalized)

@@ -2257,6 +2257,9 @@ class AnalysisService:
     @staticmethod
     def _compile_known_request(prompt: str) -> Optional[QueryPlan]:
         """Compile stable multi-source request families without model-generated DAGs."""
+        security_moneyflow = AnalysisService._compile_known_security_moneyflow(prompt)
+        if security_moneyflow is not None:
+            return security_moneyflow
         holder_trade_counts = (
             AnalysisService._compile_known_holder_trade_direction_counts(prompt)
         )
@@ -3473,6 +3476,63 @@ class AnalysisService:
                     {"field": "proc", "description": "Repurchase progress status."},
                     {"field": "vol", "description": "Repurchased share volume."},
                     {"field": "amount", "description": "Repurchased amount."},
+                ],
+            ),
+        )
+
+    @staticmethod
+    def _compile_known_security_moneyflow(prompt: str) -> Optional[QueryPlan]:
+        """Compile a single-security main-fund money-flow snapshot."""
+        normalized = prompt.casefold()
+        if not (
+            any(
+                term in normalized
+                for term in ("main fund", "main-fund", "\u4e3b\u529b\u8d44\u91d1")
+            )
+            and any(
+                term in normalized for term in ("net inflow", "\u51c0\u6d41\u5165")
+            )
+        ):
+            return None
+        security_code = AnalysisService._resolve_prompt_security_code(prompt)
+        resolved = resolve_explicit_time_range(prompt)
+        if security_code is None or resolved is None or resolved[0] != resolved[1]:
+            return None
+        trade_date = resolved[0].strftime("%Y%m%d")
+        query = DataQuery(
+            query_id="security_main_moneyflow_snapshot",
+            operation="moneyflow",
+            params={"ts_code": security_code, "trade_date": trade_date},
+            fields=["ts_code", "trade_date", "net_mf_amount"],
+            purpose=(
+                "Retrieve the native main-fund net inflow for the resolved security "
+                "and trading date."
+            ),
+        )
+        return QueryPlan(
+            interpretation=(
+                f"Return the native main-fund net inflow for {security_code} "
+                f"on {trade_date}."
+            ),
+            queries=[query],
+            requirements=[
+                RequirementCoverage(
+                    requirement="Return main-fund net inflow for one security and date.",
+                    status="covered",
+                    implementation="Read the provider's native net_mf_amount field.",
+                    evidence="moneyflow directly provides net_mf_amount.",
+                )
+            ],
+            answer_contract=AnswerContract(
+                result_query_id=query.query_id,
+                result_kind="table",
+                outputs=[
+                    {"field": "ts_code", "description": "A-share security code."},
+                    {"field": "trade_date", "description": "Trading date."},
+                    {
+                        "field": "net_mf_amount",
+                        "description": "Native main-fund net inflow amount.",
+                    },
                 ],
             ),
         )
@@ -6180,6 +6240,8 @@ class AnalysisService:
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
+        if AnalysisService._compile_conversation_moneyflow_refinement(plan, prompt):
+            return plan
         if AnalysisService._compile_conversation_disclosure_refinement(plan, prompt):
             return plan
         if AnalysisService._compile_conversation_dividend_refinement(plan, prompt):
@@ -6277,6 +6339,153 @@ class AnalysisService:
         # accidentally revive a request for unavailable private or order-level data.
         AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         return plan
+
+    @staticmethod
+    def _compile_conversation_moneyflow_refinement(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> bool:
+        """Expand a confirmed security money-flow snapshot with native components."""
+        current_match = re.search(
+            r"<current_analysis_request>\s*(.*?)\s*</current_analysis_request>",
+            prompt,
+            re.DOTALL,
+        )
+        turn_matches = re.findall(
+            r"<turn\s+index=\"\d+\">\s*(.*?)\s*</turn>",
+            prompt,
+            re.DOTALL,
+        )
+        if current_match is None or not turn_matches:
+            return False
+        current_prompt = current_match.group(1).strip()
+        if not (
+            "\u5927\u5355" in current_prompt
+            and "\u5c0f\u5355" in current_prompt
+            and any(term in current_prompt for term in ("\u51c0\u6d41\u5165", "\u8d44\u91d1\u6d41\u5411"))
+        ):
+            return False
+
+        latest_turn = turn_matches[-1]
+        request_match = re.search(r"user_request=(.+)", latest_turn)
+        interpretation_match = re.search(
+            r"validated_interpretation=(.+)",
+            latest_turn,
+        )
+        if request_match is None or interpretation_match is None:
+            return False
+        try:
+            previous_prompt = json.loads(request_match.group(1).strip())
+            previous_interpretation = json.loads(
+                interpretation_match.group(1).strip()
+            )
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(previous_prompt, str) or not isinstance(
+            previous_interpretation,
+            str,
+        ):
+            return False
+        security_code = AnalysisService._resolve_prompt_security_code(
+            previous_interpretation
+        ) or AnalysisService._resolve_prompt_security_code(previous_prompt)
+        date_matches = re.findall(
+            r"(?<!\d)(20\d{6})(?!\d)",
+            previous_interpretation,
+        )
+        if security_code is None or not date_matches:
+            return False
+
+        trade_date = date_matches[-1]
+        query = DataQuery(
+            query_id="conversation_moneyflow_snapshot",
+            operation="moneyflow",
+            params={"ts_code": security_code, "trade_date": trade_date},
+            fields=[
+                "ts_code",
+                "trade_date",
+                "buy_lg_amount",
+                "sell_lg_amount",
+                "buy_sm_amount",
+                "sell_sm_amount",
+            ],
+            purpose=(
+                "Retrieve native large- and small-order money-flow components for "
+                "the confirmed security and trading date."
+            ),
+        )
+        plan.interpretation = (
+            f"For {security_code} on {trade_date}, return large- and small-order "
+            "net inflows derived from their native buy and sell amounts."
+        )
+        plan.intent = None
+        plan.feasibility = "supported"
+        plan.requirements = [
+            RequirementCoverage(
+                requirement=(
+                    "Return large- and small-order net inflows for the confirmed "
+                    "security snapshot."
+                ),
+                status="covered",
+                implementation=(
+                    "Subtract each native sell amount from its matching buy amount."
+                ),
+                evidence=(
+                    "moneyflow supplies the large- and small-order buy and sell "
+                    "amount fields."
+                ),
+            )
+        ]
+        plan.constraints = []
+        plan.queries = [query]
+        plan.execution_plan = None
+        plan.result_pipeline = ResultPipeline(
+            source_query_id=query.query_id,
+            output_query_id="conversation_moneyflow_refinement",
+            steps=[
+                ResultPipelineStep(
+                    operation="derive",
+                    field="buy_lg_amount",
+                    right_field="sell_lg_amount",
+                    output_field="net_lg_amount",
+                    arithmetic_operator="subtract",
+                ),
+                ResultPipelineStep(
+                    operation="derive",
+                    field="buy_sm_amount",
+                    right_field="sell_sm_amount",
+                    output_field="net_sm_amount",
+                    arithmetic_operator="subtract",
+                ),
+                ResultPipelineStep(
+                    operation="select_fields",
+                    fields=[
+                        "ts_code",
+                        "trade_date",
+                        "net_lg_amount",
+                        "net_sm_amount",
+                    ],
+                ),
+            ],
+        )
+        plan.answer_contract = AnswerContract(
+            result_query_id=plan.result_pipeline.output_query_id,
+            result_kind="table",
+            outputs=[
+                {"field": "ts_code", "description": "A-share security code."},
+                {"field": "trade_date", "description": "Trading date."},
+                {
+                    "field": "net_lg_amount",
+                    "description": "Large-order buy amount minus sell amount.",
+                },
+                {
+                    "field": "net_sm_amount",
+                    "description": "Small-order buy amount minus sell amount.",
+                },
+            ],
+        )
+        plan.limitations = []
+        return True
 
     @staticmethod
     def _compile_conversation_disclosure_refinement(
