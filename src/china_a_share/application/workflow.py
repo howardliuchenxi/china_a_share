@@ -8150,11 +8150,13 @@ class AnalysisService:
                 for node in plan.execution_plan.nodes
                 if node.kind == "query"
             )
+        date_replacements = {}
         for query in queries:
             if (
                 query.operation == "daily_basic"
                 and query.params.get("trade_date", safe_snapshot) > safe_snapshot
             ):
+                date_replacements[query.params["trade_date"]] = safe_snapshot
                 query.params["trade_date"] = safe_snapshot
             if (
                 query.operation == "daily"
@@ -8188,6 +8190,28 @@ class AnalysisService:
                     for row_filter in query.filters
                     if row_filter.field != "status"
                 ]
+        # Plan text is part of the confirmation contract. Keep it synchronized
+        # with any safety normalization so users never approve a stale date.
+        for original, normalized in date_replacements.items():
+            plan.interpretation = plan.interpretation.replace(original, normalized)
+            plan.limitations = [
+                limitation.replace(original, normalized)
+                for limitation in plan.limitations
+            ]
+            for requirement in plan.requirements:
+                requirement.requirement = requirement.requirement.replace(
+                    original,
+                    normalized,
+                )
+                if requirement.implementation is not None:
+                    requirement.implementation = requirement.implementation.replace(
+                        original,
+                        normalized,
+                    )
+                requirement.evidence = requirement.evidence.replace(
+                    original,
+                    normalized,
+                )
         queries_by_id = {query.query_id: query for query in queries}
         for constraint in plan.constraints:
             query = queries_by_id.get(constraint.query_id)

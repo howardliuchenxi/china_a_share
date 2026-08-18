@@ -1,3 +1,5 @@
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -390,6 +392,30 @@ def test_industry_valuation_ranking_accepts_explicit_order_phrases(
     assert plan.result_pipeline.steps[3].direction == expected_direction
     assert plan.result_pipeline.steps[4].count == expected_limit
     assert plan.answer_contract.result_kind == "table"
+
+
+def test_snapshot_date_normalization_updates_confirmation_text():
+    plan = _execution_plan(label_field="name", detail_field="cash_div_tax")
+    valuation_node = next(
+        node
+        for node in plan.execution_plan.nodes
+        if node.kind == "query" and node.query.operation == "daily_basic"
+    )
+    valuation_node.query.params = {"trade_date": "20260818"}
+    prompt = (
+        "A\u80a12026\u5e74\u6c7d\u8f66\u884c\u4e1a\uff0c\u5e02\u76c8\u7387\u548c\u5206\u7ea2\u6570\u636e\n\n"
+        "<trusted_analysis_window>\n"
+        "event_start_date=20260818\n"
+        "event_end_date=20260818\n"
+        "</trusted_analysis_window>"
+    )
+    AnalysisService._normalize_plan_for_request(plan, prompt)
+
+    AnalysisService._normalize_latest_plan_dates(plan, date(2026, 8, 18))
+
+    assert plan.queries[1].params == {"trade_date": "20260817"}
+    assert "20260817" in plan.interpretation
+    assert "20260818" not in plan.interpretation
 
 
 @pytest.mark.parametrize(

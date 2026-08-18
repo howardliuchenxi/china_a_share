@@ -1470,7 +1470,10 @@
       "expected_feasibility": "supported",
       "tier": "supported",
       "operations": [],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "industry_valuation_dividend_table",
+        "confirmation_dates_match_queries"
+      ],
       "source": "reported_regression"
     },
     {
@@ -1481,7 +1484,10 @@
       "expected_feasibility": "supported",
       "tier": "supported",
       "operations": [],
-      "quality_invariants": [],
+      "quality_invariants": [
+        "industry_valuation_dividend_table",
+        "confirmation_dates_match_queries"
+      ],
       "source": "reported_regression"
     },
     {
@@ -1493,7 +1499,8 @@
       "tier": "supported",
       "operations": [],
       "quality_invariants": [
-        "industry_valuation_dividend_table"
+        "industry_valuation_dividend_table",
+        "confirmation_dates_match_queries"
       ],
       "source": "reported_regression"
     },
@@ -1507,7 +1514,8 @@
       "operations": [],
       "quality_invariants": [
         "industry_valuation_dividend_table",
-        "explicit_ranked_limit"
+        "explicit_ranked_limit",
+        "confirmation_dates_match_queries"
       ],
       "source": "reported_regression"
     },

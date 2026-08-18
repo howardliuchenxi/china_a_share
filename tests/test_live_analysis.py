@@ -323,6 +323,17 @@ def _assert_quality_invariants(
         )
         assert result.row_count == len(result.rows)
         assert all("ts_code" in row for row in result.rows)
+    if "confirmation_dates_match_queries" in invariants:
+        valuation_dates = {
+            query.params["trade_date"]
+            for query in plan.queries
+            if query.operation == "daily_basic" and query.params.get("trade_date")
+        }
+        assert valuation_dates
+        assert all(
+            trade_date in plan.interpretation
+            for trade_date in valuation_dates
+        )
 
 
 def test_live_analysis_matrix_contains_exactly_100_questions() -> None:
