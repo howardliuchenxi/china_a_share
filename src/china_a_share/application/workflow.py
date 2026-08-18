@@ -6180,6 +6180,8 @@ class AnalysisService:
     @staticmethod
     def _normalize_plan_for_request(plan: QueryPlan, prompt: str) -> QueryPlan:
         """Apply deterministic request semantics before local plan validation."""
+        if AnalysisService._compile_conversation_disclosure_refinement(plan, prompt):
+            return plan
         if AnalysisService._compile_conversation_dividend_refinement(plan, prompt):
             return plan
         if AnalysisService._compile_conversation_valuation_refinement(plan, prompt):
@@ -6275,6 +6277,198 @@ class AnalysisService:
         # accidentally revive a request for unavailable private or order-level data.
         AnalysisService._enforce_unverifiable_data_boundary(plan, prompt)
         return plan
+
+    @staticmethod
+    def _compile_conversation_disclosure_refinement(
+        plan: QueryPlan,
+        prompt: str,
+    ) -> bool:
+        """Apply date and ordering refinements to a confirmed disclosure list."""
+        current_match = re.search(
+            r"<current_analysis_request>\s*(.*?)\s*</current_analysis_request>",
+            prompt,
+            re.DOTALL,
+        )
+        turn_matches = re.findall(
+            r"<turn\s+index=\"\d+\">\s*(.*?)\s*</turn>",
+            prompt,
+            re.DOTALL,
+        )
+        if current_match is None or not turn_matches:
+            return False
+        current_prompt = current_match.group(1).strip()
+        current_window = resolve_explicit_time_range(current_prompt)
+        if current_window is None or not any(
+            term in current_prompt
+            for term in ("\u53ea\u4fdd\u7559", "\u6309", "\u5217\u51fa", "\u524d")
+        ):
+            return False
+
+        latest_turn = turn_matches[-1]
+        request_match = re.search(r"user_request=(.+)", latest_turn)
+        interpretation_match = re.search(
+            r"validated_interpretation=(.+)",
+            latest_turn,
+        )
+        if request_match is None or interpretation_match is None:
+            return False
+        try:
+            previous_prompt = json.loads(request_match.group(1).strip())
+            previous_interpretation = json.loads(
+                interpretation_match.group(1).strip()
+            )
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(previous_prompt, str) or not isinstance(
+            previous_interpretation,
+            str,
+        ):
+            return False
+
+        previous_dates = re.findall(
+            r"(?<!\d)(20\d{6})(?!\d)",
+            previous_interpretation,
+        )
+        previous_compilation_prompt = previous_prompt
+        if len(previous_dates) >= 2:
+            previous_compilation_prompt += (
+                "\n\n<trusted_analysis_window>\n"
+                f"event_start_date={previous_dates[0]}\n"
+                f"event_end_date={previous_dates[-1]}\n"
+                "</trusted_analysis_window>"
+            )
+        base_plan = AnalysisService._compile_known_request(
+            previous_compilation_prompt
+        )
+        if (
+            base_plan is None
+            or base_plan.result_pipeline is None
+            or base_plan.answer_contract is None
+            or not {"ts_code", "name", "ann_date"}.issubset(
+                output.field for output in base_plan.answer_contract.outputs
+            )
+        ):
+            return False
+        source_query = next(
+            (
+                query
+                for query in base_plan.queries
+                if query.query_id == base_plan.result_pipeline.source_query_id
+            ),
+            None,
+        )
+        if source_query is None or source_query.operation not in {
+            "repurchase",
+            "stk_holdertrade",
+            "dividend",
+            "forecast",
+            "express",
+        }:
+            return False
+
+        explicit_sort = any(
+            term in current_prompt
+            for term in (
+                "\u4ece\u65e7\u5230\u65b0",
+                "\u4ece\u65b0\u5230\u65e7",
+                "\u5347\u5e8f",
+                "\u964d\u5e8f",
+                "ascending",
+                "descending",
+            )
+        )
+        refinement_steps = [
+            step.model_copy(deep=True)
+            for step in base_plan.result_pipeline.steps
+            if step.operation != "select_fields"
+            and not (explicit_sort and step.operation == "sort")
+        ]
+        start_date = current_window[0].strftime("%Y%m%d")
+        end_date = current_window[1].strftime("%Y%m%d")
+        refinement_steps.extend(
+            [
+                ResultPipelineStep(
+                    operation="filter",
+                    field="ann_date",
+                    comparison="ge",
+                    value=start_date,
+                ),
+                ResultPipelineStep(
+                    operation="filter",
+                    field="ann_date",
+                    comparison="le",
+                    value=end_date,
+                ),
+            ]
+        )
+        direction = (
+            "asc"
+            if any(
+                term in current_prompt
+                for term in ("\u4ece\u65e7\u5230\u65b0", "\u5347\u5e8f", "ascending")
+            )
+            else "desc"
+        )
+        refinement_steps.append(
+            ResultPipelineStep(
+                operation="sort",
+                field="ann_date",
+                direction=direction,
+            )
+        )
+        limit_match = re.search(r"(?:Top|top|\u524d)\s*(\d+)", current_prompt)
+        if limit_match is not None:
+            refinement_steps.append(
+                ResultPipelineStep(
+                    operation="limit",
+                    count=int(limit_match.group(1)),
+                )
+            )
+        requested_fields = ["ts_code", "name", "ann_date"]
+        refinement_steps.append(
+            ResultPipelineStep(
+                operation="select_fields",
+                fields=requested_fields,
+            )
+        )
+
+        plan.interpretation = (
+            "Starting from the previously confirmed disclosure cohort, keep rows "
+            f"announced from {start_date} through {end_date}, sort ann_date "
+            f"{'ascending' if direction == 'asc' else 'descending'}"
+            + (
+                f", then return the first {limit_match.group(1)} rows."
+                if limit_match is not None
+                else "."
+            )
+        )
+        plan.intent = None
+        plan.feasibility = "supported"
+        plan.requirements = [
+            requirement.model_copy(deep=True)
+            for requirement in base_plan.requirements
+        ]
+        plan.constraints = []
+        plan.queries = [query.model_copy(deep=True) for query in base_plan.queries]
+        plan.execution_plan = None
+        plan.result_pipeline = ResultPipeline(
+            source_query_id=base_plan.result_pipeline.source_query_id,
+            output_query_id="conversation_disclosure_refinement",
+            steps=refinement_steps,
+        )
+        base_outputs = {
+            output.field: output for output in base_plan.answer_contract.outputs
+        }
+        plan.answer_contract = AnswerContract(
+            result_query_id=plan.result_pipeline.output_query_id,
+            result_kind="table",
+            outputs=[
+                base_outputs[field].model_copy(deep=True)
+                for field in requested_fields
+            ],
+        )
+        plan.limitations = list(base_plan.limitations)
+        return True
 
     @staticmethod
     def _compile_conversation_dividend_refinement(

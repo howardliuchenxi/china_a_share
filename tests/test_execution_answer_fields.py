@@ -24,11 +24,16 @@ from china_a_share.planners.deepseek import DeepSeekQueryPlanner
 
 class _CatalogProvider:
     name = "tushare"
-    operation_names = ("stock_basic", "daily_basic", "dividend")
+    operation_names = ("stock_basic", "daily_basic", "dividend", "repurchase")
 
     @staticmethod
     def supports(operation: str) -> bool:
-        return operation in {"stock_basic", "daily_basic", "dividend"}
+        return operation in {
+            "stock_basic",
+            "daily_basic",
+            "dividend",
+            "repurchase",
+        }
 
 
 class _IndustryCatalogProvider:
@@ -885,6 +890,66 @@ def test_multi_turn_cash_dividend_refinement_preserves_confirmed_cohort(
         "cash_div_tax",
         "ann_date",
     }
+    ASharePlanValidator(_CatalogProvider()).validate(normalized)
+
+
+def test_multi_turn_disclosure_refinement_preserves_cohort_and_date_order():
+    candidate = _execution_plan(label_field="name", detail_field="ann_date")
+    candidate.intent = None
+    candidate.execution_plan = None
+    candidate.result_pipeline = None
+    current_prompt = (
+        "\u53ea\u4fdd\u75592026\u5e746\u6708\u516c\u544a\u7684\uff0c\u6309\u516c\u544a\u65e5\u671f\u4ece\u65e7\u5230\u65b0\u5217\u51fa\u524d15\u5bb6\uff0c"
+        "\u4ecd\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u548c\u516c\u544a\u65e5\u671f"
+    )
+    context_prompt = (
+        "<analysis_conversation_context>\n"
+        '<turn index="1">\n'
+        "user_request=\"\\u5217\\u51fa2026\\u5e74\\u7b2c\\u4e8c\\u5b63\\u5ea6\\u5ba3\\u5e03\\u56de\\u8d2d\\u7684\\u5168\\u90e8A\\u80a1\\u516c\\u53f8\\uff0c\\u6309\\u516c\\u544a\\u65e5\\u671f\\u4ece\\u65b0\\u5230\\u65e7\\u7ed9\\u51fa\\u4ee3\\u7801\\u3001\\u540d\\u79f0\\u548c\\u516c\\u544a\\u65e5\\u671f\\uff0c\\u4e0d\\u8981\\u53ea\\u7ed9\\u603b\\u6570\"\n"
+        "validated_interpretation=\"List distinct A-share companies with repurchase disclosures announced from 20260401 through 20260630.\"\n"
+        "</turn>\n"
+        "</analysis_conversation_context>\n"
+        "<current_analysis_request>\n"
+        f"{current_prompt}\n"
+        "</current_analysis_request>"
+    )
+
+    normalized = AnalysisService._normalize_plan_for_request(
+        candidate,
+        context_prompt,
+    )
+
+    assert [query.operation for query in normalized.queries] == [
+        "repurchase",
+        "stock_basic",
+    ]
+    assert [step.operation for step in normalized.result_pipeline.steps] == [
+        "latest_by_group",
+        "join_fields",
+        "filter",
+        "filter",
+        "sort",
+        "limit",
+        "select_fields",
+    ]
+    start_filter, end_filter = normalized.result_pipeline.steps[2:4]
+    assert (start_filter.field, start_filter.comparison, start_filter.value) == (
+        "ann_date",
+        "ge",
+        "20260601",
+    )
+    assert (end_filter.field, end_filter.comparison, end_filter.value) == (
+        "ann_date",
+        "le",
+        "20260630",
+    )
+    assert normalized.result_pipeline.steps[4].direction == "asc"
+    assert normalized.result_pipeline.steps[5].count == 15
+    assert normalized.result_pipeline.steps[6].fields == [
+        "ts_code",
+        "name",
+        "ann_date",
+    ]
     ASharePlanValidator(_CatalogProvider()).validate(normalized)
 
 

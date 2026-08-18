@@ -811,6 +811,75 @@ def test_live_multi_turn_cash_dividend_refinement(live_analysis_service) -> None
         "DeepSeek and Tushare APIs."
     ),
 )
+def test_live_multi_turn_repurchase_disclosure_refinement(
+    live_analysis_service,
+) -> None:
+    """Preserve a disclosure cohort while narrowing its date and output order."""
+    initial_prompt = (
+        "\u5217\u51fa2026\u5e74\u7b2c\u4e8c\u5b63\u5ea6\u5ba3\u5e03\u56de\u8d2d\u7684\u5168\u90e8A\u80a1\u516c\u53f8\uff0c"
+        "\u6309\u516c\u544a\u65e5\u671f\u4ece\u65b0\u5230\u65e7\u7ed9\u51fa\u4ee3\u7801\u3001\u540d\u79f0\u548c\u516c\u544a\u65e5\u671f\uff0c\u4e0d\u8981\u53ea\u7ed9\u603b\u6570"
+    )
+    initial = live_analysis_service.analyze(
+        request_id=f"live-repurchase-turn-initial-{uuid4()}",
+        request=AnalysisRequest(prompt=initial_prompt),
+        api_route="/local-live-repurchase-turn",
+        progress_callback=(lambda completed, total: None),
+    )
+    assert initial.status is AnalysisStatus.SUCCESS, _failure_message(initial)
+    assert initial.plan is not None
+    initial_result = next(
+        item
+        for item in initial.results
+        if item.query_id == initial.plan.answer_contract.result_query_id
+    )
+    initial_codes = {row["ts_code"] for row in initial_result.rows}
+
+    refinement_prompt = (
+        "\u53ea\u4fdd\u75592026\u5e746\u6708\u516c\u544a\u7684\uff0c\u6309\u516c\u544a\u65e5\u671f\u4ece\u65e7\u5230\u65b0\u5217\u51fa\u524d15\u5bb6\uff0c"
+        "\u4ecd\u4fdd\u7559\u4ee3\u7801\u3001\u540d\u79f0\u548c\u516c\u544a\u65e5\u671f"
+    )
+    refined = live_analysis_service.analyze(
+        request_id=f"live-repurchase-turn-refinement-{uuid4()}",
+        request=AnalysisRequest(
+            prompt=refinement_prompt,
+            conversation=[
+                AnalysisConversationTurn(
+                    prompt=initial_prompt,
+                    interpretation=initial.plan.interpretation,
+                )
+            ],
+        ),
+        api_route="/local-live-repurchase-turn",
+        progress_callback=(lambda completed, total: None),
+    )
+
+    assert refined.status is AnalysisStatus.SUCCESS, _failure_message(refined)
+    assert refined.error is None
+    assert refined.plan is not None
+    result = next(
+        item
+        for item in refined.results
+        if item.query_id == refined.plan.answer_contract.result_query_id
+    )
+    assert result.row_count == 15
+    assert {row["ts_code"] for row in result.rows}.issubset(initial_codes)
+    assert all(
+        {"ts_code", "name", "ann_date"}.issubset(row)
+        for row in result.rows
+    )
+    dates = [row["ann_date"] for row in result.rows]
+    assert all("20260601" <= value <= "20260630" for value in dates)
+    assert dates == sorted(dates)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv(LIVE_ANALYSIS_ENVIRONMENT_VARIABLE) != "1",
+    reason=(
+        f"Set {LIVE_ANALYSIS_ENVIRONMENT_VARIABLE}=1 to call the real "
+        "DeepSeek and Tushare APIs."
+    ),
+)
 def test_live_background_fanout_through_http_and_worker(
     live_analysis_service,
 ) -> None:
