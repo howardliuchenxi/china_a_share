@@ -225,15 +225,15 @@ def create_app(
         try:
             bot = get_feishu_research_bot()
             body = await request.body()
+            payload = bot.decode_payload(body)
+            if payload.get("type") == "url_verification":
+                return {"challenge": bot.verify_challenge(payload)}
             bot.verify_signature(
                 body,
                 x_lark_request_timestamp,
                 x_lark_request_nonce,
                 x_lark_signature,
             )
-            payload = bot.decode_payload(body)
-            if payload.get("type") == "url_verification":
-                return {"challenge": bot.verify_challenge(payload)}
             event = bot.parse_event(payload)
             if event is not None:
                 background_tasks.add_task(bot.process, event)

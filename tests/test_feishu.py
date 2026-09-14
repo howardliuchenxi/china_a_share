@@ -256,17 +256,24 @@ def test_feishu_endpoint_returns_verified_challenge():
             "challenge": "challenge-value",
         }
     )
-    signature = hashlib.sha256(b"123nonceencrypt-key" + body).hexdigest()
 
     response = client.post(
         "/api/integrations/feishu/events",
-        headers={
-            "X-Lark-Request-Timestamp": "123",
-            "X-Lark-Request-Nonce": "nonce",
-            "X-Lark-Signature": signature,
-        },
         content=body,
     )
 
     assert response.status_code == 200
     assert response.json() == {"challenge": "challenge-value"}
+
+
+def test_feishu_endpoint_requires_signature_for_regular_events():
+    bot, _, _, _ = build_bot()
+    client = TestClient(create_app(feishu_research_bot=bot))
+
+    response = client.post(
+        "/api/integrations/feishu/events",
+        content=encrypt_payload(message_payload()),
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Feishu signature headers are required."}
