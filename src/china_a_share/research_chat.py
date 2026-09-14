@@ -176,7 +176,7 @@ def run_limit_up_study(
     end = last_calendar_day.strftime("%Y%m%d")
     calendar_start = (first_calendar_day - timedelta(days=20)).strftime("%Y%m%d")
     calendar_end = (last_calendar_day + timedelta(days=20)).strftime("%Y%m%d")
-    calendar = provider.query(
+    trading_calendar = provider.query(
         "trade_cal",
         {"exchange": "", "start_date": calendar_start, "end_date": calendar_end, "is_open": "1"},
         ["cal_date"],
@@ -184,7 +184,7 @@ def run_limit_up_study(
         request_id=request_id,
         query_id="research_trade_calendar",
     )
-    trade_dates = sorted(calendar["cal_date"].astype(str).tolist())
+    trade_dates = sorted(trading_calendar["cal_date"].astype(str).tolist())
     positions = {value: index for index, value in enumerate(trade_dates)}
     limits = provider.query(
         "limit_list_d",
