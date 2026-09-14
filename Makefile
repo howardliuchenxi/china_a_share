@@ -69,6 +69,7 @@ deploy: check
 		--region "$(REGION)" \
 		--allow-unauthenticated \
 		--cpu 1 \
+		--no-cpu-throttling \
 		--memory 1Gi \
 		--min 0 \
 		--max 1 \
