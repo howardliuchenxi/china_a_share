@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00230-6w6` |
+| Latest ready revision | `china-a-share-lab-00235-qbh` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `88ff7a0ec3f991b68ed435910a72d3937869cd53` |
+| Deployed Git commit | `e1faec7f8df3626626fd9adf8d480dcfa17dda51` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -119,7 +119,7 @@ project-wide Cloud Run administration.
 | Bucket | `gs://china-a-share-lab-cache-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 455,849,966 bytes at last verification |
+| Current logical size | 457,895,933 bytes at last verification |
 | Public access prevention | Enforced |
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
@@ -138,7 +138,7 @@ Run scale-to-zero events and deployments. It is not a general query database.
 | Bucket | `gs://run-sources-china-a-share-lab-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 38,466,172 bytes at last verification |
+| Current logical size | 38,969,500 bytes at last verification |
 | Uniform bucket-level access | Enabled |
 | Soft-delete retention | 7 days |
 | Build access | `roles/storage.objectViewer` for the default compute service account |
@@ -401,3 +401,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-13 | Deployed revision `china-a-share-lab-00227-v47` through `make deploy`; recorded source `main@687c40654f42b73a8b6994cb1a6174a5ecd581f9`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-09-13 | Deployed revision `china-a-share-lab-00229-856` through `make deploy`; recorded source `main@81f87c6438a38fda10bb3742ca60a32da2be9892`, verified 100% traffic, public health status, runtime configuration, storage usage, and a successful Feishu URL-verification callback. Published Feishu application version `1.0.0` with availability limited to the application owner and external interaction disabled; no new GCP resource types or IAM changes were introduced. |
 | 2026-09-13 | Deployed revision `china-a-share-lab-00230-6w6` through `make deploy`; recorded source `main@88ff7a0ec3f991b68ed435910a72d3937869cd53`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
+| 2026-09-13 | Deployed revision `china-a-share-lab-00235-qbh` through `make deploy`; recorded source `main@e1faec7f8df3626626fd9adf8d480dcfa17dda51`, verified 100% traffic, public health status, runtime configuration, storage usage, and successful single-turn and contextual multi-turn Feishu research responses with no new resource types or IAM changes. |
