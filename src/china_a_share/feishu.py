@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -13,6 +15,7 @@ from typing import Any, Dict, Optional, Protocol
 from uuid import uuid4
 
 import requests
+from Crypto.Cipher import AES
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
@@ -290,8 +293,53 @@ class FeishuResearchBot:
         if not hmac.compare_digest(expected, signature):
             raise FeishuEventError("Feishu callback signature is invalid.")
 
+    def decode_payload(self, body: bytes) -> Dict[str, Any]:
+        """Decode one plaintext or AES-encrypted Feishu callback body."""
+        try:
+            envelope = json.loads(body)
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FeishuEventError("Feishu callback body is invalid JSON.") from exc
+        if not isinstance(envelope, dict):
+            raise FeishuEventError("Feishu callback body must be a JSON object.")
+
+        encrypted = envelope.get("encrypt")
+        if encrypted is None:
+            return envelope
+        if not isinstance(encrypted, str) or not encrypted:
+            raise FeishuEventError("Feishu callback encryption is invalid.")
+
+        try:
+            encrypted_body = base64.b64decode(encrypted, validate=True)
+            if (
+                len(encrypted_body) < AES.block_size * 2
+                or len(encrypted_body) % AES.block_size != 0
+            ):
+                raise ValueError("invalid ciphertext length")
+            key = hashlib.sha256(self._encrypt_key.encode()).digest()
+            cipher = AES.new(key, AES.MODE_CBC, encrypted_body[: AES.block_size])
+            padded_body = cipher.decrypt(encrypted_body[AES.block_size :])
+            padding_size = padded_body[-1]
+            if (
+                padding_size < 1
+                or padding_size > AES.block_size
+                or padded_body[-padding_size:] != bytes([padding_size]) * padding_size
+            ):
+                raise ValueError("invalid PKCS7 padding")
+            payload = json.loads(padded_body[:-padding_size].decode("utf-8"))
+        except (
+            binascii.Error,
+            IndexError,
+            UnicodeDecodeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise FeishuEventError("Feishu callback encryption is invalid.") from exc
+        if not isinstance(payload, dict):
+            raise FeishuEventError("Feishu callback body must be a JSON object.")
+        return payload
+
     def parse_event(self, payload: Dict[str, Any]) -> Optional[FeishuMessageEvent]:
-        """Validate one unencrypted v2 Feishu text-message callback."""
+        """Validate one decoded v2 Feishu text-message callback."""
         header = payload.get("header") or {}
         if header.get("token") != self._verification_token:
             raise FeishuEventError("Feishu callback verification token is invalid.")

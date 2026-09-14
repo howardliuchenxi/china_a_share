@@ -1,7 +1,9 @@
+import base64
 import hashlib
 import json
 
 import pytest
+from Crypto.Cipher import AES
 from fastapi.testclient import TestClient
 
 from china_a_share import bootstrap
@@ -109,6 +111,18 @@ def message_payload(event_id="event-1", text="<at user_id=\"bot\">Bot</at> ç»Ÿè®
     }
 
 
+def encrypt_payload(payload, encrypt_key="encrypt-key"):
+    plaintext = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    padding_size = AES.block_size - len(plaintext) % AES.block_size
+    padded = plaintext + bytes([padding_size]) * padding_size
+    iv = bytes(range(AES.block_size))
+    key = hashlib.sha256(encrypt_key.encode()).digest()
+    ciphertext = AES.new(key, AES.MODE_CBC, iv).encrypt(padded)
+    return json.dumps(
+        {"encrypt": base64.b64encode(iv + ciphertext).decode("ascii")}
+    ).encode("utf-8")
+
+
 def test_signature_validation_accepts_exact_body_and_rejects_mutation():
     bot, _, _, _ = build_bot()
     body = b'{"safe":true}'
@@ -118,6 +132,22 @@ def test_signature_validation_accepts_exact_body_and_rejects_mutation():
 
     with pytest.raises(FeishuEventError, match="signature is invalid"):
         bot.verify_signature(body + b" ", "123", "nonce", signature)
+
+
+def test_callback_decoder_accepts_plaintext_and_encrypted_payloads():
+    bot, _, _, _ = build_bot()
+    payload = message_payload()
+
+    assert bot.decode_payload(json.dumps(payload).encode("utf-8")) == payload
+    assert bot.decode_payload(encrypt_payload(payload)) == payload
+
+
+def test_callback_decoder_rejects_malformed_ciphertext():
+    bot, _, _, _ = build_bot()
+    body = json.dumps({"encrypt": base64.b64encode(b"too-short").decode()}).encode()
+
+    with pytest.raises(FeishuEventError, match="encryption is invalid"):
+        bot.decode_payload(body)
 
 
 def test_message_event_removes_bot_mention_and_isolates_conversation():
@@ -183,6 +213,9 @@ class FakeEndpointBot:
         assert body
         assert (timestamp, nonce, signature) == ("123", "nonce", "signature")
 
+    def decode_payload(self, body):
+        return json.loads(body)
+
     def verify_challenge(self, payload):
         assert payload["token"] == "verification-token"
         return payload["challenge"]
@@ -214,21 +247,25 @@ def test_feishu_endpoint_acknowledges_and_processes_authenticated_event():
 
 
 def test_feishu_endpoint_returns_verified_challenge():
-    bot = FakeEndpointBot()
+    bot, _, _, _ = build_bot()
     client = TestClient(create_app(feishu_research_bot=bot))
+    body = encrypt_payload(
+        {
+            "type": "url_verification",
+            "token": "verification-token",
+            "challenge": "challenge-value",
+        }
+    )
+    signature = hashlib.sha256(b"123nonceencrypt-key" + body).hexdigest()
 
     response = client.post(
         "/api/integrations/feishu/events",
         headers={
             "X-Lark-Request-Timestamp": "123",
             "X-Lark-Request-Nonce": "nonce",
-            "X-Lark-Signature": "signature",
+            "X-Lark-Signature": signature,
         },
-        json={
-            "type": "url_verification",
-            "token": "verification-token",
-            "challenge": "challenge-value",
-        },
+        content=body,
     )
 
     assert response.status_code == 200

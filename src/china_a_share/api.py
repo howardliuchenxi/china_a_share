@@ -231,14 +231,14 @@ def create_app(
                 x_lark_request_nonce,
                 x_lark_signature,
             )
-            payload = json.loads(body)
+            payload = bot.decode_payload(body)
             if payload.get("type") == "url_verification":
                 return {"challenge": bot.verify_challenge(payload)}
             event = bot.parse_event(payload)
             if event is not None:
                 background_tasks.add_task(bot.process, event)
             return {"code": 0}
-        except (FeishuEventError, json.JSONDecodeError) as exc:
+        except FeishuEventError as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=str(exc),

@@ -203,6 +203,9 @@ deterministic research tool before any market-data call. Completed turns are
 isolated by tenant, chat, thread, and user, and only the three most recent
 validated tool arguments are retained as follow-up context.
 
+The callback validates the Feishu request signature before decrypting AES-256-CBC
+event envelopes. Plaintext bodies remain supported for local integration tests.
+
 The first registered chat tool calculates monthly next-session outcomes after
 the first formation of two consecutive closing limit-ups. It uses Tushare's
 native limit list, supports one-price-board inclusion or exclusion, and returns
