@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-08-11**
+Last verified: **2026-09-13**
 
 ## Project boundary
 
@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00194-sfq` |
+| Latest ready revision | `china-a-share-lab-00227-v47` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `07917699db8aea5b9d4ea94e33031ffe5e45aa12` |
+| Deployed Git commit | `687c40654f42b73a8b6994cb1a6174a5ecd581f9` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -55,6 +55,9 @@ one instance across traffic-serving revisions.
 | `DEEPSEEK_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest` |
 | `ZAI_API_KEY` | Secret Manager secret `zai-api-key`, version `latest` |
 | `GITHUB_FIX_TOKEN` | Secret Manager secret `github-fix-token`, version `latest` |
+| `FEISHU_APP_SECRET` | Secret Manager secret `feishu-app-secret`, version `latest` |
+| `FEISHU_VERIFICATION_TOKEN` | Secret Manager secret `feishu-verification-token`, version `latest` |
+| `FEISHU_ENCRYPT_KEY` | Secret Manager secret `feishu-encrypt-key`, version `latest` |
 | `TUSHARE_CACHE_BUCKET` | Plain value `china-a-share-lab-cache-asia-east2` |
 | `GOOGLE_CLOUD_PROJECT` | Plain value `china-a-share-lab` |
 | `CLOUD_RUN_REGION` | Plain value `asia-east2` |
@@ -64,6 +67,7 @@ one instance across traffic-serving revisions.
 | `ADMIN_EMAIL` | Plain administrator allowlist email for UI feedback |
 | `GOOGLE_OAUTH_CLIENT_ID` | Public Google Web OAuth client identifier |
 | `GITHUB_FIX_REPO` | Plain GitHub owner/repository used for UI feedback dispatch |
+| `FEISHU_APP_ID` | Public Feishu custom-application identifier |
 
 ### Public invocation access
 
@@ -110,7 +114,7 @@ project-wide Cloud Run administration.
 | Bucket | `gs://china-a-share-lab-cache-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 424,607,657 bytes at last verification |
+| Current logical size | 455,849,964 bytes at last verification |
 | Public access prevention | Enforced |
 | Uniform bucket-level access | Enabled |
 | Soft delete | Disabled |
@@ -129,7 +133,7 @@ Run scale-to-zero events and deployments. It is not a general query database.
 | Bucket | `gs://run-sources-china-a-share-lab-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 36,958,738 bytes at last verification |
+| Current logical size | 37,460,890 bytes at last verification |
 | Uniform bucket-level access | Enabled |
 | Soft-delete retention | 7 days |
 | Build access | `roles/storage.objectViewer` for the default compute service account |
@@ -322,7 +326,8 @@ The following services are not live resources for this project:
   to applicable free allowances.
 - Artifact Registry is approximately 0.5 GiB above its monthly free storage
   allowance, with a low single-digit-cent expected monthly charge.
-- Four active secret versions are within the Secret Manager free allowance.
+- Eight active secret versions are expected to remain within or close to the
+  Secret Manager free allowance at current access volume.
 - The Feishu deployment webhook adds one low-volume secret access and one
   outbound request after each real deployment, with no material expected cost.
 - The persistent cache has a 90-day deletion lifecycle to prevent unbounded
@@ -384,3 +389,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-08-10 | Deployed revision `china-a-share-lab-00188-cfp` through scheduled reconciliation; recorded source `main@aab7db3f45e1fca977220f52b0339931dafaf698`, verified 100% traffic, public health status, runtime configuration, synchronized worker deployment, and storage usage with no new resource types or IAM changes. |
 | 2026-08-11 | Rotated `feishu-bot-webhook` to enabled version 2 after the prior Lark bot was removed; the next scheduled reconciliation delivered its start notification and deployed revision `china-a-share-lab-00193-brg` from `main@395a633178fc57fc52b99a32964e3db83d4c3e5e`, with 100% traffic, public health status, and the synchronized worker verified. No IAM boundary, resource type, lifecycle policy, or material cost changed. |
 | 2026-08-11 | Deployed revision `china-a-share-lab-00194-sfq` through scheduled reconciliation from `main@07917699db8aea5b9d4ea94e33031ffe5e45aa12`; verified 100% traffic and the reported market-return ranking in production with a complete required answer result. No IAM boundary, resource type, lifecycle policy, or material cost changed. |
+| 2026-09-13 | Deployed revision `china-a-share-lab-00227-v47` through `make deploy`; recorded source `main@687c40654f42b73a8b6994cb1a6174a5ecd581f9`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
