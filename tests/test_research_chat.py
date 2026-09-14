@@ -85,6 +85,33 @@ def test_compiler_refines_prior_validated_tool_arguments():
     )
 
 
+def test_compiler_applies_full_width_month_range_in_follow_up():
+    prior = LimitUpStudyRequest(
+        year=2026,
+        start_month=8,
+        end_month=8,
+        exclude_one_price=True,
+    )
+    conversation = [
+        FeishuConversationTurn(
+            prompt="\u7edf\u8ba12026\u5e748\u6708\u4e8c\u8fde\u677f",
+            interpretation=prior.serialize(),
+        )
+    ]
+
+    study = compile_limit_up_study(
+        "\u90a3\u628a1\uff5e8\u6708\u6bcf\u4e2a\u6708\u90fd\u5217\u51fa\u6765",
+        conversation,
+    )
+
+    assert study == LimitUpStudyRequest(
+        year=2026,
+        start_month=1,
+        end_month=8,
+        exclude_one_price=True,
+    )
+
+
 def test_compiler_rejects_unrelated_question_without_guessing():
     assert compile_limit_up_study("哪家公司基本面最好？", []) is None
 

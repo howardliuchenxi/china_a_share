@@ -19,7 +19,7 @@ FEISHU_API_ROUTE = "/api/integrations/feishu/events"
 LIMIT_UP_TOOL_NAME = "limit_up_outcome_probability"
 MONTH_PATTERN = re.compile(r"(?:(20\d{2})年)?\s*(1[0-2]|[1-9])月")
 YEAR_PATTERN = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
-RANGE_PATTERN = re.compile(r"(1[0-2]|[1-9])\s*[—–~至到-]\s*(1[0-2]|[1-9])月")
+RANGE_PATTERN = re.compile(r"(1[0-2]|[1-9])\s*[—–\uff5e~至到-]\s*(1[0-2]|[1-9])月")
 CONSECUTIVE_PATTERN = re.compile(r"连续\s*([2-9])\s*(?:天|个交易日)?涨停")
 OBSERVATION_PATTERN = re.compile(r"第\s*([3-9])\s*(?:天|个交易日)")
 
