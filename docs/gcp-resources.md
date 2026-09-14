@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00227-v47` |
+| Latest ready revision | `china-a-share-lab-00229-856` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `687c40654f42b73a8b6994cb1a6174a5ecd581f9` |
+| Deployed Git commit | `81f87c6438a38fda10bb3742ca60a32da2be9892` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Request-based |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -133,7 +133,7 @@ Run scale-to-zero events and deployments. It is not a general query database.
 | Bucket | `gs://run-sources-china-a-share-lab-asia-east2` |
 | Region | `asia-east2` |
 | Storage class | Standard |
-| Current logical size | 37,460,890 bytes at last verification |
+| Current logical size | 37,963,245 bytes at last verification |
 | Uniform bucket-level access | Enabled |
 | Soft-delete retention | 7 days |
 | Build access | `roles/storage.objectViewer` for the default compute service account |
@@ -390,3 +390,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-08-11 | Rotated `feishu-bot-webhook` to enabled version 2 after the prior Lark bot was removed; the next scheduled reconciliation delivered its start notification and deployed revision `china-a-share-lab-00193-brg` from `main@395a633178fc57fc52b99a32964e3db83d4c3e5e`, with 100% traffic, public health status, and the synchronized worker verified. No IAM boundary, resource type, lifecycle policy, or material cost changed. |
 | 2026-08-11 | Deployed revision `china-a-share-lab-00194-sfq` through scheduled reconciliation from `main@07917699db8aea5b9d4ea94e33031ffe5e45aa12`; verified 100% traffic and the reported market-return ranking in production with a complete required answer result. No IAM boundary, resource type, lifecycle policy, or material cost changed. |
 | 2026-09-13 | Deployed revision `china-a-share-lab-00227-v47` through `make deploy`; recorded source `main@687c40654f42b73a8b6994cb1a6174a5ecd581f9`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
+| 2026-09-13 | Deployed revision `china-a-share-lab-00229-856` through `make deploy`; recorded source `main@81f87c6438a38fda10bb3742ca60a32da2be9892`, verified 100% traffic, public health status, runtime configuration, storage usage, and a successful Feishu URL-verification callback. Published Feishu application version `1.0.0` with availability limited to the application owner and external interaction disabled; no new GCP resource types or IAM changes were introduced. |
