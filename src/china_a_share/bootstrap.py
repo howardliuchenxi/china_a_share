@@ -38,6 +38,12 @@ from china_a_share.providers.tushare import (
     TushareDataProvider,
 )
 from china_a_share.vision.glm import GLMVisionAnalyzer
+from china_a_share.feishu import (
+    CloudStorageConversationStore,
+    FeishuOpenApiClient,
+    FeishuResearchBot,
+)
+from china_a_share.research_chat import LocalResearchConversationService
 
 
 def create_analysis_service(settings: Settings) -> AnalysisService:
@@ -75,6 +81,27 @@ def create_evolution_loop(settings: Settings, store: AnalysisTaskStore) -> Evolu
 def create_stock_catalog_service(settings: Settings) -> StockCatalogService:
     """Assemble deterministic stock catalog access through the shared cache design."""
     return StockCatalogService(_create_data_provider(settings))
+
+
+def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
+    """Assemble the private Feishu ingress around the validated analysis core."""
+    allowed_open_ids = {
+        value.strip()
+        for value in settings.feishu_allowed_open_ids.split(",")
+        if value.strip()
+    }
+    if not allowed_open_ids:
+        raise ConfigurationError(
+            "FEISHU_ALLOWED_OPEN_IDS must contain at least one authorized user."
+        )
+    return FeishuResearchBot(
+        LocalResearchConversationService(_create_data_provider(settings)),
+        FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),
+        CloudStorageConversationStore(settings.tushare_cache_bucket),
+        verification_token=settings.feishu_verification_token,
+        encrypt_key=settings.feishu_encrypt_key,
+        allowed_open_ids=allowed_open_ids,
+    )
 
 
 def create_analysis_task_coordinator(

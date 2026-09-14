@@ -192,6 +192,38 @@ Open [http://127.0.0.1:5173/analysis](http://127.0.0.1:5173/analysis) or
 [http://127.0.0.1:5173/basic](http://127.0.0.1:5173/basic). Vite proxies
 `/api` to the Python backend on port `8000`.
 
+## Feishu research bot
+
+The backend can receive signed Feishu custom-app events at
+`/api/integrations/feishu/events`. The bot uses an independent conversational
+research layer and reuses only the provider-neutral market-data port, Tushare
+adapter, and cache. It does not depend on the web application's general query
+planning workflow. Each supported question compiles into a registered,
+deterministic research tool before any market-data call. Completed turns are
+isolated by tenant, chat, thread, and user, and only the three most recent
+validated tool arguments are retained as follow-up context.
+
+The first registered chat tool calculates monthly next-session outcomes after
+the first formation of two consecutive closing limit-ups. It uses Tushare's
+native limit list, supports one-price-board inclusion or exclusion, and returns
+sample counts with gain probability, mean return, and median return. Unsupported
+questions fail with a visible capability boundary instead of falling through to
+the web planner.
+
+Configure these additional secrets before enabling the callback:
+
+```dotenv
+FEISHU_APP_ID=your_feishu_app_id
+FEISHU_APP_SECRET=your_feishu_app_secret
+FEISHU_VERIFICATION_TOKEN=your_feishu_verification_token
+FEISHU_ENCRYPT_KEY=your_feishu_encrypt_key
+FEISHU_ALLOWED_OPEN_IDS=ou_authorized_user
+```
+
+`FEISHU_ALLOWED_OPEN_IDS` is a required comma-separated allowlist. The ingress
+fails closed when it is empty. Conversation objects and event idempotency
+markers are stored privately under the existing Cloud Storage cache bucket.
+
 ## Deploy to Google Cloud Run
 
 The repository includes a multi-stage `Dockerfile`. It builds the React
