@@ -217,12 +217,14 @@ FEISHU_APP_ID=your_feishu_app_id
 FEISHU_APP_SECRET=your_feishu_app_secret
 FEISHU_VERIFICATION_TOKEN=your_feishu_verification_token
 FEISHU_ENCRYPT_KEY=your_feishu_encrypt_key
-FEISHU_ALLOWED_OPEN_IDS=ou_authorized_user
+FEISHU_ALLOWED_OPEN_IDS=
 ```
 
-`FEISHU_ALLOWED_OPEN_IDS` is a required comma-separated allowlist. The ingress
-fails closed when it is empty. Conversation objects and event idempotency
-markers are stored privately under the existing Cloud Storage cache bucket.
+The Feishu application's published availability range is the primary user
+boundary. `FEISHU_ALLOWED_OPEN_IDS` is an optional comma-separated second
+allowlist for deployments that need a narrower boundary. Conversation objects
+and event idempotency markers are stored privately under the existing Cloud
+Storage cache bucket.
 
 ## Deploy to Google Cloud Run
 
@@ -315,8 +317,8 @@ gcloud run deploy china-a-share-lab \
   --concurrency 4 \
   --timeout 300 \
   --service-account china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com \
-  --set-env-vars TUSHARE_CACHE_BUCKET=china-a-share-lab-cache-asia-east2 \
-  --set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest
+  --set-env-vars TUSHARE_CACHE_BUCKET=china-a-share-lab-cache-asia-east2,FEISHU_APP_ID=cli_aa2df30a34f51d01 \
+  --set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest
 ```
 
 Create the three named secrets and the private regional cache bucket before

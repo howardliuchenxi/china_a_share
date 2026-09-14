@@ -90,10 +90,6 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         for value in settings.feishu_allowed_open_ids.split(",")
         if value.strip()
     }
-    if not allowed_open_ids:
-        raise ConfigurationError(
-            "FEISHU_ALLOWED_OPEN_IDS must contain at least one authorized user."
-        )
     return FeishuResearchBot(
         LocalResearchConversationService(_create_data_provider(settings)),
         FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),

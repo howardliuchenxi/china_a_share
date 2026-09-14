@@ -4,7 +4,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from china_a_share import bootstrap
 from china_a_share.api import create_app
+from china_a_share.config import Settings
 from china_a_share.feishu import (
     FeishuEventError,
     FeishuResearchBot,
@@ -42,6 +44,48 @@ def build_bot(*, allowed_open_ids=None):
         allowed_open_ids=allowed_open_ids,
     )
     return bot, service, sender, store
+
+
+def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
+    monkeypatch,
+):
+    provider = object()
+    store = object()
+    sender = object()
+    research_service = object()
+    monkeypatch.setattr(bootstrap, "_create_data_provider", lambda settings: provider)
+    monkeypatch.setattr(
+        bootstrap,
+        "LocalResearchConversationService",
+        lambda active_provider: research_service,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "FeishuOpenApiClient",
+        lambda app_id, app_secret: sender,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "CloudStorageConversationStore",
+        lambda bucket_name: store,
+    )
+
+    bot = bootstrap.create_feishu_research_bot(
+        Settings(
+            tushare_token="token",
+            deepseek_api_key="deepseek",
+            tushare_cache_bucket="bucket",
+            feishu_app_id="app",
+            feishu_app_secret="secret",
+            feishu_verification_token="verification",
+            feishu_encrypt_key="encryption",
+        )
+    )
+
+    assert bot._research_service is research_service
+    assert bot._sender is sender
+    assert bot._store is store
+    assert bot._allowed_open_ids == set()
 
 
 def message_payload(event_id="event-1", text="<at user_id=\"bot\">Bot</at> 统计二连板"):
