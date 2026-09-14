@@ -1,5 +1,6 @@
 """FastAPI application for the local analysis system."""
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -7,7 +8,15 @@ from time import perf_counter
 from typing import Literal, Optional, Union
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -21,6 +30,7 @@ from .bootstrap import create_analysis_task_coordinator
 from .bootstrap import create_stock_catalog_service as build_stock_catalog_service
 from .bootstrap import create_ui_feedback_service as build_ui_feedback_service
 from .bootstrap import create_live_case_service as build_live_case_service
+from .bootstrap import create_feishu_research_bot as build_feishu_research_bot
 from .config import ConfigurationError, Settings
 from .core.contracts import (
     AnalysisRequest,
@@ -49,6 +59,7 @@ from .e2e_cases import (
 )
 from .observability import log_event
 from .tasks import AnalysisTaskCoordinator
+from .feishu import FeishuEventError, FeishuResearchBot
 
 
 FRONTEND_DIST = Path(
@@ -66,6 +77,7 @@ UI_FEEDBACK_API_ROUTE = "/api/ui-feedback"
 UI_FEEDBACK_CONFIG_API_ROUTE = "/api/ui-feedback/config"
 UI_FEEDBACK_CHAT_API_ROUTE = "/api/ui-feedback/chat"
 LIVE_CASES_API_ROUTE = "/api/e2e-cases"
+FEISHU_EVENTS_API_ROUTE = "/api/integrations/feishu/events"
 ANALYSIS_PAGE_ROUTE = "/analysis"
 BASIC_PAGE_ROUTE = "/basic"
 MONITORED_API_ROUTES = {
@@ -77,6 +89,7 @@ MONITORED_API_ROUTES = {
     UI_FEEDBACK_CONFIG_API_ROUTE,
     UI_FEEDBACK_CHAT_API_ROUTE,
     LIVE_CASES_API_ROUTE,
+    FEISHU_EVENTS_API_ROUTE,
 }
 MILLISECONDS_PER_SECOND = 1_000
 DEFAULT_STOCK_PAGE_SIZE = 20
@@ -115,6 +128,7 @@ def create_app(
     task_coordinator: Optional[AnalysisTaskCoordinator] = None,
     ui_feedback_service: Optional[UiFeedbackService] = None,
     live_case_service: Optional[LiveCaseService] = None,
+    feishu_research_bot: Optional[FeishuResearchBot] = None,
 ) -> FastAPI:
     """Create the local HTTP application."""
     application = FastAPI(
@@ -188,6 +202,52 @@ def create_app(
     active_task_coordinator = task_coordinator
     active_ui_feedback_service = ui_feedback_service
     active_live_case_service = live_case_service
+    active_feishu_research_bot = feishu_research_bot
+
+    def get_feishu_research_bot() -> FeishuResearchBot:
+        """Build the optional Feishu integration only when it receives a callback."""
+        nonlocal active_feishu_research_bot
+        if active_feishu_research_bot is None:
+            active_feishu_research_bot = build_feishu_research_bot(
+                Settings.from_env()
+            )
+        return active_feishu_research_bot
+
+    @application.post(FEISHU_EVENTS_API_ROUTE)
+    async def receive_feishu_event(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        x_lark_request_timestamp: str = Header(default=""),
+        x_lark_request_nonce: str = Header(default=""),
+        x_lark_signature: str = Header(default=""),
+    ) -> dict:
+        """Acknowledge one authenticated Feishu event and process it once."""
+        try:
+            bot = get_feishu_research_bot()
+            body = await request.body()
+            bot.verify_signature(
+                body,
+                x_lark_request_timestamp,
+                x_lark_request_nonce,
+                x_lark_signature,
+            )
+            payload = bot.decode_payload(body)
+            if payload.get("type") == "url_verification":
+                return {"challenge": bot.verify_challenge(payload)}
+            event = bot.parse_event(payload)
+            if event is not None:
+                background_tasks.add_task(bot.process, event)
+            return {"code": 0}
+        except FeishuEventError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc),
+            ) from exc
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
 
     def get_ui_feedback_service() -> UiFeedbackService:
         """Build the optional administrator workflow only when it is requested."""

@@ -30,6 +30,11 @@ class Settings:
     github_fix_token: str = ""
     app_git_branch: str = ""
     app_git_sha: str = ""
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_verification_token: str = ""
+    feishu_encrypt_key: str = ""
+    feishu_allowed_open_ids: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -61,6 +66,13 @@ class Settings:
         github_fix_token = os.getenv("GITHUB_FIX_TOKEN", "").strip()
         app_git_branch = os.getenv("APP_GIT_BRANCH", "").strip()
         app_git_sha = os.getenv("APP_GIT_SHA", "").strip()
+        feishu_app_id = os.getenv("FEISHU_APP_ID", "").strip()
+        feishu_app_secret = os.getenv("FEISHU_APP_SECRET", "").strip()
+        feishu_verification_token = os.getenv(
+            "FEISHU_VERIFICATION_TOKEN", ""
+        ).strip()
+        feishu_encrypt_key = os.getenv("FEISHU_ENCRYPT_KEY", "").strip()
+        feishu_allowed_open_ids = os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").strip()
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
@@ -75,4 +87,9 @@ class Settings:
             github_fix_token=github_fix_token,
             app_git_branch=app_git_branch,
             app_git_sha=app_git_sha,
+            feishu_app_id=feishu_app_id,
+            feishu_app_secret=feishu_app_secret,
+            feishu_verification_token=feishu_verification_token,
+            feishu_encrypt_key=feishu_encrypt_key,
+            feishu_allowed_open_ids=feishu_allowed_open_ids,
         )

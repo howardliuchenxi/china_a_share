@@ -160,9 +160,12 @@ size exceeds the 0.5 GiB monthly Artifact Registry free allowance by roughly
 | `deepseek-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `zai-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `github-fix-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
+| `feishu-app-secret` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
+| `feishu-verification-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
+| `feishu-encrypt-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `feishu-bot-webhook` | Version 2, enabled | Automatic | Deployment automation identity only |
 
-The four application secrets grant `roles/secretmanager.secretAccessor`
+The seven application secrets grant `roles/secretmanager.secretAccessor`
 directly to `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`.
 The Feishu webhook grants the same role only to the deployment automation
 identity so verified production deployments can notify the administrator group.
@@ -207,7 +210,7 @@ account's monthly free allotment; expected low traffic should remain within the
 
 `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`
 
-- Reads the four application secrets through secret-level IAM grants.
+- Reads the seven application secrets through secret-level IAM grants.
 - Creates, reads, updates, and deletes objects in the private cache bucket.
 - Executes only `china-a-share-analysis-worker` with per-execution overrides.
 - Does not have a broad project-level role.
