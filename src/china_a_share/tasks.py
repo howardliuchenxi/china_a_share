@@ -178,9 +178,21 @@ class AnalysisTaskCoordinator:
         self._store = store
         self._dispatcher = dispatcher
 
-    def submit(self, request: AnalysisRequest) -> AnalysisTaskSubmission:
-        """Persist and dispatch one new analysis task for every submission."""
-        task_id = uuid4().hex
+    def submit(
+        self,
+        request: AnalysisRequest,
+        *,
+        task_id: Optional[str] = None,
+    ) -> AnalysisTaskSubmission:
+        """Persist and dispatch a new or idempotently retried analysis task."""
+        task_id = task_id or uuid4().hex
+        existing = self._store.get(task_id)
+        if existing is not None:
+            if not isinstance(existing, AnalysisTask) or existing.request != request:
+                raise ValueError(f"Analysis task identifier is already in use: {task_id}")
+            if existing.status == AnalysisTaskStatus.QUEUED:
+                self._dispatch_analysis_task(existing)
+            return self._submission(existing)
         now = datetime.now(timezone.utc)
         task = AnalysisTask(
             task_id=task_id,
@@ -190,16 +202,22 @@ class AnalysisTaskCoordinator:
             updated_at=now,
         )
         self._store.put(task)
+        self._dispatch_analysis_task(task)
+        return self._submission(task)
+
+    def _dispatch_analysis_task(self, task: AnalysisTask) -> None:
+        """Dispatch one persisted task and retain a visible failure state."""
         try:
-            self._dispatcher.dispatch(task_id)
+            self._dispatcher.dispatch(task.task_id)
         except Exception as exc:
-            logger.exception("analysis_task_dispatch_failed task_id=%s", task_id)
+            logger.exception(
+                "analysis_task_dispatch_failed task_id=%s", task.task_id
+            )
             task.status = AnalysisTaskStatus.FAILED
             task.updated_at = datetime.now(timezone.utc)
             task.error = ServiceError(source="system", message=str(exc))
             self._store.put(task)
             raise
-        return self._submission(task)
 
     def submit_discovery(self, request: DiscoveryTaskRequest) -> AnalysisTaskSubmission:
         """Persist and dispatch one new discovery task for every submission."""
@@ -266,7 +284,10 @@ class AnalysisTaskCoordinator:
         task = self._store.get(task_id)
         if task is None:
             raise KeyError(f"Analysis task does not exist: {task_id}")
-        if task.status == AnalysisTaskStatus.SUCCEEDED:
+        if task.status in {
+            AnalysisTaskStatus.RUNNING,
+            AnalysisTaskStatus.SUCCEEDED,
+        }:
             return task
 
         task.status = AnalysisTaskStatus.RUNNING

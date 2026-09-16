@@ -43,7 +43,6 @@ from china_a_share.feishu import (
     FeishuOpenApiClient,
     FeishuResearchBot,
 )
-from china_a_share.research_chat import LocalResearchConversationService
 
 
 def create_analysis_service(settings: Settings) -> AnalysisService:
@@ -91,7 +90,7 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         if value.strip()
     }
     return FeishuResearchBot(
-        LocalResearchConversationService(_create_data_provider(settings)),
+        create_analysis_task_coordinator(settings),
         FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),
         CloudStorageConversationStore(settings.tushare_cache_bucket),
         verification_token=settings.feishu_verification_token,

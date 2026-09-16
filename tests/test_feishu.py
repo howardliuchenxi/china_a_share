@@ -10,11 +10,24 @@ from fastapi.testclient import TestClient
 from china_a_share import bootstrap
 from china_a_share.api import create_app
 from china_a_share.config import Settings
+from china_a_share.core.contracts import (
+    AnalysisRequest,
+    AnalysisResponse,
+    AnalysisStatus,
+    AnalysisTask,
+    AnalysisTaskStatus,
+    AnalysisTaskSubmission,
+    DataQuery,
+    QueryPlan,
+    ServiceError,
+)
 from china_a_share.feishu import (
     CloudStorageConversationStore,
     FeishuEventError,
     FeishuResearchBot,
+    FeishuTaskRecord,
     MemoryConversationStore,
+    format_analysis_task,
 )
 from google.api_core.exceptions import PreconditionFailed
 
@@ -27,13 +40,54 @@ class FakeSender:
         self.replies.append((message_id, text))
 
 
-class FakeAnalysisService:
+class FailOnceSender(FakeSender):
+    def __init__(self):
+        super().__init__()
+        self.failed = False
+
+    def reply(self, message_id, text):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("temporary Feishu reply failure")
+        super().reply(message_id, text)
+
+
+class ReplayableMemoryConversationStore(MemoryConversationStore):
+    def claim_event(self, event_id):
+        return True
+
+
+class FakeTaskCoordinator:
     def __init__(self):
         self.requests = []
+        self.tasks = {}
 
-    def answer(self, request_id, prompt, conversation):
-        self.requests.append((request_id, prompt, conversation))
-        return f"Answer: {prompt}", f'{{"tool":"test","prompt":"{prompt}"}}'
+    def submit(self, request, *, task_id=None):
+        self.requests.append(request)
+        task_id = task_id or f"{len(self.requests):032x}"
+        if task_id in self.tasks:
+            return AnalysisTaskSubmission(
+                task_id=task_id,
+                status=self.tasks[task_id].status,
+                status_url=f"/api/analysis/tasks/{task_id}",
+            )
+        now = datetime.now(timezone.utc)
+        self.tasks[task_id] = AnalysisTask(
+            task_id=task_id,
+            status=AnalysisTaskStatus.QUEUED,
+            request=request,
+            created_at=now,
+            updated_at=now,
+        )
+        return AnalysisTaskSubmission(
+            task_id=task_id,
+            status=AnalysisTaskStatus.QUEUED,
+            status_url=f"/api/analysis/tasks/{task_id}",
+        )
+
+    def get(self, task_id):
+        task = self.tasks.get(task_id)
+        return task.model_copy(deep=True) if task else None
 
 
 class FakeEventBlob:
@@ -55,6 +109,9 @@ class FakeEventBlob:
     def reload(self):
         return None
 
+    def exists(self):
+        return self.content is not None
+
     def download_as_text(self):
         return self.content
 
@@ -68,7 +125,7 @@ class FakeEventBucket:
 
 
 def build_bot(*, allowed_open_ids=None):
-    service = FakeAnalysisService()
+    service = FakeTaskCoordinator()
     sender = FakeSender()
     store = MemoryConversationStore()
     bot = FeishuResearchBot(
@@ -85,15 +142,13 @@ def build_bot(*, allowed_open_ids=None):
 def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
     monkeypatch,
 ):
-    provider = object()
+    coordinator = object()
     store = object()
     sender = object()
-    research_service = object()
-    monkeypatch.setattr(bootstrap, "_create_data_provider", lambda settings: provider)
     monkeypatch.setattr(
         bootstrap,
-        "LocalResearchConversationService",
-        lambda active_provider: research_service,
+        "create_analysis_task_coordinator",
+        lambda settings: coordinator,
     )
     monkeypatch.setattr(
         bootstrap,
@@ -118,7 +173,7 @@ def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
         )
     )
 
-    assert bot._research_service is research_service
+    assert bot._task_coordinator is coordinator
     assert bot._sender is sender
     assert bot._store is store
     assert bot._allowed_open_ids == set()
@@ -201,23 +256,142 @@ def test_message_event_rejects_unapproved_user():
         bot.parse_event(message_payload())
 
 
-def test_processing_reuses_bounded_context_and_deduplicates_event():
+def test_processing_submits_durable_task_and_deduplicates_event():
     bot, service, sender, store = build_bot()
     first = bot.parse_event(message_payload("event-1", "统计二连板"))
-    second = bot.parse_event(message_payload("event-2", "只看八月"))
     assert first is not None
-    assert second is not None
 
     bot.process(first)
-    bot.process(second)
-    bot.process(second)
+    bot.process(first)
+
+    task_id = bot._task_id_for_event("event-1")
+    assert len(service.requests) == 1
+    assert service.requests[0].prompt == "统计二连板"
+    assert service.requests[0].conversation == []
+    assert len(sender.replies) == 1
+    assert "研究任务已受理" in sender.replies[0][1]
+    assert task_id in sender.replies[0][1]
+    assert store.get_latest_task(first.conversation_id).task_id == task_id
+
+
+def test_retried_event_reuses_task_created_before_reply_failure():
+    service = FakeTaskCoordinator()
+    sender = FailOnceSender()
+    store = ReplayableMemoryConversationStore()
+    bot = FeishuResearchBot(
+        service,
+        sender,
+        store,
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+    )
+    event = bot.parse_event(message_payload("event-1", "查散户比例前十"))
+    assert event is not None
+
+    bot.process(event)
+    bot.process(event)
+
+    assert len(service.requests) == 1
+    assert len(sender.replies) == 2
+    assert "研究任务已受理" in sender.replies[1][1]
+
+
+def test_new_prompt_waits_for_active_conversation_task():
+    bot, service, sender, _ = build_bot()
+    first = bot.parse_event(message_payload("event-1", "查散户比例前十"))
+    follow_up = bot.parse_event(message_payload("event-2", "只看创业板"))
+    assert first is not None
+    assert follow_up is not None
+
+    bot.process(first)
+    bot.process(follow_up)
+
+    assert len(service.requests) == 1
+    assert "上一项研究任务" in sender.replies[1][1]
+    assert "查看进度" in sender.replies[1][1]
+
+
+def test_status_records_completed_context_for_follow_up_submission():
+    bot, service, sender, _ = build_bot()
+    first = bot.parse_event(message_payload("event-1", "统计2026年8月涨停股票"))
+    assert first is not None
+    bot.process(first)
+    task_id = bot._task_id_for_event("event-1")
+    completed = service.tasks[task_id]
+    completed.status = AnalysisTaskStatus.SUCCEEDED
+    completed.response = AnalysisResponse(
+        request_id=task_id,
+        planner="test-planner",
+        data_provider="test-provider",
+        status=AnalysisStatus.SUCCESS,
+        plan=QueryPlan(
+            interpretation="Analyze August 2026 limit-up stocks.",
+            queries=[
+                DataQuery(
+                    query_id="limit-ups",
+                    operation="limit_list_d",
+                    purpose="Retrieve the requested limit-up stocks.",
+                )
+            ],
+        ),
+    )
+
+    status_event = bot.parse_event(message_payload("event-2", "查看进度"))
+    follow_up = bot.parse_event(message_payload("event-3", "只看前十名"))
+    assert status_event is not None
+    assert follow_up is not None
+    bot.process(status_event)
+    bot.process(follow_up)
+
+    assert "状态：已完成" in sender.replies[1][1]
+    assert len(service.requests[1].conversation) == 1
+    assert service.requests[1].conversation[0].prompt == "统计2026年8月涨停股票"
+    assert service.requests[1].conversation[0].interpretation == (
+        "Analyze August 2026 limit-up stocks."
+    )
+
+
+def test_retry_creates_new_task_only_after_failure():
+    bot, service, sender, _ = build_bot()
+    first = bot.parse_event(message_payload("event-1", "查散户比例前十"))
+    assert first is not None
+    bot.process(first)
+    task_id = bot._task_id_for_event("event-1")
+
+    running_retry = bot.parse_event(message_payload("event-2", "重试"))
+    assert running_retry is not None
+    bot.process(running_retry)
+    assert "只有失败任务可以重试" in sender.replies[1][1]
+    assert len(service.requests) == 1
+
+    service.tasks[task_id].status = AnalysisTaskStatus.FAILED
+    service.tasks[task_id].error = ServiceError(
+        source="system", message="temporary provider timeout"
+    )
+    failed_retry = bot.parse_event(message_payload("event-3", f"重试 {task_id}"))
+    assert failed_retry is not None
+    bot.process(failed_retry)
 
     assert len(service.requests) == 2
-    assert service.requests[0][2] == []
-    assert len(service.requests[1][2]) == 1
-    assert service.requests[1][2][0].prompt == "统计二连板"
-    assert len(sender.replies) == 2
-    assert len(store.get(second.conversation_id)) == 2
+    assert service.requests[1] == service.tasks[task_id].request
+    assert f"新任务编号：{bot._task_id_for_event('event-3')}" in sender.replies[2][1]
+
+
+def test_task_progress_reply_displays_completed_and_total_items():
+    now = datetime.now(timezone.utc)
+    task = AnalysisTask(
+        task_id="progress-task",
+        status=AnalysisTaskStatus.RUNNING,
+        request=AnalysisRequest(prompt="Rank stocks."),
+        created_at=now,
+        updated_at=now,
+        completed_items=37,
+        total_items=100,
+    )
+
+    assert format_analysis_task(task) == (
+        "任务 progress-task\n状态：运行中\n进度：37/100"
+    )
 
 
 def test_cloud_store_reclaims_abandoned_event_but_not_completed_event():
@@ -234,6 +408,23 @@ def test_cloud_store_reclaims_abandoned_event_but_not_completed_event():
     store.complete_event("event-1")
     blob.updated = datetime.now(timezone.utc) - timedelta(minutes=5)
     assert store.claim_event("event-1") is False
+
+
+def test_cloud_store_persists_task_lookup_by_task_event_and_conversation():
+    store = CloudStorageConversationStore.__new__(CloudStorageConversationStore)
+    store._bucket = FakeEventBucket()
+    record = FeishuTaskRecord(
+        task_id="a" * 32,
+        source_event_id="event-1",
+        conversation_id="tenant:chat:thread:user",
+        prompt="Rank the top ten stocks.",
+    )
+
+    store.put_task(record)
+
+    assert store.get_task(record.task_id) == record
+    assert store.get_event_task(record.source_event_id) == record
+    assert store.get_latest_task(record.conversation_id) == record
 
 
 def test_endpoint_verification_requires_matching_token():
