@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 
@@ -10,10 +11,12 @@ from china_a_share import bootstrap
 from china_a_share.api import create_app
 from china_a_share.config import Settings
 from china_a_share.feishu import (
+    CloudStorageConversationStore,
     FeishuEventError,
     FeishuResearchBot,
     MemoryConversationStore,
 )
+from google.api_core.exceptions import PreconditionFailed
 
 
 class FakeSender:
@@ -31,6 +34,37 @@ class FakeAnalysisService:
     def answer(self, request_id, prompt, conversation):
         self.requests.append((request_id, prompt, conversation))
         return f"Answer: {prompt}", f'{{"tool":"test","prompt":"{prompt}"}}'
+
+
+class FakeEventBlob:
+    def __init__(self):
+        self.content = None
+        self.generation = None
+        self.updated = None
+
+    def upload_from_string(self, content, **kwargs):
+        generation_match = kwargs.get("if_generation_match")
+        if generation_match == 0 and self.generation is not None:
+            raise PreconditionFailed("event already exists")
+        if generation_match not in (None, 0, self.generation):
+            raise PreconditionFailed("event generation changed")
+        self.content = content
+        self.generation = (self.generation or 0) + 1
+        self.updated = datetime.now(timezone.utc)
+
+    def reload(self):
+        return None
+
+    def download_as_text(self):
+        return self.content
+
+
+class FakeEventBucket:
+    def __init__(self):
+        self.blobs = {}
+
+    def blob(self, name):
+        return self.blobs.setdefault(name, FakeEventBlob())
 
 
 def build_bot(*, allowed_open_ids=None):
@@ -184,6 +218,22 @@ def test_processing_reuses_bounded_context_and_deduplicates_event():
     assert service.requests[1][2][0].prompt == "统计二连板"
     assert len(sender.replies) == 2
     assert len(store.get(second.conversation_id)) == 2
+
+
+def test_cloud_store_reclaims_abandoned_event_but_not_completed_event():
+    store = CloudStorageConversationStore.__new__(CloudStorageConversationStore)
+    store._bucket = FakeEventBucket()
+
+    assert store.claim_event("event-1") is True
+    assert store.claim_event("event-1") is False
+
+    blob = store._bucket.blob(store._event_object("event-1"))
+    blob.updated = datetime.now(timezone.utc) - timedelta(minutes=5)
+    assert store.claim_event("event-1") is True
+
+    store.complete_event("event-1")
+    blob.updated = datetime.now(timezone.utc) - timedelta(minutes=5)
+    assert store.claim_event("event-1") is False
 
 
 def test_endpoint_verification_requires_matching_token():

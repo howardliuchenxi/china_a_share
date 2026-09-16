@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -29,6 +30,9 @@ FEISHU_TOKEN_TIMEOUT_SECONDS = 10
 FEISHU_MESSAGE_TIMEOUT_SECONDS = 15
 MAX_FEISHU_MESSAGE_LENGTH = 3_000
 MAX_FEISHU_CONTEXT_TURNS = 3
+FEISHU_EVENT_LEASE = timedelta(minutes=4)
+FEISHU_EVENT_PROCESSING = "processing"
+FEISHU_EVENT_COMPLETED = "completed"
 MENTION_PATTERN = re.compile(r"<at\b[^>]*>.*?</at>", re.IGNORECASE | re.DOTALL)
 logger = logging.getLogger(__name__)
 
@@ -78,6 +82,9 @@ class ConversationStore(Protocol):
     def claim_event(self, event_id: str) -> bool:
         """Return whether this process claimed a previously unseen event."""
 
+    def complete_event(self, event_id: str) -> None:
+        """Mark one claimed event complete so later retries remain deduplicated."""
+
 
 class MemoryConversationStore:
     """Store isolated Feishu conversations and event claims in memory."""
@@ -114,6 +121,9 @@ class MemoryConversationStore:
                 return False
             self._event_ids.add(event_id)
             return True
+
+    def complete_event(self, event_id: str) -> None:
+        """Retain the in-memory claim as the completed-event marker."""
 
 
 class CloudStorageConversationStore:
@@ -154,15 +164,37 @@ class CloudStorageConversationStore:
         )
 
     def claim_event(self, event_id: str) -> bool:
-        """Create one event marker atomically so Feishu retries remain idempotent."""
+        """Claim a new event or reclaim an abandoned processing lease."""
         blob = self._bucket.blob(self._event_object(event_id))
         try:
             blob.upload_from_string(
-                "{}", content_type="application/json", if_generation_match=0
+                FEISHU_EVENT_PROCESSING,
+                content_type="text/plain",
+                if_generation_match=0,
             )
         except PreconditionFailed:
-            return False
+            blob.reload()
+            if blob.download_as_text() == FEISHU_EVENT_COMPLETED:
+                return False
+            updated = blob.updated
+            if updated is None or datetime.now(timezone.utc) - updated < FEISHU_EVENT_LEASE:
+                return False
+            try:
+                # The generation precondition lets only one retry take over a
+                # lease abandoned by an instance shutdown or hard termination.
+                blob.upload_from_string(
+                    FEISHU_EVENT_PROCESSING,
+                    content_type="text/plain",
+                    if_generation_match=blob.generation,
+                )
+            except PreconditionFailed:
+                return False
         return True
+
+    def complete_event(self, event_id: str) -> None:
+        """Persist completion after the reply is accepted by Feishu."""
+        blob = self._bucket.blob(self._event_object(event_id))
+        blob.upload_from_string(FEISHU_EVENT_COMPLETED, content_type="text/plain")
 
     @staticmethod
     def _conversation_object(conversation_id: str) -> str:
@@ -394,6 +426,7 @@ class FeishuResearchBot:
                 [turn.model_copy(deep=True) for turn in prior_turns],
             )
             self._sender.reply(event.message_id, reply)
+            self._store.complete_event(event.event_id)
             prior_turns.append(
                 FeishuConversationTurn(
                     prompt=event.prompt,
