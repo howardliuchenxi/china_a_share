@@ -20,7 +20,7 @@ from china_a_share.core.contracts import (
     DataQuery,
     QueryPlan,
 )
-from china_a_share.planners.deepseek import DeepSeekQueryPlanner
+from china_a_share.planners.deepseek import DEEPSEEK_MODEL, DeepSeekQueryPlanner
 from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
     TushareDataProvider,
@@ -122,6 +122,19 @@ def test_deepseek_skeleton_exposes_stable_name():
     planner = DeepSeekQueryPlanner("test-key")
 
     assert planner.name == "deepseek"
+    assert DEEPSEEK_MODEL == "deepseek-v4-pro"
+
+
+def test_bootstrap_uses_deepseek_as_primary_planner(monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr(
+        "china_a_share.bootstrap._create_data_provider",
+        lambda settings: provider,
+    )
+
+    service = create_analysis_service(Settings("test-token", "test-deepseek-key"))
+
+    assert isinstance(service.planner, DeepSeekQueryPlanner)
 
 
 def test_unsupported_plan_stops_before_provider_execution():

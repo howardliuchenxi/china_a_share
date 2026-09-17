@@ -2067,7 +2067,7 @@ def test_planner_retries_when_answer_contract_is_omitted(caplog):
     assert sum(event.get("event") == "planner_raw_output" for event in events) == 2
     assert any(
         event.get("event") == "planner_intent_normalized"
-        and event.get("model") == "deepseek-v4-flash"
+        and event.get("model") == "deepseek-v4-pro"
         for event in events
     )
 
