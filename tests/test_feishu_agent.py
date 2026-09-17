@@ -16,6 +16,7 @@ from china_a_share.feishu_agent import (
     FeishuAgentRuntime,
     FeishuAgentTask,
     ResearchToolbox,
+    _requires_recent_market_return_tool,
     build_research_workbook,
 )
 from china_a_share.feishu import FeishuOpenApiClient
@@ -84,7 +85,7 @@ class RecentReturnProvider:
         return [FakeOperation()]
 
     def supports(self, operation):
-        return operation in {"daily", "stock_basic"}
+        return operation in {"daily", "stock_basic", "trade_cal"}
 
     def query(
         self,
@@ -104,31 +105,38 @@ class RecentReturnProvider:
                     {"ts_code": "600000.SH", "name": "SPDB", "industry": "Bank"},
                 ]
             )
-        assert operation == "daily"
-        assert params["start_date"] < params["end_date"]
-        rows = []
-        for trade_date, first_change, second_change in (
-            ("20260914", 1.0, 3.0),
-            ("20260915", 2.0, -1.0),
-            ("20260916", 3.0, 1.0),
-        ):
-            rows.extend(
+        if operation == "trade_cal":
+            assert params["exchange"] == "SSE"
+            assert params["is_open"] == "1"
+            return pd.DataFrame(
                 [
-                    {
-                        "ts_code": "000001.SZ",
-                        "trade_date": trade_date,
-                        "close": 10.0,
-                        "pct_chg": first_change,
-                    },
-                    {
-                        "ts_code": "600000.SH",
-                        "trade_date": trade_date,
-                        "close": 12.0,
-                        "pct_chg": second_change,
-                    },
+                    {"cal_date": trade_date, "is_open": 1}
+                    for trade_date in ("20260914", "20260915", "20260916")
                 ]
             )
-        return pd.DataFrame(rows)
+        assert operation == "daily"
+        trade_date = params["trade_date"]
+        first_change, second_change = {
+            "20260914": (1.0, 3.0),
+            "20260915": (2.0, -1.0),
+            "20260916": (3.0, 1.0),
+        }[trade_date]
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": trade_date,
+                    "close": 10.0,
+                    "pct_chg": first_change,
+                },
+                {
+                    "ts_code": "600000.SH",
+                    "trade_date": trade_date,
+                    "close": 12.0,
+                    "pct_chg": second_change,
+                },
+            ]
+        )
 
 
 class RecordingDispatcher:
@@ -250,6 +258,42 @@ def test_agent_runtime_uses_tools_and_exports_complete_excel():
     assert {stage for stage, _message in progress} == {"querying", "exporting"}
 
 
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("查出最近5个交易日累计涨幅最大的个股", True),
+        ("近10个交易日跌幅最低的A股排行", True),
+        ("最近5个交易日A股涨幅排名", False),
+        ("查询贵州茅台最近5个交易日收盘价", False),
+        ("查出今年累计涨幅最大的个股", False),
+    ],
+)
+def test_recent_market_return_tool_selection_covers_ranking_intent(prompt, expected):
+    assert _requires_recent_market_return_tool(prompt) is expected
+
+
+def test_agent_runtime_executes_bounded_tool_for_recent_market_ranking():
+    session = SequenceSession([])
+
+    outcome = FeishuAgentRuntime(
+        "test-key",
+        RecentReturnProvider(),
+        session=session,
+    ).run(
+        FeishuAgentRequest(
+            prompt="查出最近3个交易日累计涨幅最大的个股",
+            conversation_id="test:recent-return",
+            source_message_id="message-1",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert "000001.SZ" in outcome.answer
+    assert "6.11%" in outcome.answer
+    assert "并非复权价格收益" in outcome.answer
+    assert session.calls == []
+
+
 @pytest.mark.parametrize("direction", ["asc", "desc"])
 def test_recent_market_return_tool_compounds_complete_trading_sessions(direction):
     progress = []
@@ -361,8 +405,9 @@ def test_feishu_client_replies_inside_source_message_thread():
     )
 
     assert session.calls[1][0].endswith("/im/v1/messages/message-1/reply")
-    assert session.calls[1][1]["params"] == {"reply_in_thread": "true"}
+    assert "params" not in session.calls[1][1]
     assert session.calls[1][1]["json"]["msg_type"] == "text"
+    assert session.calls[1][1]["json"]["reply_in_thread"] is True
 
 
 def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
@@ -387,8 +432,9 @@ def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
         "file_name": "result.xlsx",
     }
     assert session.calls[2][0].endswith("/im/v1/messages/message-1/reply")
-    assert session.calls[2][1]["params"] == {"reply_in_thread": "true"}
+    assert "params" not in session.calls[2][1]
     assert session.calls[2][1]["json"]["msg_type"] == "file"
+    assert session.calls[2][1]["json"]["reply_in_thread"] is True
 
 
 @pytest.mark.live
@@ -420,13 +466,13 @@ def test_live_feishu_agent_answers_one_historical_price_question():
     os.getenv("RUN_LIVE_ANALYSIS") != "1",
     reason="Set RUN_LIVE_ANALYSIS=1 to call DeepSeek and Tushare.",
 )
-def test_live_feishu_agent_answers_reported_recent_return_ranking():
+def test_live_feishu_agent_answers_reported_five_day_return_ranking():
     runtime = create_feishu_agent_runtime(Settings.from_env())
 
     outcome = runtime.run(
         FeishuAgentRequest(
-            prompt="查出最近3个交易日涨幅最大的个股",
-            conversation_id="live:feishu:agent:reported-recent-return",
+            prompt="查出最近5个交易日累计涨幅最大的个股",
+            conversation_id="live:feishu:agent:reported-five-day-return",
             source_message_id="live-reported-recent-return",
         ),
         lambda _stage, _message: None,

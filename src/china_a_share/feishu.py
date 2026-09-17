@@ -491,12 +491,12 @@ class FeishuOpenApiClient:
         response = self._session.post(
             f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
             headers={"Authorization": f"Bearer {token}"},
-            params={"reply_in_thread": "true"},
             json={
                 "msg_type": "text",
                 "content": json.dumps(
                     {"text": text[:MAX_FEISHU_MESSAGE_LENGTH]}, ensure_ascii=False
                 ),
+                "reply_in_thread": True,
             },
             timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
         )
@@ -526,10 +526,10 @@ class FeishuOpenApiClient:
         response = self._session.post(
             f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
             headers={"Authorization": f"Bearer {token}"},
-            params={"reply_in_thread": "true"},
             json={
                 "msg_type": "file",
                 "content": json.dumps({"file_key": file_key}),
+                "reply_in_thread": True,
             },
             timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
         )

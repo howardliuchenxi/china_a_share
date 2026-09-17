@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
+import re
 import tempfile
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Protocol
 from uuid import uuid4
@@ -23,6 +24,7 @@ from china_a_share.core.contracts import (
     ResultPipeline,
     ServiceError,
 )
+from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
 from china_a_share.result_pipeline import ResultPipelineExecutor
 
 
@@ -34,6 +36,9 @@ MAX_AGENT_PREVIEW_ROWS = 20
 MAX_AGENT_CONTEXT_TURNS = 12
 MAX_RECENT_RETURN_SESSIONS = 60
 RECENT_RETURN_CALENDAR_BUFFER_DAYS = 14
+RECENT_SESSION_PATTERN = re.compile(
+    r"(?:最近|近)\s*\d+\s*个?\s*(?:交易日|交易天)",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -563,22 +568,70 @@ class ResearchToolbox:
             except ValueError as exc:
                 raise ValueError("end_date must use YYYYMMDD format.") from exc
         else:
-            end_date = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+            beijing_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+            end_date = beijing_now.date()
+            if beijing_now.time() < DAILY_PUBLICATION_COMPLETION_TIME:
+                end_date -= timedelta(days=1)
         lookback_days = trading_sessions * 3 + RECENT_RETURN_CALENDAR_BUFFER_DAYS
         start_date = end_date - timedelta(days=lookback_days)
 
+        if self._provider.supports("trade_cal"):
+            calendar = self._provider.query(
+                "trade_cal",
+                {
+                    "exchange": "SSE",
+                    "start_date": start_date.strftime("%Y%m%d"),
+                    "end_date": end_date.strftime("%Y%m%d"),
+                    "is_open": "1",
+                },
+                ["cal_date", "is_open"],
+                api_route="/feishu/agent/tools/recent-market-return",
+                request_id=self._request_id,
+                query_id="recent_market_calendar",
+            )
+            if "cal_date" not in calendar.columns:
+                raise ValueError("Trade calendar data is missing cal_date.")
+            if "is_open" in calendar.columns:
+                calendar = calendar.loc[
+                    pd.to_numeric(calendar["is_open"], errors="coerce") == 1
+                ]
+            candidate_dates = sorted(
+                str(value) for value in calendar["cal_date"].dropna().unique()
+                if start_date.strftime("%Y%m%d")
+                <= str(value)
+                <= end_date.strftime("%Y%m%d")
+            )
+        else:
+            candidate_dates = [
+                (start_date + timedelta(days=offset)).strftime("%Y%m%d")
+                for offset in range((end_date - start_date).days + 1)
+                if (start_date + timedelta(days=offset)).weekday() < 5
+            ]
+
         progress("querying", "正在查询最近交易日的全市场日行情…")
-        daily_frame = self._provider.query(
-            "daily",
-            {
-                "start_date": start_date.strftime("%Y%m%d"),
-                "end_date": end_date.strftime("%Y%m%d"),
-            },
-            ["ts_code", "trade_date", "close", "pct_chg"],
-            api_route="/feishu/agent/tools/recent-market-return",
-            request_id=self._request_id,
-            query_id="recent_market_daily",
-        )
+        session_frames: List[pd.DataFrame] = []
+        for trade_date in reversed(candidate_dates):
+            frame = self._provider.query(
+                "daily",
+                {"trade_date": trade_date},
+                ["ts_code", "trade_date", "close", "pct_chg"],
+                api_route="/feishu/agent/tools/recent-market-return",
+                request_id=self._request_id,
+                query_id=f"recent_market_daily_{trade_date}",
+            )
+            if frame.empty:
+                continue
+            session_frames.append(frame)
+            if len(session_frames) == trading_sessions:
+                break
+        if len(session_frames) < trading_sessions:
+            raise ValueError(
+                f"Only {len(session_frames)} completed trading sessions were "
+                f"available; {trading_sessions} are required."
+            )
+        # Querying one session at a time keeps every provider response bounded and
+        # avoids offset ceilings on otherwise valid full-market rankings.
+        daily_frame = pd.concat(reversed(session_frames), ignore_index=True)
         required = {"ts_code", "trade_date", "close", "pct_chg"}
         missing = required.difference(daily_frame.columns)
         if missing:
@@ -594,13 +647,9 @@ class ResearchToolbox:
         )
         normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
         normalized = normalized.dropna(subset=["ts_code", "pct_chg", "close"])
-        available_dates = sorted(normalized["trade_date"].unique())
-        if len(available_dates) < trading_sessions:
-            raise ValueError(
-                f"Only {len(available_dates)} completed trading sessions were "
-                f"available; {trading_sessions} are required."
-            )
-        selected_dates = available_dates[-trading_sessions:]
+        selected_dates = sorted(normalized["trade_date"].unique())[
+            -trading_sessions:
+        ]
         selected = normalized.loc[
             normalized["trade_date"].isin(selected_dates)
         ].copy()
@@ -709,6 +758,33 @@ class FeishuAgentRuntime:
     ) -> FeishuAgentOutcome:
         """Return a final answer after at most the configured tool-call rounds."""
         toolbox = ResearchToolbox(self._provider, uuid4().hex)
+        recent_return_arguments = _recent_market_return_arguments(request.prompt)
+        if recent_return_arguments is not None:
+            result = toolbox.call(
+                "rank_recent_market_return",
+                recent_return_arguments,
+                progress,
+            )
+            if any(
+                token in request.prompt.casefold()
+                for token in ("excel", "xlsx", "表格")
+            ):
+                toolbox.call(
+                    "export_excel",
+                    {
+                        "dataset_id": result["dataset_id"],
+                        "title": "Recent A-share return ranking",
+                        "methodology": str(result["methodology"]),
+                    },
+                    progress,
+                )
+            return FeishuAgentOutcome(
+                answer=_format_recent_market_return_answer(
+                    recent_return_arguments,
+                    result,
+                ),
+                artifact_path=toolbox.artifact_path,
+            )
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": _agent_system_prompt()},
         ]
@@ -890,6 +966,103 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
         "preview": result.rows[:MAX_AGENT_PREVIEW_ROWS],
         "preview_truncated": result.row_count > MAX_AGENT_PREVIEW_ROWS,
     }
+
+
+def _recent_market_return_arguments(prompt: str) -> Optional[Dict[str, Any]]:
+    """Compile a bounded recent-session ranking request from explicit intent."""
+    normalized = prompt.casefold()
+    session_match = RECENT_SESSION_PATTERN.search(prompt)
+    english_session_match = re.search(
+        r"(?:recent|latest)\s+(\d+)\s+trading\s+(?:days|sessions)",
+        normalized,
+    )
+    if session_match is None and english_session_match is None:
+        return None
+    has_return_metric = any(
+        token in normalized
+        for token in ("涨幅", "跌幅", "涨跌幅", "收益", "回报", "return", "gain", "loss")
+    )
+    has_ranking = any(
+        token in normalized
+        for token in (
+            "最大",
+            "最小",
+            "最高",
+            "最低",
+            "top",
+            "bottom",
+            "前",
+            "后",
+        )
+    )
+    has_market_universe = any(
+        token in normalized
+        for token in ("个股", "股票", "a股", "全市场", "market", "stocks", "shares")
+    )
+    if not (has_return_metric and has_ranking and has_market_universe):
+        return None
+
+    if session_match is not None:
+        count_match = re.search(r"\d+", session_match.group(0))
+        if count_match is None:
+            return None
+        trading_sessions = int(count_match.group(0))
+    else:
+        trading_sessions = int(english_session_match.group(1))
+    if not 1 <= trading_sessions <= MAX_RECENT_RETURN_SESSIONS:
+        return None
+
+    descending_rank = any(
+        token in normalized for token in ("最大", "最高", "top", "前")
+    )
+    if "跌幅" in normalized or "loss" in normalized:
+        direction = "asc" if descending_rank else "desc"
+    else:
+        direction = "desc" if descending_rank else "asc"
+
+    limit_match = re.search(r"(?:前|后|top\s*|bottom\s*)(\d+)", normalized)
+    limit = int(limit_match.group(1)) if limit_match is not None else 1
+    if not 1 <= limit <= 1000:
+        return None
+    return {
+        "trading_sessions": trading_sessions,
+        "direction": direction,
+        "limit": limit,
+    }
+
+
+def _requires_recent_market_return_tool(prompt: str) -> bool:
+    """Return whether a prompt has a deterministic recent-ranking contract."""
+    return _recent_market_return_arguments(prompt) is not None
+
+
+def _format_recent_market_return_answer(
+    arguments: Mapping[str, Any],
+    result: Mapping[str, Any],
+) -> str:
+    """Format deterministic ranking evidence without another model round."""
+    rows = list(result.get("preview") or [])
+    if not rows:
+        raise ValueError("Recent market return ranking produced no rows.")
+    direction_label = (
+        "累计涨跌幅最高" if arguments["direction"] == "desc" else "累计涨跌幅最低"
+    )
+    lines = [
+        f"最近{arguments['trading_sessions']}个交易日{direction_label}的个股：",
+    ]
+    for index, row in enumerate(rows, start=1):
+        name = str(row.get("name") or "名称缺失")
+        code = str(row.get("ts_code") or "代码缺失")
+        return_value = float(row["period_return_pct"])
+        lines.append(f"{index}. {name}（{code}）：{return_value:.2f}%")
+    first = rows[0]
+    lines.append(
+        "区间："
+        f"{first.get('start_trade_date', '未知')} 至 "
+        f"{first.get('end_trade_date', '未知')}。"
+    )
+    lines.append("口径：按每日 pct_chg 复合计算，并非复权价格收益。")
+    return "\n".join(lines)
 
 
 def _agent_system_prompt() -> str:
