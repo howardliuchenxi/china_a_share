@@ -181,7 +181,12 @@ def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
     assert bot._allowed_open_ids == set()
 
 
-def message_payload(event_id="event-1", text="<at user_id=\"bot\">Bot</at> 统计二连板"):
+def message_payload(
+    event_id="event-1",
+    text="<at user_id=\"bot\">Bot</at> 统计二连板",
+    *,
+    mentions=None,
+):
     return {
         "header": {
             "event_id": event_id,
@@ -197,6 +202,7 @@ def message_payload(event_id="event-1", text="<at user_id=\"bot\">Bot</at> 统�
                 "thread_id": "thread-1",
                 "message_type": "text",
                 "content": json.dumps({"text": text}, ensure_ascii=False),
+                "mentions": mentions or [],
             },
         },
     }
@@ -249,6 +255,21 @@ def test_message_event_removes_bot_mention_and_isolates_conversation():
     assert event is not None
     assert event.prompt == "统计二连板"
     assert event.conversation_id == "tenant-1:chat-1:thread-1:user-1"
+
+
+def test_message_event_removes_structured_mention_placeholder_before_commands():
+    bot, _, _, _ = build_bot(allowed_open_ids={"user-1"})
+
+    event = bot.parse_event(
+        message_payload(
+            "event-status",
+            "@_user_1 查看进度",
+            mentions=[{"key": "@_user_1", "name": "A股研究助手"}],
+        )
+    )
+
+    assert event is not None
+    assert event.prompt == "查看进度"
 
 
 def test_message_event_rejects_unapproved_user():
@@ -419,6 +440,45 @@ def test_agent_bot_supports_named_sessions_and_parallel_submissions():
     assert all(task.status == AnalysisTaskStatus.QUEUED for task in submitted_tasks)
     assert submitted_tasks[0].request.conversation_id == submitted_tasks[1].request.conversation_id
     assert ":session:" in submitted_tasks[0].request.conversation_id
+
+
+def test_agent_bot_routes_mentioned_status_command_without_new_submission():
+    task_store = MemoryAnalysisTaskStore()
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.task_ids = []
+
+        def dispatch(self, task_id):
+            self.task_ids.append(task_id)
+
+    dispatcher = RecordingDispatcher()
+    agent_coordinator = FeishuAgentCoordinator(task_store, dispatcher)
+    sender = FakeSender()
+    bot = FeishuResearchBot(
+        agent_coordinator,
+        sender,
+        MemoryConversationStore(),
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        agent_coordinator=agent_coordinator,
+    )
+    prompt_event = bot.parse_event(message_payload("event-agent", "查询银行股估值"))
+    status_event = bot.parse_event(
+        message_payload(
+            "event-status",
+            "@_user_1 查看进度",
+            mentions=[{"key": "@_user_1", "name": "A股研究助手"}],
+        )
+    )
+    assert prompt_event is not None
+    assert status_event is not None
+
+    bot.process(prompt_event)
+    bot.process(status_event)
+
+    assert len(dispatcher.task_ids) == 1
+    assert "状态：排队中" in sender.replies[-1][1]
 
 def test_task_progress_reply_displays_completed_and_total_items():
     now = datetime.now(timezone.utc)

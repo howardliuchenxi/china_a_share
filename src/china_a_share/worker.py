@@ -1,5 +1,6 @@
 """Cloud Run Job entry point for one persisted analysis task."""
 
+from datetime import datetime, timezone
 import os
 
 from china_a_share.bootstrap import (
@@ -12,7 +13,7 @@ from china_a_share.tasks import (
     AnalysisTaskCoordinator,
     CloudStorageAnalysisTaskStore,
 )
-from china_a_share.core.contracts import DiscoveryTask
+from china_a_share.core.contracts import AnalysisTaskStatus, DiscoveryTask, ServiceError
 from china_a_share.feishu import FeishuOpenApiClient
 from china_a_share.feishu_agent import FeishuAgentCoordinator, FeishuAgentTask
 
@@ -39,11 +40,24 @@ def main() -> None:
         
     if isinstance(task, FeishuAgentTask):
         coordinator = FeishuAgentCoordinator(store, WorkerDispatcher())
-        coordinator.run(
-            task_id,
-            create_feishu_agent_runtime(settings),
-            FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),
-        )
+        try:
+            runtime = create_feishu_agent_runtime(settings)
+            progress_sink = FeishuOpenApiClient(
+                settings.feishu_app_id,
+                settings.feishu_app_secret,
+            )
+        except Exception as exc:
+            # Initialization failures occur before the coordinator can transition the
+            # task, so the worker must persist a terminal state instead of leaving a
+            # permanently queued task with no actionable error.
+            task.status = AnalysisTaskStatus.FAILED
+            task.stage = "failed"
+            task.progress_message = "研究任务初始化失败。"
+            task.error = ServiceError(source="system", message=str(exc))
+            task.updated_at = datetime.now(timezone.utc)
+            store.put(task)
+            raise
+        coordinator.run(task_id, runtime, progress_sink)
     elif isinstance(task, DiscoveryTask):
         loop = create_evolution_loop(settings, store)
         loop.run(task_id)

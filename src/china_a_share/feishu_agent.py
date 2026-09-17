@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
 import tempfile
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Protocol
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
@@ -31,6 +32,8 @@ DEEPSEEK_AGENT_TIMEOUT_SECONDS = 180
 MAX_AGENT_ROUNDS = 12
 MAX_AGENT_PREVIEW_ROWS = 20
 MAX_AGENT_CONTEXT_TURNS = 12
+MAX_RECENT_RETURN_SESSIONS = 60
+RECENT_RETURN_CALENDAR_BUFFER_DAYS = 14
 logger = logging.getLogger(__name__)
 
 
@@ -285,6 +288,47 @@ class ResearchToolbox:
             {
                 "type": "function",
                 "function": {
+                    "name": "rank_recent_market_return",
+                    "description": (
+                        "Rank all listed A-shares by compounded percentage return over "
+                        "the latest N completed market trading sessions. Use this tool "
+                        "for recent multi-session gain, loss, or return rankings; it "
+                        "compounds the provider's official daily pct_chg values and "
+                        "does not use an adjusted-price series or block-trade records."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "trading_sessions": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": MAX_RECENT_RETURN_SESSIONS,
+                            },
+                            "direction": {
+                                "type": "string",
+                                "enum": ["asc", "desc"],
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 1000,
+                            },
+                            "end_date": {
+                                "type": "string",
+                                "description": (
+                                    "Optional inclusive YYYYMMDD upper bound. Omit for "
+                                    "the latest completed market data."
+                                ),
+                            },
+                        },
+                        "required": ["trading_sessions", "direction", "limit"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "rank_dataset",
                     "description": "Sort a retained dataset, keep a bounded top or bottom set, and optionally select output fields.",
                     "parameters": {
@@ -393,6 +437,8 @@ class ResearchToolbox:
             result = _frame_to_result(dataset_id, self._provider.name, operation, frame)
             self._datasets[dataset_id] = result
             return _result_payload(result)
+        if name == "rank_recent_market_return":
+            return self._rank_recent_market_return(arguments, progress)
         if name == "rank_dataset":
             progress("calculating", "正在执行排序与排名…")
             dataset_id = str(arguments["dataset_id"])
@@ -481,6 +527,156 @@ class ResearchToolbox:
             )
             return {"file_name": self.artifact_path.name, "row_count": result.row_count}
         raise ValueError(f"Unknown research tool: {name}")
+
+    def _rank_recent_market_return(
+        self,
+        arguments: Mapping[str, Any],
+        progress: Callable[[str, str], None],
+    ) -> Dict[str, Any]:
+        """Rank complete full-market returns over recent trading sessions."""
+        trading_sessions = int(arguments["trading_sessions"])
+        if not 1 <= trading_sessions <= MAX_RECENT_RETURN_SESSIONS:
+            raise ValueError(
+                "trading_sessions must be between 1 and "
+                f"{MAX_RECENT_RETURN_SESSIONS}."
+            )
+        direction = str(arguments["direction"])
+        if direction not in {"asc", "desc"}:
+            raise ValueError("direction must be asc or desc.")
+        limit = int(arguments["limit"])
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000.")
+
+        raw_end_date = str(arguments.get("end_date") or "").strip()
+        if raw_end_date:
+            try:
+                end_date = datetime.strptime(raw_end_date, "%Y%m%d").date()
+            except ValueError as exc:
+                raise ValueError("end_date must use YYYYMMDD format.") from exc
+        else:
+            end_date = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        lookback_days = trading_sessions * 3 + RECENT_RETURN_CALENDAR_BUFFER_DAYS
+        start_date = end_date - timedelta(days=lookback_days)
+
+        progress("querying", "正在查询最近交易日的全市场日行情…")
+        daily_frame = self._provider.query(
+            "daily",
+            {
+                "start_date": start_date.strftime("%Y%m%d"),
+                "end_date": end_date.strftime("%Y%m%d"),
+            },
+            ["ts_code", "trade_date", "close", "pct_chg"],
+            api_route="/feishu/agent/tools/recent-market-return",
+            request_id=self._request_id,
+            query_id="recent_market_daily",
+        )
+        required = {"ts_code", "trade_date", "close", "pct_chg"}
+        missing = required.difference(daily_frame.columns)
+        if missing:
+            raise ValueError(
+                "Daily market data is missing required fields: "
+                + ", ".join(sorted(missing))
+            )
+
+        normalized = daily_frame.copy()
+        normalized["trade_date"] = normalized["trade_date"].astype(str)
+        normalized["pct_chg"] = pd.to_numeric(
+            normalized["pct_chg"], errors="coerce"
+        )
+        normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
+        normalized = normalized.dropna(subset=["ts_code", "pct_chg", "close"])
+        available_dates = sorted(normalized["trade_date"].unique())
+        if len(available_dates) < trading_sessions:
+            raise ValueError(
+                f"Only {len(available_dates)} completed trading sessions were "
+                f"available; {trading_sessions} are required."
+            )
+        selected_dates = available_dates[-trading_sessions:]
+        selected = normalized.loc[
+            normalized["trade_date"].isin(selected_dates)
+        ].copy()
+        session_counts = selected.groupby("ts_code")["trade_date"].nunique()
+        complete_codes = session_counts.loc[
+            session_counts == trading_sessions
+        ].index
+        selected = selected.loc[selected["ts_code"].isin(complete_codes)]
+        if selected.empty:
+            raise ValueError("No security has complete data for the selected sessions.")
+
+        progress("calculating", "正在复合计算区间涨跌幅并执行全市场排名…")
+        returns = (
+            selected.groupby("ts_code", sort=False)["pct_chg"]
+            .apply(lambda values: ((1.0 + values / 100.0).prod() - 1.0) * 100.0)
+            .rename("period_return_pct")
+            .reset_index()
+        )
+        latest_close = (
+            selected.sort_values("trade_date")
+            .groupby("ts_code", as_index=False)
+            .tail(1)
+            .loc[:, ["ts_code", "close"]]
+        )
+        ranked = returns.merge(latest_close, on="ts_code", validate="one_to_one")
+
+        progress("querying", "正在补充股票名称与行业信息…")
+        reference = self._provider.query(
+            "stock_basic",
+            {"list_status": "L"},
+            ["ts_code", "name", "industry"],
+            api_route="/feishu/agent/tools/recent-market-return",
+            request_id=self._request_id,
+            query_id="recent_market_reference",
+        )
+        if "ts_code" not in reference.columns:
+            raise ValueError("Stock reference data is missing ts_code.")
+        reference_fields = [
+            field for field in ("ts_code", "name", "industry")
+            if field in reference.columns
+        ]
+        ranked = ranked.merge(
+            reference.loc[:, reference_fields],
+            how="left",
+            on="ts_code",
+            validate="one_to_one",
+        )
+        ranked.insert(1, "start_trade_date", selected_dates[0])
+        ranked.insert(2, "end_trade_date", selected_dates[-1])
+        ranked.insert(3, "trading_session_count", trading_sessions)
+        ranked["period_return_pct"] = ranked["period_return_pct"].round(4)
+        ranked = ranked.sort_values(
+            ["period_return_pct", "ts_code"],
+            ascending=[direction == "asc", True],
+            kind="mergesort",
+        ).head(limit)
+        preferred_fields = [
+            "ts_code",
+            "name",
+            "industry",
+            "start_trade_date",
+            "end_trade_date",
+            "trading_session_count",
+            "close",
+            "period_return_pct",
+        ]
+        ranked = ranked.loc[
+            :, [field for field in preferred_fields if field in ranked.columns]
+        ]
+        dataset_id = f"dataset_{len(self._datasets) + 1}"
+        result = _frame_to_result(
+            dataset_id,
+            self._provider.name,
+            "recent_market_period_return",
+            ranked.reset_index(drop=True),
+        )
+        self._datasets[dataset_id] = result
+        payload = _result_payload(result)
+        payload["calculation"] = "compound_daily_pct_chg"
+        payload["methodology"] = (
+            "Compounded the official daily pct_chg values for every security with "
+            f"complete observations on all {trading_sessions} selected market "
+            "sessions. This is not an adjusted-price return series."
+        )
+        return payload
 
 
 class FeishuAgentRuntime:
@@ -692,7 +888,13 @@ def _agent_system_prompt() -> str:
     return (
         "You are an A-share research agent. Answer in concise Chinese. Use tools for "
         "every market-data claim and never invent prices, rankings, dates, companies, "
-        "or financial metrics. Search the operation catalog before the first query. "
+        "or financial metrics. Search the operation catalog before using the generic "
+        "query_market_data tool. Dedicated analytical tools do not require catalog "
+        "search. For a market-wide ranking over the latest N trading sessions, always "
+        "use rank_recent_market_return; never use block_trade, which contains large "
+        "off-exchange transaction records rather than ordinary stock returns. Report "
+        "that tool's result as compounded daily pct_chg and never call it an adjusted "
+        "or adjusted-price return. "
         "Use only returned dataset identifiers and deterministic transformations. "
         "When the user requests Excel, or a result contains more than ten rows, call "
         "export_excel after producing the final retained dataset. Explain proxy metrics "

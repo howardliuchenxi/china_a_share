@@ -15,6 +15,7 @@ from china_a_share.feishu_agent import (
     FeishuAgentRequest,
     FeishuAgentRuntime,
     FeishuAgentTask,
+    ResearchToolbox,
     build_research_workbook,
 )
 from china_a_share.feishu import FeishuOpenApiClient
@@ -74,6 +75,60 @@ class FakeProvider:
                 {"ts_code": "600000.SH", "close": 11.5},
             ]
         )
+
+
+class RecentReturnProvider:
+    name = "test-provider"
+
+    def search_operations(self, prompt):
+        return [FakeOperation()]
+
+    def supports(self, operation):
+        return operation in {"daily", "stock_basic"}
+
+    def query(
+        self,
+        operation,
+        params,
+        fields,
+        *,
+        api_route,
+        request_id,
+        query_id,
+    ):
+        if operation == "stock_basic":
+            assert params == {"list_status": "L"}
+            return pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "name": "Ping An Bank", "industry": "Bank"},
+                    {"ts_code": "600000.SH", "name": "SPDB", "industry": "Bank"},
+                ]
+            )
+        assert operation == "daily"
+        assert params["start_date"] < params["end_date"]
+        rows = []
+        for trade_date, first_change, second_change in (
+            ("20260914", 1.0, 3.0),
+            ("20260915", 2.0, -1.0),
+            ("20260916", 3.0, 1.0),
+        ):
+            rows.extend(
+                [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": trade_date,
+                        "close": 10.0,
+                        "pct_chg": first_change,
+                    },
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": trade_date,
+                        "close": 12.0,
+                        "pct_chg": second_change,
+                    },
+                ]
+            )
+        return pd.DataFrame(rows)
 
 
 class RecordingDispatcher:
@@ -195,6 +250,34 @@ def test_agent_runtime_uses_tools_and_exports_complete_excel():
     assert {stage for stage, _message in progress} == {"querying", "exporting"}
 
 
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_recent_market_return_tool_compounds_complete_trading_sessions(direction):
+    progress = []
+
+    payload = ResearchToolbox(RecentReturnProvider(), "request-1").call(
+        "rank_recent_market_return",
+        {
+            "trading_sessions": 3,
+            "direction": direction,
+            "limit": 1,
+            "end_date": "20260916",
+        },
+        lambda stage, message: progress.append((stage, message)),
+    )
+
+    assert payload["row_count"] == 1
+    row = payload["preview"][0]
+    expected_code = "000001.SZ" if direction == "desc" else "600000.SH"
+    assert row["ts_code"] == expected_code
+    assert row["start_trade_date"] == "20260914"
+    assert row["end_trade_date"] == "20260916"
+    assert row["trading_session_count"] == 3
+    assert row["name"]
+    assert payload["calculation"] == "compound_daily_pct_chg"
+    assert "not an adjusted-price return" in payload["methodology"]
+    assert {stage for stage, _message in progress} == {"querying", "calculating"}
+
+
 def test_research_workbook_preserves_numeric_values_and_source_context():
     result = QueryResult(
         query_id="ranked",
@@ -310,3 +393,27 @@ def test_live_feishu_agent_answers_one_historical_price_question():
 
     assert "600519.SH" in outcome.answer
     assert "2026" in outcome.answer
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call DeepSeek and Tushare.",
+)
+def test_live_feishu_agent_answers_reported_recent_return_ranking():
+    runtime = create_feishu_agent_runtime(Settings.from_env())
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="查出最近3个交易日涨幅最大的个股",
+            conversation_id="live:feishu:agent:reported-recent-return",
+            source_message_id="live-reported-recent-return",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert "二连板" not in outcome.answer
+    assert "第三日" not in outcome.answer
+    assert "复权收益" not in outcome.answer
+    assert "并非复权" in outcome.answer or "复权" not in outcome.answer
+    assert any(character.isdigit() for character in outcome.answer)

@@ -680,7 +680,12 @@ class FeishuResearchBot:
             text = json.loads(message.get("content", "{}"))["text"]
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise FeishuEventError("Feishu text message content is invalid.") from exc
-        prompt = MENTION_PATTERN.sub("", text).strip()
+        prompt = MENTION_PATTERN.sub("", text)
+        for mention in message.get("mentions") or []:
+            key = str(mention.get("key") or "").strip()
+            if key:
+                prompt = prompt.replace(key, " ")
+        prompt = prompt.strip()
         if not prompt:
             return None
         chat_id = str(message.get("chat_id", "")).strip()
