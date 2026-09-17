@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-09-13**
+Last verified: **2026-09-17**
 
 ## Project boundary
 
@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00235-qbh` |
+| Latest ready revision | `china-a-share-lab-00238-kl7` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `e1faec7f8df3626626fd9adf8d480dcfa17dda51` |
+| Deployed Git commit | `9643e4c1356f4459b1aa7a85e364a7eced21b6b2` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -102,6 +102,7 @@ protected from anonymous consumption.
 | Task timeout | 7,200 seconds |
 | Maximum retries | 1 |
 | Runtime identity | `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com` |
+| Feishu delivery | Plain `FEISHU_APP_ID` plus Secret Manager `feishu-app-secret:latest` |
 | Invocation | No public endpoint; executions are started through the Cloud Run API |
 | Expected cost impact | Usage-based CPU and 4 GiB memory only while an analysis execution runs; no idle job cost |
 
@@ -402,3 +403,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-13 | Deployed revision `china-a-share-lab-00229-856` through `make deploy`; recorded source `main@81f87c6438a38fda10bb3742ca60a32da2be9892`, verified 100% traffic, public health status, runtime configuration, storage usage, and a successful Feishu URL-verification callback. Published Feishu application version `1.0.0` with availability limited to the application owner and external interaction disabled; no new GCP resource types or IAM changes were introduced. |
 | 2026-09-13 | Deployed revision `china-a-share-lab-00230-6w6` through `make deploy`; recorded source `main@88ff7a0ec3f991b68ed435910a72d3937869cd53`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-09-13 | Deployed revision `china-a-share-lab-00235-qbh` through `make deploy`; recorded source `main@e1faec7f8df3626626fd9adf8d480dcfa17dda51`, verified 100% traffic, public health status, runtime configuration, storage usage, and successful single-turn and contextual multi-turn Feishu research responses with no new resource types or IAM changes. |
+| 2026-09-17 | Deployed revision `china-a-share-lab-00238-kl7` through scheduled reconciliation from `main@9643e4c1356f4459b1aa7a85e364a7eced21b6b2`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, and Worker access to the existing `FEISHU_APP_ID` and `feishu-app-secret:latest` bindings. The release adds the independent DeepSeek V4 Pro Feishu agent, deterministic recent-session market-return ranking, structured mention command routing, terminal Worker initialization failures, and the scoped Feishu release gate. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
