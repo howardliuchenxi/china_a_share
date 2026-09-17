@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00238-kl7` |
+| Latest ready revision | `china-a-share-lab-00240-4qc` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `9643e4c1356f4459b1aa7a85e364a7eced21b6b2` |
+| Deployed Git commit | `edee3a98afcab9c68c2fdaee8b95d78a7b021c14` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -263,6 +263,20 @@ deployment identity.
 The obsolete first-generation trigger was deleted after the second-generation
 trigger completed both a real deployment and a scheduled no-op reconciliation.
 
+### Main push deployment trigger
+
+| Setting | Value |
+| --- | --- |
+| Trigger | `china-a-share-deploy-main-push` |
+| Trigger ID | `1ae0a769-e423-416e-910b-566ff800f430` |
+| Region | `asia-east2` |
+| Source event | Push to `main` (`^main$`) |
+| Ignored files | `docs/**`, `README.md`, and `AGENTS.md` |
+| Build configuration | `cloudbuild.reconcile.yaml` |
+| Execution identity | `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` |
+| Current state | Enabled; configuration verified, awaiting the next application-code push for end-to-end event verification |
+| Expected cost impact | Cloud Build usage only after a non-documentation push; no polling builds |
+
 ### GitHub connection
 
 | Setting | Value |
@@ -285,12 +299,12 @@ GitHub authorization.
 | --- | --- |
 | Job | `china-a-share-reconcile-main` |
 | Region | `asia-east2` |
-| Schedule | Every 10 minutes (`*/10 * * * *`, UTC) |
+| Schedule | Every 10 minutes (`*/10 * * * *`, UTC), retained as a disabled fallback |
 | Target | Cloud Build trigger `c3932b82-c9bb-4870-85af-c77eb2d24bbd` |
 | Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` |
-| State | Enabled; real deployment and scheduled no-op reconciliation verified |
+| State | Paused after the main push trigger replaced polling |
 | Retry count | 1 |
-| Expected cost impact | Within the monthly free allowance for three Scheduler jobs |
+| Expected cost impact | No execution or Cloud Build usage while paused; the retained job remains within the three-job Scheduler monthly free allowance |
 
 Google-managed Cloud Run, Cloud Build, Artifact Registry, Container Registry,
 and Pub/Sub service agents also exist. They are platform-managed identities and
@@ -404,3 +418,6 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-13 | Deployed revision `china-a-share-lab-00230-6w6` through `make deploy`; recorded source `main@88ff7a0ec3f991b68ed435910a72d3937869cd53`, verified 100% traffic, public health status, runtime configuration, and storage usage with no new resource types or IAM changes. |
 | 2026-09-13 | Deployed revision `china-a-share-lab-00235-qbh` through `make deploy`; recorded source `main@e1faec7f8df3626626fd9adf8d480dcfa17dda51`, verified 100% traffic, public health status, runtime configuration, storage usage, and successful single-turn and contextual multi-turn Feishu research responses with no new resource types or IAM changes. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00238-kl7` through scheduled reconciliation from `main@9643e4c1356f4459b1aa7a85e364a7eced21b6b2`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, and Worker access to the existing `FEISHU_APP_ID` and `feishu-app-secret:latest` bindings. The release adds the independent DeepSeek V4 Pro Feishu agent, deterministic recent-session market-return ranking, structured mention command routing, terminal Worker initialization failures, and the scoped Feishu release gate. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
+| 2026-09-17 | Deployed revision `china-a-share-lab-00239-wk7` through scheduled reconciliation from `main@a066fbef77e59b9c7dc78af822b3ed4ac390b411`; verified 100% traffic, public health, and the synchronized `china-a-share-analysis-worker` image and Git SHA. The release groups Feishu text and workbook replies in source-message threads and suppresses consecutive duplicate progress updates. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
+| 2026-09-17 | Deployed revision `china-a-share-lab-00240-4qc` through scheduled reconciliation from `main@edee3a98afcab9c68c2fdaee8b95d78a7b021c14`; verified 100% traffic and the synchronized Worker image and Git SHA. The release temporarily disables backend release tests at the operator's request. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
+| 2026-09-17 | Replaced periodic deployment polling with the `china-a-share-deploy-main-push` trigger for non-documentation pushes to `main`; restored the fallback Scheduler cadence to ten minutes, then paused `china-a-share-reconcile-main`. Verified the trigger and paused job configuration. The brief three-minute interval was reverted before a second high-frequency invocation; no recurring polling build cost remains. |

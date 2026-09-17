@@ -73,9 +73,10 @@
 - Do not deploy the application or mutate cloud resources unless the user
   explicitly requests deployment or a specific cloud change.
 - After pushing code to main, never run `make deploy` or trigger Cloud Build
-  manually. Production deployment is handled automatically by Cloud Scheduler
-  (`china-a-share-reconcile-main`) every 10 minutes via the reconciliation
-  trigger. Just push and let the scheduler pick it up.
+  manually. Production deployment is handled immediately by the
+  `china-a-share-deploy-main-push` Cloud Build trigger. The paused
+  `china-a-share-reconcile-main` Scheduler job is retained only as a recovery
+  fallback. Just push and let the push trigger pick it up.
 
 ## Google Cloud resource inventory
 
