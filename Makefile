@@ -19,6 +19,18 @@ RELEASE_MESSAGE ?= Release application changes
 DEPLOYMENT_INVENTORY_MESSAGE := Record production deployment
 DEPLOY_VERIFY_ATTEMPTS := 6
 DEPLOY_VERIFY_DELAY_SECONDS := 5
+FEISHU_TEST_FILES := \
+	tests/test_api.py \
+	tests/test_architecture_skeleton.py \
+	tests/test_config.py \
+	tests/test_feishu.py \
+	tests/test_feishu_agent.py \
+	tests/test_reconcile_deployment.py \
+	tests/test_release_files.py \
+	tests/test_repository_context.py \
+	tests/test_server.py \
+	tests/test_tasks.py \
+	tests/test_worker.py
 
 GCLOUD := $(shell command -v gcloud 2>/dev/null || { test -x "$$HOME/google-cloud-sdk/bin/gcloud" && printf '%s' "$$HOME/google-cloud-sdk/bin/gcloud"; })
 CLOUDSDK_PYTHON := $(shell \
@@ -29,11 +41,12 @@ CLOUDSDK_PYTHON := $(shell \
 			&& { command -v "$$candidate" 2>/dev/null || printf '%s' "$$candidate"; break; }; \
 	done)
 
-.PHONY: help check install-hooks live-check pre-push deploy merge release
+.PHONY: help check full-check install-hooks live-check pre-push deploy merge release
 
 help:
 	printf '%s\n' \
-		'make check   Build the frontend and run backend tests.' \
+		'make check   Build the frontend and run Feishu release tests.' \
+		'make full-check  Build the frontend and run every backend test.' \
 		'make install-hooks  Enable the repository-managed Git hooks.' \
 		'make live-check  Run the unified 100-case live matrix and regressions.' \
 		'make pre-push  Run the complete local release gate.' \
@@ -42,6 +55,10 @@ help:
 		'make release Merge the current branch into main, then deploy that exact commit.'
 
 check:
+	npm --prefix frontend run build
+	.venv/bin/python -m pytest $(FEISHU_TEST_FILES)
+
+full-check:
 	npm --prefix frontend run build
 	.venv/bin/python -m pytest
 

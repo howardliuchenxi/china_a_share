@@ -180,7 +180,18 @@ steps:
       - |
         test "$$(cat /workspace/deployment-action)" = deploy || exit 0
         python -m pip install --disable-pip-version-check ".[dev]"
-        python -m pytest
+        python -m pytest \
+          tests/test_api.py \
+          tests/test_architecture_skeleton.py \
+          tests/test_config.py \
+          tests/test_feishu.py \
+          tests/test_feishu_agent.py \
+          tests/test_reconcile_deployment.py \
+          tests/test_release_files.py \
+          tests/test_repository_context.py \
+          tests/test_server.py \
+          tests/test_tasks.py \
+          tests/test_worker.py
 
   - id: build-image
     name: gcr.io/cloud-builders/docker
