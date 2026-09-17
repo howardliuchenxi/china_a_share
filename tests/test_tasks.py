@@ -144,6 +144,26 @@ def test_task_coordinator_dispatches_each_submission_as_a_new_task():
     assert coordinator.get(second.task_id).status == AnalysisTaskStatus.SUCCEEDED
 
 
+def test_task_coordinator_reuses_caller_supplied_task_id_and_request():
+    store = MemoryAnalysisTaskStore()
+    dispatcher = FakeDispatcher()
+    coordinator = AnalysisTaskCoordinator(store, dispatcher)
+    request = AnalysisRequest(prompt="Rank A-share companies by retail ownership.")
+
+    first = coordinator.submit(request, task_id="stable-task")
+    repeated = coordinator.submit(request, task_id="stable-task")
+
+    assert repeated == first
+    assert dispatcher.task_ids == ["stable-task", "stable-task"]
+    assert store.get("stable-task").request == request
+
+    with pytest.raises(ValueError, match="already in use"):
+        coordinator.submit(
+            AnalysisRequest(prompt="A different request."),
+            task_id="stable-task",
+        )
+
+
 def test_task_coordinator_coalesces_rapid_progress_updates(monkeypatch):
     store = CountingMemoryAnalysisTaskStore()
     coordinator = AnalysisTaskCoordinator(store, FakeDispatcher())

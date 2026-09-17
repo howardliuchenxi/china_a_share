@@ -26,6 +26,7 @@ from china_a_share.core.contracts import (
     ServiceError,
 )
 from china_a_share.core.ports import AnalysisTaskDispatcher, AnalysisTaskStore
+from china_a_share.feishu_agent import FeishuAgentTask
 
 
 ANALYSIS_TASK_PREFIX = "analysis-jobs"
@@ -48,16 +49,22 @@ class MemoryAnalysisTaskStore:
     """Store isolated task records in memory for local tests."""
 
     def __init__(self) -> None:
-        self._tasks: Dict[str, Union[AnalysisTask, DiscoveryTask]] = {}
+        self._tasks: Dict[
+            str, Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
+        ] = {}
         self._lock = Lock()
 
-    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
+    def get(
+        self, task_id: str
+    ) -> Optional[Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]]:
         """Return an isolated copy of one task."""
         with self._lock:
             task = self._tasks.get(task_id)
             return task.model_copy(deep=True) if task else None
 
-    def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
+    def put(
+        self, task: Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
+    ) -> None:
         """Create or replace one task atomically."""
         with self._lock:
             self._tasks[task.task_id] = task.model_copy(deep=True)
@@ -75,17 +82,23 @@ class CloudStorageAnalysisTaskStore:
         self._write_schedule: Dict[str, float] = {}
         self._write_schedule_lock = Lock()
 
-    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
+    def get(
+        self, task_id: str
+    ) -> Optional[Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]]:
         """Return one persisted task when its object exists."""
         blob = self._bucket.blob(self._object_name(task_id))
         if not blob.exists():
             return None
         data = json.loads(blob.download_as_text())
+        if data.get("task_type") == "feishu_agent":
+            return FeishuAgentTask.model_validate(data)
         if data.get("task_type") == "discovery":
             return DiscoveryTask.model_validate(data)
         return AnalysisTask.model_validate(data)
 
-    def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
+    def put(
+        self, task: Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
+    ) -> None:
         """Replace one complete task record."""
         object_name = self._object_name(task.task_id)
         self._wait_for_write_slot(object_name)
@@ -178,9 +191,31 @@ class AnalysisTaskCoordinator:
         self._store = store
         self._dispatcher = dispatcher
 
-    def submit(self, request: AnalysisRequest) -> AnalysisTaskSubmission:
-        """Persist and dispatch one new analysis task for every submission."""
-        task_id = uuid4().hex
+    @property
+    def store(self) -> AnalysisTaskStore:
+        """Return the shared durable store for alternate task runtimes."""
+        return self._store
+
+    @property
+    def dispatcher(self) -> AnalysisTaskDispatcher:
+        """Return the configured asynchronous worker dispatcher."""
+        return self._dispatcher
+
+    def submit(
+        self,
+        request: AnalysisRequest,
+        *,
+        task_id: Optional[str] = None,
+    ) -> AnalysisTaskSubmission:
+        """Persist and dispatch a new or idempotently retried analysis task."""
+        task_id = task_id or uuid4().hex
+        existing = self._store.get(task_id)
+        if existing is not None:
+            if not isinstance(existing, AnalysisTask) or existing.request != request:
+                raise ValueError(f"Analysis task identifier is already in use: {task_id}")
+            if existing.status == AnalysisTaskStatus.QUEUED:
+                self._dispatch_analysis_task(existing)
+            return self._submission(existing)
         now = datetime.now(timezone.utc)
         task = AnalysisTask(
             task_id=task_id,
@@ -190,16 +225,22 @@ class AnalysisTaskCoordinator:
             updated_at=now,
         )
         self._store.put(task)
+        self._dispatch_analysis_task(task)
+        return self._submission(task)
+
+    def _dispatch_analysis_task(self, task: AnalysisTask) -> None:
+        """Dispatch one persisted task and retain a visible failure state."""
         try:
-            self._dispatcher.dispatch(task_id)
+            self._dispatcher.dispatch(task.task_id)
         except Exception as exc:
-            logger.exception("analysis_task_dispatch_failed task_id=%s", task_id)
+            logger.exception(
+                "analysis_task_dispatch_failed task_id=%s", task.task_id
+            )
             task.status = AnalysisTaskStatus.FAILED
             task.updated_at = datetime.now(timezone.utc)
             task.error = ServiceError(source="system", message=str(exc))
             self._store.put(task)
             raise
-        return self._submission(task)
 
     def submit_discovery(self, request: DiscoveryTaskRequest) -> AnalysisTaskSubmission:
         """Persist and dispatch one new discovery task for every submission."""
@@ -266,7 +307,10 @@ class AnalysisTaskCoordinator:
         task = self._store.get(task_id)
         if task is None:
             raise KeyError(f"Analysis task does not exist: {task_id}")
-        if task.status == AnalysisTaskStatus.SUCCEEDED:
+        if task.status in {
+            AnalysisTaskStatus.RUNNING,
+            AnalysisTaskStatus.SUCCEEDED,
+        }:
             return task
 
         task.status = AnalysisTaskStatus.RUNNING

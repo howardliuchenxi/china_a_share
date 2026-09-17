@@ -195,23 +195,33 @@ Open [http://127.0.0.1:5173/analysis](http://127.0.0.1:5173/analysis) or
 ## Feishu research bot
 
 The backend can receive signed Feishu custom-app events at
-`/api/integrations/feishu/events`. The bot uses an independent conversational
-research layer and reuses only the provider-neutral market-data port, Tushare
-adapter, and cache. It does not depend on the web application's general query
-planning workflow. Each supported question compiles into a registered,
-deterministic research tool before any market-data call. Completed turns are
-isolated by tenant, chat, thread, and user, and only the three most recent
-validated tool arguments are retained as follow-up context.
+`/api/integrations/feishu/events`. Each research message creates an independent
+durable agent task and immediately returns its task identifier instead of
+running long research inside the callback request. The worker uses DeepSeek V4
+Pro with an allowlisted read-only Tushare toolbox, deterministic dataframe
+transformations, and bounded tool-call rounds. It proactively replies at
+material stages and posts the terminal answer. Results with more than ten rows,
+or explicit export requests, can produce a two-sheet Excel workbook that is
+uploaded back to the originating Feishu message.
+
+Users can send `查看进度` (optionally followed by a task identifier) to inspect
+queued, running, succeeded, or failed state, and `重试` to resubmit a failed
+turn. Named sessions within the same group or private chat are managed with
+`新建会话 <名称>`, `会话列表`, and `切换会话 <名称或编号>`. Tasks in one named
+session may run concurrently. Completed turns are isolated by tenant, chat,
+thread, user, and named session, and up to twelve completed exchanges are
+retained as follow-up context. The legacy validated analysis workflow remains
+available in code as a rollback path but is not the default Feishu runtime.
 
 The callback validates the Feishu request signature before decrypting AES-256-CBC
 event envelopes. Plaintext bodies remain supported for local integration tests.
 
-The first registered chat tool calculates monthly next-session outcomes after
-the first formation of two consecutive closing limit-ups. It uses Tushare's
-native limit list, supports one-price-board inclusion or exclusion, and returns
-sample counts with gain probability, mean return, and median return. Unsupported
-questions fail with a visible capability boundary instead of falling through to
-the web planner.
+Feishu V2 bypasses the web application's `AnalysisService`. It reuses only the
+provider catalog, audited Tushare adapter, and deterministic result-pipeline
+executor. Feishu event claims, event-to-task mappings, named sessions,
+conversation task pointers, and completed context are persisted so callback
+retries do not create duplicate tasks and instance replacement cannot silently
+lose an accepted request.
 
 Configure these additional secrets before enabling the callback:
 
@@ -225,9 +235,9 @@ FEISHU_ALLOWED_OPEN_IDS=
 
 The Feishu application's published availability range is the primary user
 boundary. `FEISHU_ALLOWED_OPEN_IDS` is an optional comma-separated second
-allowlist for deployments that need a narrower boundary. Conversation objects
-and event idempotency markers are stored privately under the existing Cloud
-Storage cache bucket.
+allowlist for deployments that need a narrower boundary. Conversation objects,
+task linkages, and event idempotency markers are stored privately under the
+existing Cloud Storage cache bucket.
 
 ## Deploy to Google Cloud Run
 

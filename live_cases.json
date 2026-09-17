@@ -1523,6 +1523,17 @@
       "source": "reported_regression"
     },
     {
+      "id": "feishu-retail-ranking-task",
+      "name": "feishu_retail_ranking_task",
+      "family": "reported_regression",
+      "prompt": "A股散户前10股票有哪些",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [],
+      "quality_invariants": [],
+      "source": "reported_regression"
+    },
+    {
       "id": "holder-concentration-derived-field-contract-repair",
       "name": "holder_concentration_derived_field_contract_repair",
       "family": "reported_regression",
