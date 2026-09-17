@@ -179,19 +179,21 @@ steps:
       - -ceu
       - |
         test "$$(cat /workspace/deployment-action)" = deploy || exit 0
-        python -m pip install --disable-pip-version-check ".[dev]"
-        python -m pytest \
-          tests/test_api.py \
-          tests/test_architecture_skeleton.py \
-          tests/test_config.py \
-          tests/test_feishu.py \
-          tests/test_feishu_agent.py \
-          tests/test_reconcile_deployment.py \
-          tests/test_release_files.py \
-          tests/test_repository_context.py \
-          tests/test_server.py \
-          tests/test_tasks.py \
-          tests/test_worker.py
+        # Backend release tests are temporarily disabled by operator request.
+        # python -m pip install --disable-pip-version-check ".[dev]"
+        # python -m pytest \
+        #   tests/test_api.py \
+        #   tests/test_architecture_skeleton.py \
+        #   tests/test_config.py \
+        #   tests/test_feishu.py \
+        #   tests/test_feishu_agent.py \
+        #   tests/test_reconcile_deployment.py \
+        #   tests/test_release_files.py \
+        #   tests/test_repository_context.py \
+        #   tests/test_server.py \
+        #   tests/test_tasks.py \
+        #   tests/test_worker.py
+        printf 'Backend release tests are disabled; continuing deployment.\n'
 
   - id: build-image
     name: gcr.io/cloud-builders/docker

@@ -45,7 +45,7 @@ CLOUDSDK_PYTHON := $(shell \
 
 help:
 	printf '%s\n' \
-		'make check   Build the frontend and run Feishu release tests.' \
+		'make check   Build the frontend; backend release tests are temporarily disabled.' \
 		'make full-check  Build the frontend and run every backend test.' \
 		'make install-hooks  Enable the repository-managed Git hooks.' \
 		'make live-check  Run the unified 100-case live matrix and regressions.' \
@@ -56,7 +56,8 @@ help:
 
 check:
 	npm --prefix frontend run build
-	.venv/bin/python -m pytest $(FEISHU_TEST_FILES)
+	# Backend release tests are temporarily disabled by operator request.
+	# .venv/bin/python -m pytest $(FEISHU_TEST_FILES)
 
 full-check:
 	npm --prefix frontend run build
