@@ -117,6 +117,11 @@ Add the three credentials and the private cache bucket:
 TUSHARE_TOKEN=your_real_token
 DEEPSEEK_API_KEY=your_real_key
 ZAI_API_KEY=your_real_zai_key
+LLM_BASE_URL=https://your-openai-compatible-api.example/v1
+LLM_MODEL=your_model_identifier
+LLM_API_KEY=your_model_api_key
+LLM_API_SECRET=
+RESEARCH_SANDBOX_URL=https://your-private-sandbox.example
 TUSHARE_CACHE_BUCKET=your_private_cache_bucket
 ```
 
@@ -197,9 +202,13 @@ Open [http://127.0.0.1:5173/analysis](http://127.0.0.1:5173/analysis) or
 The backend can receive signed Feishu custom-app events at
 `/api/integrations/feishu/events`. Each research message creates an independent
 durable agent task and immediately returns its task identifier instead of
-running long research inside the callback request. The worker uses DeepSeek V4
-Pro with an allowlisted read-only Tushare toolbox, deterministic dataframe
-transformations, and bounded tool-call rounds. It proactively replies at
+running long research inside the callback request. The worker uses a configured
+OpenAI-compatible model with an allowlisted read-only Tushare toolbox,
+deterministic dataframe transformations, and a private secretless Python
+sandbox for calculations that cannot be represented by structured operations.
+The model transport is configured through `LLM_BASE_URL`, `LLM_MODEL`,
+`LLM_API_KEY`, and the optional `LLM_API_SECRET`; changing compatible models
+does not change the agent or research tools. The worker proactively replies at
 material stages and posts the terminal answer. Results with more than ten rows,
 or explicit export requests, can produce a two-sheet Excel workbook that is
 uploaded back to the originating Feishu message.
@@ -260,8 +269,10 @@ Recommended initial Cloud Run settings:
 - Request timeout: 300 seconds
 - Health endpoint: `/api/health`
 
-Store `TUSHARE_TOKEN`, `DEEPSEEK_API_KEY`, and `ZAI_API_KEY` in Secret
-Manager and expose them to the service as environment variables. Configure
+Store `TUSHARE_TOKEN`, the legacy `DEEPSEEK_API_KEY`, `LLM_API_KEY`, and
+`ZAI_API_KEY` in Secret Manager and expose them to the service as environment
+variables. `LLM_API_SECRET` is optional and should also use Secret Manager when
+the selected gateway requires it. Configure
 `TUSHARE_CACHE_BUCKET` as a plain environment variable because it is a resource
 identifier, not a secret.
 Do not upload `.env`; it is excluded from Git, the Docker build context, and the
@@ -279,10 +290,10 @@ make release
 ```
 
 `make deploy` accepts only a clean local `main` whose commit exactly matches
-`origin/main`. It builds the frontend, runs the backend test suite, deploys that
-commit to the existing Cloud Run service, records the full Git commit in the
-service and worker environments, updates the asynchronous analysis Cloud Run
-Job to the same immutable image, reapplies its job-scoped IAM and task lifecycle
+`origin/main`. It builds the frontend, deploys that commit to the existing Cloud
+Run service, records the full Git commit in the service and worker environments,
+updates the private research sandbox and asynchronous analysis Cloud Run Job to
+the same immutable image, reapplies their scoped IAM and task lifecycle
 policy, verifies 100% traffic and the public health endpoint, and updates
 `docs/gcp-resources.md` with the live revision, Git source, and storage usage.
 

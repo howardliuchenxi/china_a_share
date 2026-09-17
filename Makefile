@@ -8,6 +8,11 @@ ANALYSIS_JOB := china-a-share-analysis-worker
 ANALYSIS_JOB_TIMEOUT := 2h
 SERVICE_URL := https://china-a-share-lab-1079739428171.asia-east2.run.app
 RUNTIME_SERVICE_ACCOUNT := china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com
+SANDBOX_SERVICE := china-a-share-research-sandbox
+SANDBOX_URL := https://china-a-share-research-sandbox-1079739428171.asia-east2.run.app
+SANDBOX_SERVICE_ACCOUNT := china-a-share-sandbox@china-a-share-lab.iam.gserviceaccount.com
+LLM_BASE_URL := https://api.deepseek.com
+LLM_MODEL := deepseek-v4-pro
 CACHE_BUCKET := china-a-share-lab-cache-asia-east2
 SOURCE_BUCKET := run-sources-china-a-share-lab-asia-east2
 TARGET_BRANCH := main
@@ -94,14 +99,37 @@ deploy: check
 		--concurrency 4 \
 		--timeout 300 \
 		--service-account "$(RUNTIME_SERVICE_ACCOUNT)" \
-		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)",ADMIN_EMAIL="$(ADMIN_EMAIL)",GOOGLE_OAUTH_CLIENT_ID="$(GOOGLE_OAUTH_CLIENT_ID)",GITHUB_FIX_REPO="$(GITHUB_FIX_REPO)",FEISHU_APP_ID="$(FEISHU_APP_ID)" \
-		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest \
+		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)",ADMIN_EMAIL="$(ADMIN_EMAIL)",GOOGLE_OAUTH_CLIENT_ID="$(GOOGLE_OAUTH_CLIENT_ID)",GITHUB_FIX_REPO="$(GITHUB_FIX_REPO)",FEISHU_APP_ID="$(FEISHU_APP_ID)",LLM_BASE_URL="$(LLM_BASE_URL)",LLM_MODEL="$(LLM_MODEL)",RESEARCH_SANDBOX_URL="$(SANDBOX_URL)" \
+		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,LLM_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest \
 		--quiet
 	image="$$(CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run services describe "$(SERVICE)" \
 		--project "$(PROJECT_ID)" \
 		--region "$(REGION)" \
 		--format='value(spec.template.spec.containers[0].image)')"; \
 	test -n "$$image" || { echo "The deployed service did not expose a container image." >&2; exit 1; }; \
+	CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run deploy "$(SANDBOX_SERVICE)" \
+		--image "$$image" \
+		--project "$(PROJECT_ID)" \
+		--region "$(REGION)" \
+		--no-allow-unauthenticated \
+		--cpu 1 \
+		--memory 2Gi \
+		--min 0 \
+		--max 1 \
+		--concurrency 1 \
+		--timeout 45 \
+		--service-account "$(SANDBOX_SERVICE_ACCOUNT)" \
+		--command python \
+		--args=-m,uvicorn,china_a_share.sandbox_server:app,--host,0.0.0.0,--port,8080 \
+		--clear-env-vars \
+		--clear-secrets \
+		--quiet; \
+	CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run services add-iam-policy-binding "$(SANDBOX_SERVICE)" \
+		--project "$(PROJECT_ID)" \
+		--region "$(REGION)" \
+		--member "serviceAccount:$(RUNTIME_SERVICE_ACCOUNT)" \
+		--role roles/run.invoker \
+		--quiet; \
 	CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run jobs deploy "$(ANALYSIS_JOB)" \
 		--image "$$image" \
 		--project "$(PROJECT_ID)" \
@@ -115,8 +143,8 @@ deploy: check
 		--cpu 1 \
 		--memory 4Gi \
 		--service-account "$(RUNTIME_SERVICE_ACCOUNT)" \
-		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)",FEISHU_APP_ID="$(FEISHU_APP_ID)" \
-		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,FEISHU_APP_SECRET=feishu-app-secret:latest \
+		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)",FEISHU_APP_ID="$(FEISHU_APP_ID)",LLM_BASE_URL="$(LLM_BASE_URL)",LLM_MODEL="$(LLM_MODEL)",RESEARCH_SANDBOX_URL="$(SANDBOX_URL)" \
+		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,LLM_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,FEISHU_APP_SECRET=feishu-app-secret:latest \
 		--quiet
 	CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run jobs add-iam-policy-binding "$(ANALYSIS_JOB)" \
 		--project "$(PROJECT_ID)" \
@@ -142,6 +170,11 @@ deploy: check
 		sleep "$(DEPLOY_VERIFY_DELAY_SECONDS)"; \
 	done; \
 	test "$$traffic" = "100" || { echo "Deployment verification failed: latest traffic is $$traffic%, expected 100%." >&2; exit 1; }; \
+	sandbox_ready="$$(CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run services describe "$(SANDBOX_SERVICE)" \
+		--project "$(PROJECT_ID)" \
+		--region "$(REGION)" \
+		--format='value(status.conditions[0].status)')"; \
+	test "$$sandbox_ready" = "True" || { echo "Research sandbox is not ready: $$sandbox_ready." >&2; exit 1; }; \
 	curl --fail --silent --show-error "$(SERVICE_URL)/api/health"; \
 	printf '\n'; \
 	source_size="$$(CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" storage du --summarize "gs://$(SOURCE_BUCKET)" --project "$(PROJECT_ID)" | awk '{print $$1}')"; \

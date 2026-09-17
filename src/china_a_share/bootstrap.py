@@ -47,6 +47,8 @@ from china_a_share.feishu_agent import (
     FeishuAgentCoordinator,
     FeishuAgentRuntime,
 )
+from china_a_share.model_client import OpenAICompatibleChatModel
+from china_a_share.research_sandbox import RemotePythonSandbox
 
 
 def create_analysis_service(settings: Settings) -> AnalysisService:
@@ -112,9 +114,27 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
 
 def create_feishu_agent_runtime(settings: Settings) -> FeishuAgentRuntime:
     """Assemble the independent Feishu agent around read-only provider tools."""
+    required_settings = {
+        "LLM_BASE_URL": settings.llm_base_url,
+        "LLM_MODEL": settings.llm_model,
+        "LLM_API_KEY": settings.llm_api_key,
+        "RESEARCH_SANDBOX_URL": settings.research_sandbox_url,
+    }
+    missing = [name for name, value in required_settings.items() if not value]
+    if missing:
+        raise ConfigurationError(
+            "Feishu research agent is missing required settings: "
+            + ", ".join(missing)
+        )
     return FeishuAgentRuntime(
-        settings.deepseek_api_key,
+        OpenAICompatibleChatModel(
+            settings.llm_base_url,
+            settings.llm_model,
+            settings.llm_api_key,
+            api_secret=settings.llm_api_secret,
+        ),
         _create_data_provider(settings),
+        python_sandbox=RemotePythonSandbox(settings.research_sandbox_url),
     )
 
 

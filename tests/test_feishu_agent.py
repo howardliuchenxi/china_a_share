@@ -9,17 +9,17 @@ from china_a_share.bootstrap import create_feishu_agent_runtime
 from china_a_share.config import Settings
 from china_a_share.core.contracts import AnalysisTaskStatus, QueryResult, QueryStatus
 from china_a_share.feishu_agent import (
-    DEEPSEEK_AGENT_MODEL,
     FeishuAgentCoordinator,
     FeishuAgentOutcome,
     FeishuAgentRequest,
     FeishuAgentRuntime,
     FeishuAgentTask,
+    MAX_AGENT_ROUNDS,
     ResearchToolbox,
-    _requires_recent_market_return_tool,
     build_research_workbook,
 )
 from china_a_share.feishu import FeishuOpenApiClient
+from china_a_share.model_client import OpenAICompatibleChatModel
 from china_a_share.tasks import MemoryAnalysisTaskStore
 
 
@@ -115,28 +115,57 @@ class RecentReturnProvider:
                 ]
             )
         assert operation == "daily"
-        trade_date = params["trade_date"]
-        first_change, second_change = {
+        changes = {
             "20260914": (1.0, 3.0),
             "20260915": (2.0, -1.0),
             "20260916": (3.0, 1.0),
-        }[trade_date]
-        return pd.DataFrame(
-            [
-                {
-                    "ts_code": "000001.SZ",
-                    "trade_date": trade_date,
-                    "close": 10.0,
-                    "pct_chg": first_change,
-                },
-                {
-                    "ts_code": "600000.SH",
-                    "trade_date": trade_date,
-                    "close": 12.0,
-                    "pct_chg": second_change,
-                },
-            ]
+        }
+        trade_dates = (
+            [params["trade_date"]]
+            if "trade_date" in params
+            else list(changes)
         )
+        rows = []
+        for trade_date in trade_dates:
+            first_change, second_change = changes[trade_date]
+            rows.extend(
+                [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": trade_date,
+                        "close": 10.0,
+                        "pct_chg": first_change,
+                    },
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": trade_date,
+                        "close": 12.0,
+                        "pct_chg": second_change,
+                    },
+                ]
+            )
+        return pd.DataFrame(rows)
+
+
+class RecordingPythonSandbox:
+    def __init__(self):
+        self.calls = []
+
+    def run(self, code, datasets):
+        self.calls.append((code, datasets))
+        daily = datasets["dataset_1"].copy()
+        daily["pct_chg"] = pd.to_numeric(daily["pct_chg"])
+        selected_dates = sorted(daily["trade_date"].unique())[-3:]
+        selected = daily.loc[daily["trade_date"].isin(selected_dates)]
+        result = (
+            selected.groupby("ts_code")["pct_chg"]
+            .apply(lambda values: ((1 + values / 100).prod() - 1) * 100)
+            .rename("period_return_pct")
+            .reset_index()
+            .sort_values("period_return_pct", ascending=False)
+            .head(1)
+        )
+        return result
 
 
 class RecordingDispatcher:
@@ -230,10 +259,15 @@ def test_agent_runtime_uses_tools_and_exports_complete_excel():
     )
     progress = []
 
-    outcome = FeishuAgentRuntime(
+    model = OpenAICompatibleChatModel(
+        "https://model.example/v1",
+        "research-model",
         "test-key",
-        FakeProvider(),
         session=session,
+    )
+    outcome = FeishuAgentRuntime(
+        model,
+        FakeProvider(),
     ).run(
         FeishuAgentRequest(
             prompt="导出最近交易日收盘价 Excel",
@@ -251,74 +285,104 @@ def test_agent_runtime_uses_tools_and_exports_complete_excel():
     assert workbook["Results"]["B6"].value == 10.25
     assert workbook["Methodology"]["B4"].value == "test-provider"
     assert [call[1]["json"]["model"] for call in session.calls] == [
-        DEEPSEEK_AGENT_MODEL,
-        DEEPSEEK_AGENT_MODEL,
-        DEEPSEEK_AGENT_MODEL,
+        "research-model",
+        "research-model",
+        "research-model",
     ]
+    assert all(
+        call[0] == "https://model.example/v1/chat/completions"
+        for call in session.calls
+    )
     assert {stage for stage, _message in progress} == {"querying", "exporting"}
 
 
-@pytest.mark.parametrize(
-    "prompt, expected",
-    [
-        ("查出最近5个交易日累计涨幅最大的个股", True),
-        ("近10个交易日跌幅最低的A股排行", True),
-        ("最近5个交易日A股涨幅排名", False),
-        ("查询贵州茅台最近5个交易日收盘价", False),
-        ("查出今年累计涨幅最大的个股", False),
-    ],
-)
-def test_recent_market_return_tool_selection_covers_ranking_intent(prompt, expected):
-    assert _requires_recent_market_return_tool(prompt) is expected
+def test_agent_runtime_synthesizes_answer_after_tool_budget_is_exhausted():
+    class LoopingModel:
+        model = "looping-model"
 
+        def __init__(self):
+            self.calls = 0
 
-def test_agent_runtime_executes_bounded_tool_for_recent_market_ranking():
-    session = SequenceSession([])
+        def complete(self, messages, tools):
+            self.calls += 1
+            if not tools:
+                return {
+                    "role": "assistant",
+                    "content": "已根据现有数据完成回答。",
+                }
+            return {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": f"call-{self.calls}",
+                        "type": "function",
+                        "function": {
+                            "name": "query_market_data",
+                            "arguments": (
+                                '{"operation":"daily","params":'
+                                '{"trade_date":"20260916"},'
+                                '"fields":["ts_code","close"]}'
+                            ),
+                        },
+                    }
+                ],
+            }
 
-    outcome = FeishuAgentRuntime(
-        "test-key",
-        RecentReturnProvider(),
-        session=session,
-    ).run(
+    model = LoopingModel()
+
+    outcome = FeishuAgentRuntime(model, FakeProvider()).run(
         FeishuAgentRequest(
-            prompt="查出最近3个交易日累计涨幅最大的个股",
-            conversation_id="test:recent-return",
-            source_message_id="message-1",
+            prompt="查询行情。",
+            conversation_id="conversation",
+            source_message_id="message",
         ),
         lambda _stage, _message: None,
     )
 
-    assert "000001.SZ" in outcome.answer
-    assert "6.11%" in outcome.answer
-    assert "并非复权价格收益" in outcome.answer
-    assert session.calls == []
+    assert outcome.answer == "已根据现有数据完成回答。"
+    assert model.calls == MAX_AGENT_ROUNDS + 1
 
 
-@pytest.mark.parametrize("direction", ["asc", "desc"])
-def test_recent_market_return_tool_compounds_complete_trading_sessions(direction):
+def test_generic_query_and_python_sandbox_replace_prompt_specific_ranking_tool():
     progress = []
+    sandbox = RecordingPythonSandbox()
+    toolbox = ResearchToolbox(
+        RecentReturnProvider(),
+        "request-1",
+        python_sandbox=sandbox,
+    )
 
-    payload = ResearchToolbox(RecentReturnProvider(), "request-1").call(
-        "rank_recent_market_return",
+    daily = toolbox.call(
+        "query_market_data",
         {
-            "trading_sessions": 3,
-            "direction": direction,
-            "limit": 1,
-            "end_date": "20260916",
+            "operation": "daily",
+            "params": {"start_date": "20260901", "end_date": "20260916"},
+            "fields": ["ts_code", "trade_date", "close", "pct_chg"],
+        },
+        lambda stage, message: progress.append((stage, message)),
+    )
+    payload = toolbox.call(
+        "run_python_analysis",
+        {
+            "dataset_ids": [daily["dataset_id"]],
+            "code": (
+                'daily = datasets["dataset_1"].copy()\n'
+                'result = daily.groupby("ts_code")["pct_chg"].sum().reset_index()'
+            ),
         },
         lambda stage, message: progress.append((stage, message)),
     )
 
     assert payload["row_count"] == 1
     row = payload["preview"][0]
-    expected_code = "000001.SZ" if direction == "desc" else "600000.SH"
-    assert row["ts_code"] == expected_code
-    assert row["start_trade_date"] == "20260914"
-    assert row["end_trade_date"] == "20260916"
-    assert row["trading_session_count"] == 3
-    assert row["name"]
-    assert payload["calculation"] == "compound_daily_pct_chg"
-    assert "not an adjusted-price return" in payload["methodology"]
+    assert row["ts_code"] == "000001.SZ"
+    assert row["period_return_pct"] == pytest.approx(6.1106)
+    assert sandbox.calls[0][0].startswith('daily = datasets["dataset_1"]')
+    assert set(sandbox.calls[0][1]) == {"dataset_1"}
+    assert "rank_recent_market_return" not in {
+        definition["function"]["name"] for definition in toolbox.definitions
+    }
     assert {stage for stage, _message in progress} == {"querying", "calculating"}
 
 
@@ -440,7 +504,7 @@ def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
 @pytest.mark.live
 @pytest.mark.skipif(
     os.getenv("RUN_LIVE_ANALYSIS") != "1",
-    reason="Set RUN_LIVE_ANALYSIS=1 to call DeepSeek and Tushare.",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
 )
 def test_live_feishu_agent_answers_one_historical_price_question():
     runtime = create_feishu_agent_runtime(Settings.from_env())
@@ -464,7 +528,7 @@ def test_live_feishu_agent_answers_one_historical_price_question():
 @pytest.mark.live
 @pytest.mark.skipif(
     os.getenv("RUN_LIVE_ANALYSIS") != "1",
-    reason="Set RUN_LIVE_ANALYSIS=1 to call DeepSeek and Tushare.",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
 )
 def test_live_feishu_agent_answers_reported_five_day_return_ranking():
     runtime = create_feishu_agent_runtime(Settings.from_env())

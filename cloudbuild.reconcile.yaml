@@ -215,6 +215,46 @@ steps:
         test "$$(cat /workspace/deployment-action)" = deploy || exit 0
         docker push "${_IMAGE_REPOSITORY}/${_SERVICE}:$COMMIT_SHA"
 
+  - id: deploy-research-sandbox
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
+        gcloud run deploy "${_SANDBOX_SERVICE}" \
+          --image "${_IMAGE_REPOSITORY}/${_SERVICE}:$COMMIT_SHA" \
+          --project "$PROJECT_ID" \
+          --region "${_REGION}" \
+          --no-allow-unauthenticated \
+          --cpu 1 \
+          --memory 2Gi \
+          --min 0 \
+          --max 1 \
+          --concurrency 1 \
+          --timeout 45 \
+          --service-account "${_SANDBOX_SERVICE_ACCOUNT}" \
+          --command python \
+          --args=-m,uvicorn,china_a_share.sandbox_server:app,--host,0.0.0.0,--port,8080 \
+          --clear-env-vars \
+          --clear-secrets \
+          --quiet
+        gcloud run services add-iam-policy-binding "${_SANDBOX_SERVICE}" \
+          --project "$PROJECT_ID" \
+          --region "${_REGION}" \
+          --member "serviceAccount:${_RUNTIME_SERVICE_ACCOUNT}" \
+          --role roles/run.invoker \
+          --quiet
+        sandbox_url="$$(gcloud run services describe "${_SANDBOX_SERVICE}" \
+          --project "$PROJECT_ID" \
+          --region "${_REGION}" \
+          --format='value(status.url)')"
+        test -n "$${sandbox_url}" || {
+          echo "Research sandbox did not expose a service URL." >&2
+          exit 1
+        }
+        printf '%s' "$${sandbox_url}" > /workspace/research-sandbox-url
+
   - id: deploy-service
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -235,8 +275,8 @@ steps:
           --concurrency 4 \
           --timeout 300 \
           --service-account "${_RUNTIME_SERVICE_ACCOUNT}" \
-          --set-env-vars "TUSHARE_CACHE_BUCKET=${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=${_REGION},ANALYSIS_JOB_NAME=${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA,ADMIN_EMAIL=${_ADMIN_EMAIL},GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID},GITHUB_FIX_REPO=${_GITHUB_REPOSITORY},FEISHU_APP_ID=${_FEISHU_APP_ID}" \
-          --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest" \
+          --set-env-vars "TUSHARE_CACHE_BUCKET=${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=${_REGION},ANALYSIS_JOB_NAME=${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA,ADMIN_EMAIL=${_ADMIN_EMAIL},GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID},GITHUB_FIX_REPO=${_GITHUB_REPOSITORY},FEISHU_APP_ID=${_FEISHU_APP_ID},LLM_BASE_URL=${_LLM_BASE_URL},LLM_MODEL=${_LLM_MODEL},RESEARCH_SANDBOX_URL=$$(cat /workspace/research-sandbox-url)" \
+          --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,LLM_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest" \
           --quiet
 
   - id: deploy-worker
@@ -259,8 +299,8 @@ steps:
           --cpu 1 \
           --memory 4Gi \
           --service-account "${_RUNTIME_SERVICE_ACCOUNT}" \
-          --set-env-vars "TUSHARE_CACHE_BUCKET=${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=${_REGION},ANALYSIS_JOB_NAME=${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA,FEISHU_APP_ID=${_FEISHU_APP_ID}" \
-          --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,FEISHU_APP_SECRET=feishu-app-secret:latest" \
+          --set-env-vars "TUSHARE_CACHE_BUCKET=${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=${_REGION},ANALYSIS_JOB_NAME=${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA,FEISHU_APP_ID=${_FEISHU_APP_ID},LLM_BASE_URL=${_LLM_BASE_URL},LLM_MODEL=${_LLM_MODEL},RESEARCH_SANDBOX_URL=$$(cat /workspace/research-sandbox-url)" \
+          --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,LLM_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,FEISHU_APP_SECRET=feishu-app-secret:latest" \
           --quiet
 
   - id: verify-deployment
@@ -284,12 +324,20 @@ steps:
           --project "$PROJECT_ID" \
           --region "${_REGION}" \
           --format="value(status.traffic.percent)")"
+        sandbox_ready="$$(gcloud run services describe "${_SANDBOX_SERVICE}" \
+          --project "$PROJECT_ID" \
+          --region "${_REGION}" \
+          --format="value(status.conditions[0].status)")"
         test "$${deployed_sha}" = "$COMMIT_SHA" || {
           echo "Production SHA $${deployed_sha} does not match $COMMIT_SHA." >&2
           exit 1
         }
         test "$${traffic}" = 100 || {
           echo "Latest revision traffic is $${traffic}%, expected 100%." >&2
+          exit 1
+        }
+        test "$${sandbox_ready}" = True || {
+          echo "Research sandbox is not ready: $${sandbox_ready}." >&2
           exit 1
         }
         curl --fail --silent --show-error "${_SERVICE_URL}/api/health"
@@ -371,6 +419,10 @@ substitutions:
   _SERVICE: china-a-share-lab
   _ANALYSIS_JOB: china-a-share-analysis-worker
   _RUNTIME_SERVICE_ACCOUNT: china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com
+  _SANDBOX_SERVICE: china-a-share-research-sandbox
+  _SANDBOX_SERVICE_ACCOUNT: china-a-share-sandbox@china-a-share-lab.iam.gserviceaccount.com
+  _LLM_BASE_URL: https://api.deepseek.com
+  _LLM_MODEL: deepseek-v4-pro
   _IMAGE_REPOSITORY: asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy
   _CACHE_BUCKET: china-a-share-lab-cache-asia-east2
   _SERVICE_URL: https://china-a-share-lab-1079739428171.asia-east2.run.app

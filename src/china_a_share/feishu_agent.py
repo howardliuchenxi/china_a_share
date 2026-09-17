@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
-import re
 import tempfile
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Protocol
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
-import requests
 
 from china_a_share.capabilities import resolve_query_shape
 from china_a_share.core.contracts import (
@@ -24,21 +21,14 @@ from china_a_share.core.contracts import (
     ResultPipeline,
     ServiceError,
 )
-from china_a_share.market_time import DAILY_PUBLICATION_COMPLETION_TIME
+from china_a_share.model_client import ChatModel
 from china_a_share.result_pipeline import ResultPipelineExecutor
 
 
-DEEPSEEK_AGENT_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_AGENT_MODEL = "deepseek-v4-pro"
-DEEPSEEK_AGENT_TIMEOUT_SECONDS = 180
-MAX_AGENT_ROUNDS = 12
+MAX_AGENT_ROUNDS = 16
+MAX_REPEATED_TOOL_CALLS = 2
 MAX_AGENT_PREVIEW_ROWS = 20
 MAX_AGENT_CONTEXT_TURNS = 12
-MAX_RECENT_RETURN_SESSIONS = 60
-RECENT_RETURN_CALENDAR_BUFFER_DAYS = 14
-RECENT_SESSION_PATTERN = re.compile(
-    r"(?:最近|近)\s*\d+\s*个?\s*(?:交易日|交易天)",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -134,6 +124,13 @@ class MarketDataProvider(Protocol):
         query_id: str,
     ) -> pd.DataFrame:
         """Execute one audited read-only provider query."""
+
+
+class PythonSandbox(Protocol):
+    """Execute restricted DataFrame programs outside the credentialed worker."""
+
+    def run(self, code: str, datasets: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
+        """Return one validated tabular result from isolated execution."""
 
 
 class FeishuAgentCoordinator:
@@ -259,21 +256,33 @@ class FeishuAgentOutcome(BaseModel):
 class ResearchToolbox:
     """Own audited datasets and deterministic transformations for one agent turn."""
 
-    def __init__(self, provider: MarketDataProvider, request_id: str) -> None:
+    def __init__(
+        self,
+        provider: MarketDataProvider,
+        request_id: str,
+        *,
+        python_sandbox: Optional[PythonSandbox] = None,
+    ) -> None:
+        """Store provider access and the optional secretless Python boundary."""
         self._provider = provider
         self._request_id = request_id
+        self._python_sandbox = python_sandbox
         self._datasets: Dict[str, QueryResult] = {}
+        self._data_query_attempted = False
         self.artifact_path: Optional[Path] = None
 
     @property
     def definitions(self) -> List[Dict[str, Any]]:
-        """Return the bounded function tools advertised to DeepSeek."""
-        return [
+        """Return provider-neutral research tools advertised to the model."""
+        definitions = [
             {
                 "type": "function",
                 "function": {
                     "name": "search_market_data",
-                    "description": "Find relevant allowlisted Tushare operations before querying.",
+                    "description": (
+                        "Find relevant read-only operations from the configured "
+                        "market-data provider before querying."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {"query": {"type": "string"}},
@@ -286,7 +295,10 @@ class ResearchToolbox:
                 "type": "function",
                 "function": {
                     "name": "query_market_data",
-                    "description": "Execute one read-only Tushare operation and retain the complete dataset.",
+                    "description": (
+                        "Execute one provider-supported read-only operation and retain "
+                        "the complete returned dataset for later calculations."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -295,47 +307,6 @@ class ResearchToolbox:
                             "fields": {"type": "array", "items": {"type": "string"}},
                         },
                         "required": ["operation", "params", "fields"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "rank_recent_market_return",
-                    "description": (
-                        "Rank all listed A-shares by compounded percentage return over "
-                        "the latest N completed market trading sessions. Use this tool "
-                        "for recent multi-session gain, loss, or return rankings; it "
-                        "compounds the provider's official daily pct_chg values and "
-                        "does not use an adjusted-price series or block-trade records."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "trading_sessions": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": MAX_RECENT_RETURN_SESSIONS,
-                            },
-                            "direction": {
-                                "type": "string",
-                                "enum": ["asc", "desc"],
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 1000,
-                            },
-                            "end_date": {
-                                "type": "string",
-                                "description": (
-                                    "Optional inclusive YYYYMMDD upper bound. Omit for "
-                                    "the latest completed market data."
-                                ),
-                            },
-                        },
-                        "required": ["trading_sessions", "direction", "limit"],
                         "additionalProperties": False,
                     },
                 },
@@ -412,6 +383,40 @@ class ResearchToolbox:
                 },
             },
         ]
+        if self._python_sandbox is not None:
+            definitions.insert(
+                -1,
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "run_python_analysis",
+                        "description": (
+                            "Run a restricted pandas/numpy DataFrame program in the "
+                            "independent secretless sandbox. Inputs are available as "
+                            "datasets[dataset_id], imports and external I/O are forbidden, "
+                            "and the final DataFrame must be assigned to result."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "dataset_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                },
+                                "code": {
+                                    "type": "string",
+                                    "maxLength": 12_000,
+                                },
+                            },
+                            "required": ["dataset_ids", "code"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+            )
+        return definitions
 
     def call(
         self,
@@ -429,6 +434,7 @@ class ResearchToolbox:
                 ]
             }
         if name == "query_market_data":
+            self._data_query_attempted = True
             operation = str(arguments["operation"])
             if not self._provider.supports(operation):
                 raise ValueError(f"Unsupported market-data operation: {operation}")
@@ -451,8 +457,6 @@ class ResearchToolbox:
             result = _frame_to_result(dataset_id, self._provider.name, operation, frame)
             self._datasets[dataset_id] = result
             return _result_payload(result)
-        if name == "rank_recent_market_return":
-            return self._rank_recent_market_return(arguments, progress)
         if name == "rank_dataset":
             progress("calculating", "正在执行排序与排名…")
             dataset_id = str(arguments["dataset_id"])
@@ -528,6 +532,37 @@ class ResearchToolbox:
             )
             self._datasets[result.query_id] = result
             return _result_payload(result)
+        if name == "run_python_analysis":
+            if self._python_sandbox is None:
+                raise ValueError("The independent Python sandbox is not configured.")
+            dataset_ids = [str(value) for value in arguments["dataset_ids"]]
+            if len(dataset_ids) != len(set(dataset_ids)):
+                raise ValueError("Python sandbox dataset identifiers must be unique.")
+            missing = [
+                dataset_id
+                for dataset_id in dataset_ids
+                if dataset_id not in self._datasets
+            ]
+            if missing:
+                raise ValueError(
+                    "Python sandbox references unknown datasets: "
+                    + ", ".join(missing)
+                )
+            progress("calculating", "正在安全沙箱中执行通用数据计算…")
+            output_id = f"dataset_{len(self._datasets) + 1}"
+            frames = {
+                dataset_id: pd.DataFrame(self._datasets[dataset_id].rows)
+                for dataset_id in dataset_ids
+            }
+            frame = self._python_sandbox.run(str(arguments["code"]), frames)
+            result = _frame_to_result(
+                output_id,
+                "research_sandbox",
+                "python_dataframe",
+                frame,
+            )
+            self._datasets[output_id] = result
+            return _result_payload(result)
         if name == "export_excel":
             dataset_id = str(arguments["dataset_id"])
             result = self._datasets.get(dataset_id)
@@ -542,214 +577,45 @@ class ResearchToolbox:
             return {"file_name": self.artifact_path.name, "row_count": result.row_count}
         raise ValueError(f"Unknown research tool: {name}")
 
-    def _rank_recent_market_return(
-        self,
-        arguments: Mapping[str, Any],
-        progress: Callable[[str, str], None],
-    ) -> Dict[str, Any]:
-        """Rank complete full-market returns over recent trading sessions."""
-        trading_sessions = int(arguments["trading_sessions"])
-        if not 1 <= trading_sessions <= MAX_RECENT_RETURN_SESSIONS:
-            raise ValueError(
-                "trading_sessions must be between 1 and "
-                f"{MAX_RECENT_RETURN_SESSIONS}."
+    def validate_outcome(self, answer: str) -> None:
+        """Reject unsupported terminal answers and corrupt generated artifacts."""
+        if not answer.strip():
+            raise RuntimeError("Research model returned an empty answer.")
+        if self._data_query_attempted and not self._datasets:
+            raise RuntimeError(
+                "Research model produced no validated dataset after requesting data."
             )
-        direction = str(arguments["direction"])
-        if direction not in {"asc", "desc"}:
-            raise ValueError("direction must be asc or desc.")
-        limit = int(arguments["limit"])
-        if not 1 <= limit <= 1000:
-            raise ValueError("limit must be between 1 and 1000.")
-
-        raw_end_date = str(arguments.get("end_date") or "").strip()
-        if raw_end_date:
-            try:
-                end_date = datetime.strptime(raw_end_date, "%Y%m%d").date()
-            except ValueError as exc:
-                raise ValueError("end_date must use YYYYMMDD format.") from exc
-        else:
-            beijing_now = datetime.now(ZoneInfo("Asia/Shanghai"))
-            end_date = beijing_now.date()
-            if beijing_now.time() < DAILY_PUBLICATION_COMPLETION_TIME:
-                end_date -= timedelta(days=1)
-        lookback_days = trading_sessions * 3 + RECENT_RETURN_CALENDAR_BUFFER_DAYS
-        start_date = end_date - timedelta(days=lookback_days)
-
-        if self._provider.supports("trade_cal"):
-            calendar = self._provider.query(
-                "trade_cal",
-                {
-                    "exchange": "SSE",
-                    "start_date": start_date.strftime("%Y%m%d"),
-                    "end_date": end_date.strftime("%Y%m%d"),
-                    "is_open": "1",
-                },
-                ["cal_date", "is_open"],
-                api_route="/feishu/agent/tools/recent-market-return",
-                request_id=self._request_id,
-                query_id="recent_market_calendar",
-            )
-            if "cal_date" not in calendar.columns:
-                raise ValueError("Trade calendar data is missing cal_date.")
-            if "is_open" in calendar.columns:
-                calendar = calendar.loc[
-                    pd.to_numeric(calendar["is_open"], errors="coerce") == 1
-                ]
-            candidate_dates = sorted(
-                str(value) for value in calendar["cal_date"].dropna().unique()
-                if start_date.strftime("%Y%m%d")
-                <= str(value)
-                <= end_date.strftime("%Y%m%d")
-            )
-        else:
-            candidate_dates = [
-                (start_date + timedelta(days=offset)).strftime("%Y%m%d")
-                for offset in range((end_date - start_date).days + 1)
-                if (start_date + timedelta(days=offset)).weekday() < 5
-            ]
-
-        progress("querying", "正在查询最近交易日的全市场日行情…")
-        session_frames: List[pd.DataFrame] = []
-        for trade_date in reversed(candidate_dates):
-            frame = self._provider.query(
-                "daily",
-                {"trade_date": trade_date},
-                ["ts_code", "trade_date", "close", "pct_chg"],
-                api_route="/feishu/agent/tools/recent-market-return",
-                request_id=self._request_id,
-                query_id=f"recent_market_daily_{trade_date}",
-            )
-            if frame.empty:
-                continue
-            session_frames.append(frame)
-            if len(session_frames) == trading_sessions:
-                break
-        if len(session_frames) < trading_sessions:
-            raise ValueError(
-                f"Only {len(session_frames)} completed trading sessions were "
-                f"available; {trading_sessions} are required."
-            )
-        # Querying one session at a time keeps every provider response bounded and
-        # avoids offset ceilings on otherwise valid full-market rankings.
-        daily_frame = pd.concat(reversed(session_frames), ignore_index=True)
-        required = {"ts_code", "trade_date", "close", "pct_chg"}
-        missing = required.difference(daily_frame.columns)
-        if missing:
-            raise ValueError(
-                "Daily market data is missing required fields: "
-                + ", ".join(sorted(missing))
-            )
-
-        normalized = daily_frame.copy()
-        normalized["trade_date"] = normalized["trade_date"].astype(str)
-        normalized["pct_chg"] = pd.to_numeric(
-            normalized["pct_chg"], errors="coerce"
-        )
-        normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
-        normalized = normalized.dropna(subset=["ts_code", "pct_chg", "close"])
-        selected_dates = sorted(normalized["trade_date"].unique())[
-            -trading_sessions:
-        ]
-        selected = normalized.loc[
-            normalized["trade_date"].isin(selected_dates)
-        ].copy()
-        session_counts = selected.groupby("ts_code")["trade_date"].nunique()
-        complete_codes = session_counts.loc[
-            session_counts == trading_sessions
-        ].index
-        selected = selected.loc[selected["ts_code"].isin(complete_codes)]
-        if selected.empty:
-            raise ValueError("No security has complete data for the selected sessions.")
-
-        progress("calculating", "正在复合计算区间涨跌幅并执行全市场排名…")
-        returns = (
-            selected.groupby("ts_code", sort=False)["pct_chg"]
-            .apply(lambda values: ((1.0 + values / 100.0).prod() - 1.0) * 100.0)
-            .rename("period_return_pct")
-            .reset_index()
-        )
-        latest_close = (
-            selected.sort_values("trade_date")
-            .groupby("ts_code", as_index=False)
-            .tail(1)
-            .loc[:, ["ts_code", "close"]]
-        )
-        ranked = returns.merge(latest_close, on="ts_code", validate="one_to_one")
-
-        progress("querying", "正在补充股票名称与行业信息…")
-        reference = self._provider.query(
-            "stock_basic",
-            {"list_status": "L"},
-            ["ts_code", "name", "industry"],
-            api_route="/feishu/agent/tools/recent-market-return",
-            request_id=self._request_id,
-            query_id="recent_market_reference",
-        )
-        if "ts_code" not in reference.columns:
-            raise ValueError("Stock reference data is missing ts_code.")
-        reference_fields = [
-            field for field in ("ts_code", "name", "industry")
-            if field in reference.columns
-        ]
-        ranked = ranked.merge(
-            reference.loc[:, reference_fields],
-            how="left",
-            on="ts_code",
-            validate="one_to_one",
-        )
-        ranked.insert(1, "start_trade_date", selected_dates[0])
-        ranked.insert(2, "end_trade_date", selected_dates[-1])
-        ranked.insert(3, "trading_session_count", trading_sessions)
-        ranked["period_return_pct"] = ranked["period_return_pct"].round(4)
-        ranked = ranked.sort_values(
-            ["period_return_pct", "ts_code"],
-            ascending=[direction == "asc", True],
-            kind="mergesort",
-        ).head(limit)
-        preferred_fields = [
-            "ts_code",
-            "name",
-            "industry",
-            "start_trade_date",
-            "end_trade_date",
-            "trading_session_count",
-            "close",
-            "period_return_pct",
-        ]
-        ranked = ranked.loc[
-            :, [field for field in preferred_fields if field in ranked.columns]
-        ]
-        dataset_id = f"dataset_{len(self._datasets) + 1}"
-        result = _frame_to_result(
-            dataset_id,
-            self._provider.name,
-            "recent_market_period_return",
-            ranked.reset_index(drop=True),
-        )
-        self._datasets[dataset_id] = result
-        payload = _result_payload(result)
-        payload["calculation"] = "compound_daily_pct_chg"
-        payload["methodology"] = (
-            "Compounded the official daily pct_chg values for every security with "
-            f"complete observations on all {trading_sessions} selected market "
-            "sessions. This is not an adjusted-price return series."
-        )
-        return payload
+        for result in self._datasets.values():
+            if result.row_count != len(result.rows):
+                raise RuntimeError(
+                    f"Dataset row-count validation failed: {result.query_id}"
+                )
+            if len(result.columns) != len(set(result.columns)):
+                raise RuntimeError(
+                    f"Dataset column validation failed: {result.query_id}"
+                )
+        if self.artifact_path is not None:
+            if (
+                not self.artifact_path.is_file()
+                or self.artifact_path.stat().st_size == 0
+            ):
+                raise RuntimeError("Generated research artifact failed validation.")
 
 
 class FeishuAgentRuntime:
-    """Run a bounded DeepSeek tool loop over audited market-data capabilities."""
+    """Run a provider-neutral tool loop over audited research capabilities."""
 
     def __init__(
         self,
-        api_key: str,
+        model: ChatModel,
         provider: MarketDataProvider,
         *,
-        session: Optional[requests.Session] = None,
+        python_sandbox: Optional[PythonSandbox] = None,
     ) -> None:
-        self._api_key = api_key
+        """Store the replaceable model, data provider, and optional sandbox."""
+        self._model = model
         self._provider = provider
-        self._session = session or requests.Session()
+        self._python_sandbox = python_sandbox
 
     def run(
         self,
@@ -757,34 +623,11 @@ class FeishuAgentRuntime:
         progress: Callable[[str, str], None],
     ) -> FeishuAgentOutcome:
         """Return a final answer after at most the configured tool-call rounds."""
-        toolbox = ResearchToolbox(self._provider, uuid4().hex)
-        recent_return_arguments = _recent_market_return_arguments(request.prompt)
-        if recent_return_arguments is not None:
-            result = toolbox.call(
-                "rank_recent_market_return",
-                recent_return_arguments,
-                progress,
-            )
-            if any(
-                token in request.prompt.casefold()
-                for token in ("excel", "xlsx", "表格")
-            ):
-                toolbox.call(
-                    "export_excel",
-                    {
-                        "dataset_id": result["dataset_id"],
-                        "title": "Recent A-share return ranking",
-                        "methodology": str(result["methodology"]),
-                    },
-                    progress,
-                )
-            return FeishuAgentOutcome(
-                answer=_format_recent_market_return_answer(
-                    recent_return_arguments,
-                    result,
-                ),
-                artifact_path=toolbox.artifact_path,
-            )
+        toolbox = ResearchToolbox(
+            self._provider,
+            uuid4().hex,
+            python_sandbox=self._python_sandbox,
+        )
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": _agent_system_prompt()},
         ]
@@ -792,36 +635,14 @@ class FeishuAgentRuntime:
             messages.append({"role": "user", "content": turn.prompt})
             messages.append({"role": "assistant", "content": turn.answer})
         messages.append({"role": "user", "content": request.prompt})
+        repeated_calls: Dict[str, int] = {}
 
         for _round in range(MAX_AGENT_ROUNDS):
-            response = self._session.post(
-                DEEPSEEK_AGENT_URL,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": DEEPSEEK_AGENT_MODEL,
-                    "messages": messages,
-                    "tools": toolbox.definitions,
-                    "tool_choice": "auto",
-                    "temperature": 0,
-                    "max_tokens": 8_000,
-                },
-                timeout=DEEPSEEK_AGENT_TIMEOUT_SECONDS,
-            )
-            if response.status_code >= 400:
-                raise RuntimeError(
-                    f"DeepSeek agent returned HTTP {response.status_code}: "
-                    f"{response.text[:500]}"
-                )
-            payload = response.json()
-            message = payload["choices"][0]["message"]
+            message = self._model.complete(messages, toolbox.definitions)
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
                 answer = str(message.get("content") or "").strip()
-                if not answer:
-                    raise RuntimeError("DeepSeek agent returned an empty answer.")
+                toolbox.validate_outcome(answer)
                 return FeishuAgentOutcome(
                     answer=answer,
                     artifact_path=toolbox.artifact_path,
@@ -830,10 +651,29 @@ class FeishuAgentRuntime:
             for tool_call in tool_calls:
                 function = tool_call.get("function") or {}
                 name = str(function.get("name") or "")
+                raw_arguments = str(function.get("arguments") or "{}")
+                signature = json.dumps(
+                    {"name": name, "arguments": raw_arguments},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+                repeated_calls[signature] = repeated_calls.get(signature, 0) + 1
                 try:
-                    arguments = json.loads(function.get("arguments") or "{}")
+                    if repeated_calls[signature] > MAX_REPEATED_TOOL_CALLS:
+                        raise ValueError(
+                            "Identical tool call repeated without changing the plan."
+                        )
+                    arguments = json.loads(raw_arguments)
+                    if not isinstance(arguments, dict):
+                        raise ValueError("Tool arguments must be a JSON object.")
                     result = toolbox.call(name, arguments, progress)
                 except Exception as exc:
+                    logger.warning(
+                        "feishu_agent_tool_failed model=%s tool=%s error=%s",
+                        self._model.model,
+                        name,
+                        exc,
+                    )
                     result = {"error": str(exc)}
                 messages.append(
                     {
@@ -842,7 +682,27 @@ class FeishuAgentRuntime:
                         "content": json.dumps(result, ensure_ascii=False),
                     }
                 )
-        raise RuntimeError("DeepSeek agent exceeded the bounded tool-call limit.")
+
+        # A bounded tool budget protects cost and latency. When it is exhausted,
+        # force one tool-free synthesis from already validated evidence instead of
+        # surfacing an internal loop-limit error to the user.
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The research tool budget is exhausted. Return the best final "
+                    "Chinese answer supported only by existing tool evidence. State "
+                    "any unresolved limitation explicitly and do not request tools."
+                ),
+            }
+        )
+        message = self._model.complete(messages, [])
+        answer = str(message.get("content") or "").strip()
+        toolbox.validate_outcome(answer)
+        return FeishuAgentOutcome(
+            answer=answer,
+            artifact_path=toolbox.artifact_path,
+        )
 
 
 def build_research_workbook(
@@ -968,120 +828,22 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
     }
 
 
-def _recent_market_return_arguments(prompt: str) -> Optional[Dict[str, Any]]:
-    """Compile a bounded recent-session ranking request from explicit intent."""
-    normalized = prompt.casefold()
-    session_match = RECENT_SESSION_PATTERN.search(prompt)
-    english_session_match = re.search(
-        r"(?:recent|latest)\s+(\d+)\s+trading\s+(?:days|sessions)",
-        normalized,
-    )
-    if session_match is None and english_session_match is None:
-        return None
-    has_return_metric = any(
-        token in normalized
-        for token in ("涨幅", "跌幅", "涨跌幅", "收益", "回报", "return", "gain", "loss")
-    )
-    has_ranking = any(
-        token in normalized
-        for token in (
-            "最大",
-            "最小",
-            "最高",
-            "最低",
-            "top",
-            "bottom",
-            "前",
-            "后",
-        )
-    )
-    has_market_universe = any(
-        token in normalized
-        for token in ("个股", "股票", "a股", "全市场", "market", "stocks", "shares")
-    )
-    if not (has_return_metric and has_ranking and has_market_universe):
-        return None
-
-    if session_match is not None:
-        count_match = re.search(r"\d+", session_match.group(0))
-        if count_match is None:
-            return None
-        trading_sessions = int(count_match.group(0))
-    else:
-        trading_sessions = int(english_session_match.group(1))
-    if not 1 <= trading_sessions <= MAX_RECENT_RETURN_SESSIONS:
-        return None
-
-    descending_rank = any(
-        token in normalized for token in ("最大", "最高", "top", "前")
-    )
-    if "跌幅" in normalized or "loss" in normalized:
-        direction = "asc" if descending_rank else "desc"
-    else:
-        direction = "desc" if descending_rank else "asc"
-
-    limit_match = re.search(r"(?:前|后|top\s*|bottom\s*)(\d+)", normalized)
-    limit = int(limit_match.group(1)) if limit_match is not None else 1
-    if not 1 <= limit <= 1000:
-        return None
-    return {
-        "trading_sessions": trading_sessions,
-        "direction": direction,
-        "limit": limit,
-    }
-
-
-def _requires_recent_market_return_tool(prompt: str) -> bool:
-    """Return whether a prompt has a deterministic recent-ranking contract."""
-    return _recent_market_return_arguments(prompt) is not None
-
-
-def _format_recent_market_return_answer(
-    arguments: Mapping[str, Any],
-    result: Mapping[str, Any],
-) -> str:
-    """Format deterministic ranking evidence without another model round."""
-    rows = list(result.get("preview") or [])
-    if not rows:
-        raise ValueError("Recent market return ranking produced no rows.")
-    direction_label = (
-        "累计涨跌幅最高" if arguments["direction"] == "desc" else "累计涨跌幅最低"
-    )
-    lines = [
-        f"最近{arguments['trading_sessions']}个交易日{direction_label}的个股：",
-    ]
-    for index, row in enumerate(rows, start=1):
-        name = str(row.get("name") or "名称缺失")
-        code = str(row.get("ts_code") or "代码缺失")
-        return_value = float(row["period_return_pct"])
-        lines.append(f"{index}. {name}（{code}）：{return_value:.2f}%")
-    first = rows[0]
-    lines.append(
-        "区间："
-        f"{first.get('start_trade_date', '未知')} 至 "
-        f"{first.get('end_trade_date', '未知')}。"
-    )
-    lines.append("口径：按每日 pct_chg 复合计算，并非复权价格收益。")
-    return "\n".join(lines)
-
-
 def _agent_system_prompt() -> str:
     """Return stable tool-use and evidence rules for the Feishu research agent."""
     return (
         "You are an A-share research agent. Answer in concise Chinese. Use tools for "
         "every market-data claim and never invent prices, rankings, dates, companies, "
         "or financial metrics. Search the operation catalog before using the generic "
-        "query_market_data tool. Dedicated analytical tools do not require catalog "
-        "search. For a market-wide ranking over the latest N trading sessions, always "
-        "use rank_recent_market_return; never use block_trade, which contains large "
-        "off-exchange transaction records rather than ordinary stock returns. Report "
-        "that tool's result as compounded daily pct_chg and never call it an adjusted "
-        "or adjusted-price return. "
+        "query_market_data tool. Use only audited query shapes accepted by that tool. "
         "Use only returned dataset identifiers and deterministic transformations. "
+        "Prefer transform_dataset, rank_dataset, and join_datasets for ordinary "
+        "calculations. Use run_python_analysis only when those structured operations "
+        "cannot express the calculation. Sandbox code may use pandas as pd, numpy as "
+        "np, and datasets[dataset_id]; it must not import modules, access files or the "
+        "network, and must assign the final DataFrame to result. "
         "When the user requests Excel, or a result contains more than ten rows, call "
         "export_excel after producing the final retained dataset. Explain proxy metrics "
         "and missing data explicitly. Never provide personalized buy or sell advice. "
-        "Prefer rank_dataset and join_datasets for ordinary comparisons. "
         "ResultPipeline supports advanced allowlisted operations such as select_fields, filter, "
         "filter_range, sort, limit, aggregate, summarize, distinct, latest_by_group, "
         "derive, join_fields, inner_join, and union_all. If a tool returns an error, "

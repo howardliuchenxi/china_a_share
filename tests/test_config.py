@@ -8,12 +8,22 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("ZAI_API_KEY", raising=False)
     monkeypatch.delenv("TUSHARE_CACHE_BUCKET", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_SECRET", raising=False)
+    monkeypatch.delenv("RESEARCH_SANDBOX_URL", raising=False)
     env_file = tmp_path / ".env"
     env_file.write_text(
         "TUSHARE_TOKEN=abc123\n"
         "DEEPSEEK_API_KEY=deepseek123\n"
         "ZAI_API_KEY=zai123\n"
-        "TUSHARE_CACHE_BUCKET=test-cache-bucket\n",
+        "TUSHARE_CACHE_BUCKET=test-cache-bucket\n"
+        "LLM_BASE_URL=https://model.example/v1\n"
+        "LLM_MODEL=research-model\n"
+        "LLM_API_KEY=model-key\n"
+        "LLM_API_SECRET=model-secret\n"
+        "RESEARCH_SANDBOX_URL=https://sandbox.example\n",
         encoding="utf-8",
     )
 
@@ -22,6 +32,11 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
     assert settings.deepseek_api_key == "deepseek123"
     assert settings.zai_api_key == "zai123"
     assert settings.tushare_cache_bucket == "test-cache-bucket"
+    assert settings.llm_base_url == "https://model.example/v1"
+    assert settings.llm_model == "research-model"
+    assert settings.llm_api_key == "model-key"
+    assert settings.llm_api_secret == "model-secret"
+    assert settings.research_sandbox_url == "https://sandbox.example"
 
 
 def test_settings_rejects_missing_token(monkeypatch, tmp_path):

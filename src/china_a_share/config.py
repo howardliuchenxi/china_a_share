@@ -35,6 +35,16 @@ class Settings:
     feishu_verification_token: str = ""
     feishu_encrypt_key: str = ""
     feishu_allowed_open_ids: str = ""
+    # Base URL for the active OpenAI-compatible model API.
+    llm_base_url: str = ""
+    # Provider-native model identifier sent to the configured API.
+    llm_model: str = ""
+    # Primary bearer credential for the configured model API.
+    llm_api_key: str = ""
+    # Optional secondary credential used by compatible model gateways.
+    llm_api_secret: str = ""
+    # Private URL of the secretless research sandbox service.
+    research_sandbox_url: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -73,6 +83,11 @@ class Settings:
         ).strip()
         feishu_encrypt_key = os.getenv("FEISHU_ENCRYPT_KEY", "").strip()
         feishu_allowed_open_ids = os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").strip()
+        llm_base_url = os.getenv("LLM_BASE_URL", "").strip()
+        llm_model = os.getenv("LLM_MODEL", "").strip()
+        llm_api_key = os.getenv("LLM_API_KEY", "").strip()
+        llm_api_secret = os.getenv("LLM_API_SECRET", "").strip()
+        research_sandbox_url = os.getenv("RESEARCH_SANDBOX_URL", "").strip()
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
@@ -92,4 +107,9 @@ class Settings:
             feishu_verification_token=feishu_verification_token,
             feishu_encrypt_key=feishu_encrypt_key,
             feishu_allowed_open_ids=feishu_allowed_open_ids,
+            llm_base_url=llm_base_url,
+            llm_model=llm_model,
+            llm_api_key=llm_api_key,
+            llm_api_secret=llm_api_secret,
+            research_sandbox_url=research_sandbox_url,
         )
