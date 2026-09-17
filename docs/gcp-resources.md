@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00241-c8k` |
+| Latest ready revision | `china-a-share-lab-00242-sjk` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `d8e767f7c6272d404abd84e74851b09c86cd96ed` |
+| Deployed Git commit | `dfbecc6c6281957ab4e3424a5958a77b9f39f617` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -58,6 +58,7 @@ idle service to zero.
 | --- | --- |
 | `TUSHARE_TOKEN` | Secret Manager secret `tushare-token`, version `latest` |
 | `DEEPSEEK_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest` |
+| `LLM_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest`; generic model credential alias |
 | `ZAI_API_KEY` | Secret Manager secret `zai-api-key`, version `latest` |
 | `GITHUB_FIX_TOKEN` | Secret Manager secret `github-fix-token`, version `latest` |
 | `FEISHU_APP_SECRET` | Secret Manager secret `feishu-app-secret`, version `latest` |
@@ -73,6 +74,12 @@ idle service to zero.
 | `GOOGLE_OAUTH_CLIENT_ID` | Public Google Web OAuth client identifier |
 | `GITHUB_FIX_REPO` | Plain GitHub owner/repository used for UI feedback dispatch |
 | `FEISHU_APP_ID` | Public Feishu custom-application identifier |
+| `LLM_BASE_URL` | Plain OpenAI-compatible API base URL `https://api.deepseek.com` |
+| `LLM_MODEL` | Plain provider-native model identifier `deepseek-v4-pro` |
+| `RESEARCH_SANDBOX_URL` | Plain private service URL `https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app` |
+
+`LLM_API_SECRET` is supported by the generic model transport but is not
+provisioned because the current API uses bearer-key authentication only.
 
 ### Public invocation access
 
@@ -87,6 +94,34 @@ idle service to zero.
 Requests reach the application without Google login. Anyone with the service URL
 can invoke model and market-data operations, so third-party API usage is not
 protected from anonymous consumption.
+
+### Private research sandbox
+
+| Setting | Value |
+| --- | --- |
+| Service | `china-a-share-research-sandbox` |
+| Region | `asia-east2` |
+| Service URL | <https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app> |
+| Latest ready revision | `china-a-share-research-sandbox-00001-62t` |
+| Purpose | Execute restricted pandas and NumPy calculations for the Feishu research agent |
+| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:dfbecc6c6281957ab4e3424a5958a77b9f39f617` |
+| Command | `python -m uvicorn china_a_share.sandbox_server:app --host 0.0.0.0 --port 8080` |
+| Traffic | 100% to the latest revision |
+| CPU and memory | 1 vCPU, 2 GiB |
+| Minimum and maximum instances | 0 and 1 |
+| Container concurrency | 1 |
+| Request timeout | 45 seconds |
+| Invocation | Private; `roles/run.invoker` granted only to the application runtime identity |
+| Runtime identity | `china-a-share-sandbox@china-a-share-lab.iam.gserviceaccount.com` |
+| Runtime configuration | No application environment variables and no Secret Manager bindings |
+| Expected cost impact | Usage-based CPU and 2 GiB memory while requests execute; no idle instance cost |
+
+The service account has no project-level IAM role. The calculation runner
+validates an allowlisted Python AST and executes it in a child process with CPU,
+memory, file-size, row, column, request-size, and wall-clock bounds. The service
+contains no application credentials. Network and file access are excluded from
+the exposed Python contract; the Cloud Run platform itself does not apply a VPC
+egress firewall to this service.
 
 ### Asynchronous analysis job
 
@@ -223,13 +258,25 @@ account's monthly free allotment; expected low traffic should remain within the
 - Reads the seven application secrets through secret-level IAM grants.
 - Creates, reads, updates, and deletes objects in the private cache bucket.
 - Executes only `china-a-share-analysis-worker` with per-execution overrides.
+- Invokes only `china-a-share-research-sandbox` through service-scoped
+  `roles/run.invoker`.
 - Does not have a broad project-level role.
+
+### Research sandbox runtime identity
+
+`china-a-share-sandbox@china-a-share-lab.iam.gserviceaccount.com`
+
+- Runs only the private research sandbox revision.
+- Has no project-level IAM role, secret-level access, or application
+  environment credentials.
+- Can be attached to deployed revisions only by the dedicated deployment
+  identity through service-account-level `roles/iam.serviceAccountUser`.
 
 ### Deployment automation identities
 
 | Identity | Purpose | Access |
 | --- | --- | --- |
-| `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build, deploy verified `main` commits, and notify the administrator group | Project-level `roles/run.admin` and `roles/logging.logWriter`; `roles/artifactregistry.writer` on `cloud-run-source-deploy`; `roles/storage.objectViewer` on the source bucket; `roles/secretmanager.secretAccessor` on `feishu-bot-webhook`; `roles/iam.serviceAccountUser` on the runtime identity |
+| `china-a-share-deployer@china-a-share-lab.iam.gserviceaccount.com` | Run the scheduled reconciliation build, deploy verified `main` commits, and notify the administrator group | Project-level `roles/run.admin` and `roles/logging.logWriter`; `roles/artifactregistry.writer` on `cloud-run-source-deploy`; `roles/storage.objectViewer` on the source bucket; `roles/secretmanager.secretAccessor` on `feishu-bot-webhook`; `roles/iam.serviceAccountUser` on the application and sandbox runtime identities |
 | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` | Invoke scheduled Cloud Build reconciliation | Project-level `roles/cloudbuild.builds.editor`; `roles/iam.serviceAccountUser` on the dedicated deployer identity only |
 
 Neither identity has a user-managed key. The deployer can administer all Cloud
@@ -346,6 +393,9 @@ The following services are not live resources for this project:
   bounded.
 - The asynchronous Cloud Run Job has no idle instance cost and uses one task
   with bounded CPU, memory, timeout, and retries per execution.
+- The private research sandbox has no idle instance cost, is capped at one
+  concurrent 1-vCPU/2-GiB instance, and runs only for bounded calculation
+  requests.
 - Current storage volumes are small and are expected to remain within or close
   to applicable free allowances.
 - Artifact Registry is approximately 0.5 GiB above its monthly free storage
@@ -422,3 +472,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-17 | Deployed revision `china-a-share-lab-00240-4qc` through scheduled reconciliation from `main@edee3a98afcab9c68c2fdaee8b95d78a7b021c14`; verified 100% traffic and the synchronized Worker image and Git SHA. The release temporarily disables backend release tests at the operator's request. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-17 | Replaced periodic deployment polling with the `china-a-share-deploy-main-push` trigger for non-documentation pushes to `main`; restored the fallback Scheduler cadence to ten minutes, then paused `china-a-share-reconcile-main`. Verified the trigger and paused job configuration. The brief three-minute interval was reverted before a second high-frequency invocation; no recurring polling build cost remains. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00241-c8k` immediately through the verified `china-a-share-deploy-main-push` trigger from `main@d8e767f7c6272d404abd84e74851b09c86cd96ed`; verified 100% traffic, public health, and the synchronized Worker image and Git SHA. The release sends `reply_in_thread` in the Feishu reply body, deterministically executes recent-session market-return rankings, and bounds full-market reads by exact trading date. No IAM boundary, lifecycle policy, or material cost changed. |
+| 2026-09-17 | Deployed revision `china-a-share-lab-00242-sjk` immediately through the main push trigger from `main@dfbecc6c6281957ab4e3424a5958a77b9f39f617`; verified 100% traffic, public health, and the synchronized Worker image and Git SHA. Created private service `china-a-share-research-sandbox` at revision `00001-62t` with 1 vCPU, 2 GiB, zero minimum and one maximum instance, concurrency 1, a 45-second timeout, no application environment or secret bindings, and the dedicated unprivileged `china-a-share-sandbox` runtime identity. Granted the application runtime identity service-scoped `roles/run.invoker` and the deployer service-account-level `roles/iam.serviceAccountUser`. The Feishu agent now uses generic OpenAI-compatible model configuration, provider-neutral data tools, bounded secretless DataFrame execution, deterministic validation, and tool-budget synthesis without prompt-specific ranking logic. Verified the reported five-day-return prompt with the live configured model, synthetic market data, and the private sandbox; the sandbox rejected an import attempt and accepted the corrected restricted calculation. Expected incremental GCP cost remains usage-based with no idle instance charge. |
