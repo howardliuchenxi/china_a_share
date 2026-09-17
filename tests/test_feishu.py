@@ -40,6 +40,10 @@ class FakeSender:
 
     def reply(self, message_id, text):
         self.replies.append((message_id, text))
+        return f"reply-{len(self.replies)}"
+
+    def update(self, message_id, text):
+        raise AssertionError("Unexpected message update")
 
 
 class FailOnceSender(FakeSender):
@@ -435,6 +439,7 @@ def test_agent_bot_supports_named_sessions_and_parallel_submissions():
     bot.process(second_prompt)
 
     assert "已新建并切换到会话：银行研究" in sender.replies[0][1]
+    assert len(sender.replies) == 1
     assert len(dispatcher.task_ids) == 2
     submitted_tasks = [task_store.get(task_id) for task_id in dispatcher.task_ids]
     assert all(task.status == AnalysisTaskStatus.QUEUED for task in submitted_tasks)
@@ -478,6 +483,7 @@ def test_agent_bot_routes_mentioned_status_command_without_new_submission():
     bot.process(status_event)
 
     assert len(dispatcher.task_ids) == 1
+    assert len(sender.replies) == 1
     assert "状态：排队中" in sender.replies[-1][1]
 
 def test_task_progress_reply_displays_completed_and_total_items():

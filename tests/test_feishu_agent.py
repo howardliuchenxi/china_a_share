@@ -42,6 +42,10 @@ class SequenceSession:
         self.calls.append((url, kwargs))
         return self.responses.pop(0)
 
+    def put(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.responses.pop(0)
+
 
 class FakeOperation:
     name = "daily"
@@ -179,10 +183,15 @@ class RecordingDispatcher:
 class RecordingSink:
     def __init__(self):
         self.messages = []
+        self.updates = []
         self.files = []
 
     def reply(self, message_id, text):
         self.messages.append((message_id, text))
+        return "progress-message-1"
+
+    def update(self, message_id, text):
+        self.updates.append((message_id, text))
 
     def reply_file(self, message_id, path):
         self.files.append((message_id, path))
@@ -448,14 +457,65 @@ def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):
     assert completed.answer == "研究完成。"
     assert sink.messages == [
         ("message-1", "正在理解问题并选择研究工具…"),
-        ("message-1", "正在查询市场数据…"),
-        ("message-1", "研究完成。"),
+    ]
+    assert sink.updates == [
+        ("progress-message-1", "正在查询市场数据…"),
+        ("progress-message-1", "研究完成。"),
     ]
     assert sink.files == [("message-1", artifact_path)]
     assert isinstance(store.get("agent-task"), FeishuAgentTask)
 
 
-def test_feishu_client_replies_inside_source_message_thread():
+def test_agent_coordinator_reserves_final_message_update():
+    store = MemoryAnalysisTaskStore()
+    coordinator = FeishuAgentCoordinator(store, RecordingDispatcher())
+    task = coordinator.submit(
+        FeishuAgentRequest(
+            prompt="Research a broad market question.",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        task_id="agent-task",
+    )
+
+    class VerboseRuntime:
+        def run(self, _request, progress):
+            for index in range(30):
+                progress("querying", f"Progress {index}")
+            return FeishuAgentOutcome(answer="Final answer.")
+
+    sink = RecordingSink()
+    completed = coordinator.run(task.task_id, VerboseRuntime(), sink)
+
+    assert completed.status == AnalysisTaskStatus.SUCCEEDED
+    assert len(sink.messages) == 1
+    assert len(sink.updates) == 20
+    assert sink.updates[-1] == ("progress-message-1", "Final answer.")
+
+
+def test_feishu_client_returns_visible_reply_message_id():
+    session = SequenceSession(
+        [
+            FakeResponse({"code": 0, "tenant_access_token": "tenant-token"}),
+            FakeResponse({"code": 0, "data": {"message_id": "reply-message-1"}}),
+        ]
+    )
+
+    reply_message_id = FeishuOpenApiClient(
+        "app-id", "app-secret", session=session
+    ).reply(
+        "message-1",
+        "Research accepted.",
+    )
+
+    assert reply_message_id == "reply-message-1"
+    assert session.calls[1][0].endswith("/im/v1/messages/message-1/reply")
+    assert "params" not in session.calls[1][1]
+    assert session.calls[1][1]["json"]["msg_type"] == "text"
+    assert "reply_in_thread" not in session.calls[1][1]["json"]
+
+
+def test_feishu_client_updates_existing_text_reply():
     session = SequenceSession(
         [
             FakeResponse({"code": 0, "tenant_access_token": "tenant-token"}),
@@ -463,15 +523,16 @@ def test_feishu_client_replies_inside_source_message_thread():
         ]
     )
 
-    FeishuOpenApiClient("app-id", "app-secret", session=session).reply(
-        "message-1",
-        "Research accepted.",
+    FeishuOpenApiClient("app-id", "app-secret", session=session).update(
+        "reply-message-1",
+        "Research completed.",
     )
 
-    assert session.calls[1][0].endswith("/im/v1/messages/message-1/reply")
-    assert "params" not in session.calls[1][1]
+    assert session.calls[1][0].endswith("/im/v1/messages/reply-message-1")
     assert session.calls[1][1]["json"]["msg_type"] == "text"
-    assert session.calls[1][1]["json"]["reply_in_thread"] is True
+    assert session.calls[1][1]["json"]["content"] == (
+        '{"text": "Research completed."}'
+    )
 
 
 def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
@@ -498,7 +559,7 @@ def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
     assert session.calls[2][0].endswith("/im/v1/messages/message-1/reply")
     assert "params" not in session.calls[2][1]
     assert session.calls[2][1]["json"]["msg_type"] == "file"
-    assert session.calls[2][1]["json"]["reply_in_thread"] is True
+    assert "reply_in_thread" not in session.calls[2][1]["json"]
 
 
 @pytest.mark.live

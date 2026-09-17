@@ -460,8 +460,11 @@ class CloudStorageConversationStore:
 class FeishuMessageSender(Protocol):
     """Send one reply to the message that initiated an analysis turn."""
 
-    def reply(self, message_id: str, text: str) -> None:
-        """Reply with bounded plain text to one Feishu message."""
+    def reply(self, message_id: str, text: str) -> str:
+        """Reply with bounded plain text and return the created message ID."""
+
+    def update(self, message_id: str, text: str) -> None:
+        """Replace one application-authored text message."""
 
     def reply_file(self, message_id: str, path: "Path") -> None:
         """Upload and reply with one file attachment."""
@@ -485,8 +488,8 @@ class FeishuOpenApiClient:
         self._app_secret = app_secret
         self._session = session or requests.Session()
 
-    def reply(self, message_id: str, text: str) -> None:
-        """Reply in the source message thread through the application identity."""
+    def reply(self, message_id: str, text: str) -> str:
+        """Reply visibly to the source message through the application identity."""
         token = self._tenant_access_token()
         response = self._session.post(
             f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
@@ -496,11 +499,32 @@ class FeishuOpenApiClient:
                 "content": json.dumps(
                     {"text": text[:MAX_FEISHU_MESSAGE_LENGTH]}, ensure_ascii=False
                 ),
-                "reply_in_thread": True,
             },
             timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
         )
         self._raise_for_feishu_error(response, "message reply")
+        reply_message_id = str(
+            ((response.json().get("data") or {}).get("message_id") or "")
+        ).strip()
+        if not reply_message_id:
+            raise RuntimeError("Feishu message reply omitted the message ID.")
+        return reply_message_id
+
+    def update(self, message_id: str, text: str) -> None:
+        """Replace one text reply so progress does not flood the group chat."""
+        token = self._tenant_access_token()
+        response = self._session.put(
+            f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "msg_type": "text",
+                "content": json.dumps(
+                    {"text": text[:MAX_FEISHU_MESSAGE_LENGTH]}, ensure_ascii=False
+                ),
+            },
+            timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
+        )
+        self._raise_for_feishu_error(response, "message update")
 
     def reply_file(self, message_id: str, path: "Path") -> None:
         """Upload one generated workbook and reply with the resulting file key."""
@@ -529,7 +553,6 @@ class FeishuOpenApiClient:
             json={
                 "msg_type": "file",
                 "content": json.dumps({"file_key": file_key}),
-                "reply_in_thread": True,
             },
             timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
         )
@@ -727,7 +750,8 @@ class FeishuResearchBot:
                 reply = self._retry_reply(event)
             else:
                 reply = self._submit_reply(event)
-            self._sender.reply(event.message_id, reply)
+            if reply is not None:
+                self._sender.reply(event.message_id, reply)
             self._store.complete_event(event.event_id)
         except Exception:
             log_event(
@@ -744,7 +768,7 @@ class FeishuResearchBot:
                 f"事件编号 {event.event_id}。",
             )
 
-    def _submit_reply(self, event: FeishuMessageEvent) -> str:
+    def _submit_reply(self, event: FeishuMessageEvent) -> Optional[str]:
         """Create one durable analysis task and return its tracking commands."""
         if self._agent_coordinator is not None:
             return self._submit_agent_reply(event)
@@ -787,7 +811,7 @@ class FeishuResearchBot:
         )
         return self._accepted_task_reply(submission.task_id)
 
-    def _submit_agent_reply(self, event: FeishuMessageEvent) -> str:
+    def _submit_agent_reply(self, event: FeishuMessageEvent) -> Optional[str]:
         """Submit one independent agent turn with bounded completed context."""
         existing = self._store.get_event_task(event.event_id)
         if existing is not None:
@@ -817,7 +841,9 @@ class FeishuResearchBot:
                 prompt=event.prompt,
             )
         )
-        return self._accepted_task_reply(task.task_id)
+        # The worker creates one visible progress reply and edits it in place.
+        # Suppressing the acknowledgement avoids a second message per question.
+        return None
 
     @staticmethod
     def _accepted_task_reply(task_id: str) -> str:
@@ -845,7 +871,7 @@ class FeishuResearchBot:
             self._record_completed_context(record, task)
         return format_analysis_task(task)
 
-    def _retry_reply(self, event: FeishuMessageEvent) -> str:
+    def _retry_reply(self, event: FeishuMessageEvent) -> Optional[str]:
         """Submit a new attempt from one failed task without changing its request."""
         existing = self._store.get_event_task(event.event_id)
         if existing is not None:
@@ -875,7 +901,7 @@ class FeishuResearchBot:
                 retry_of_task_id=record.task_id,
             )
             self._store.put_task(retry_record)
-            return self._retried_task_reply(retry_record)
+            return None
         if not isinstance(task, AnalysisTask):
             return f"未找到研究任务 {record.task_id}。"
         if task.status != AnalysisTaskStatus.FAILED:

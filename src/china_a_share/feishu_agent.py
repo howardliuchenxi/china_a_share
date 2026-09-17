@@ -29,6 +29,7 @@ MAX_AGENT_ROUNDS = 16
 MAX_REPEATED_TOOL_CALLS = 2
 MAX_AGENT_PREVIEW_ROWS = 20
 MAX_AGENT_CONTEXT_TURNS = 12
+MAX_AGENT_PROGRESS_UPDATES = 19
 logger = logging.getLogger(__name__)
 
 
@@ -93,8 +94,11 @@ class AgentTaskDispatcher(Protocol):
 class AgentProgressSink(Protocol):
     """Deliver stage changes and terminal artifacts to Feishu."""
 
-    def reply(self, message_id: str, text: str) -> None:
-        """Reply with one progress or answer message."""
+    def reply(self, message_id: str, text: str) -> str:
+        """Reply with one progress message and return its message ID."""
+
+    def update(self, message_id: str, text: str) -> None:
+        """Replace a previously sent progress message."""
 
     def reply_file(self, message_id: str, path: Path) -> None:
         """Upload and reply with one generated file."""
@@ -194,6 +198,23 @@ class FeishuAgentCoordinator:
             return task
 
         last_notified_progress: Optional[tuple[str, str]] = None
+        progress_message_id: Optional[str] = None
+        progress_update_count = 0
+
+        def publish(message: str, *, terminal: bool = False) -> None:
+            nonlocal progress_message_id, progress_update_count
+            if progress_message_id is None:
+                progress_message_id = progress_sink.reply(
+                    task.request.source_message_id,
+                    message,
+                )
+                return
+            # Feishu limits edits per message. Reserve the final permitted edit
+            # for the terminal answer or failure while retaining task state.
+            if not terminal and progress_update_count >= MAX_AGENT_PROGRESS_UPDATES:
+                return
+            progress_sink.update(progress_message_id, message)
+            progress_update_count += 1
 
         def report(stage: str, message: str) -> None:
             nonlocal last_notified_progress
@@ -206,7 +227,7 @@ class FeishuAgentCoordinator:
             # consecutive duplicates while preserving distinct progress details.
             if progress == last_notified_progress:
                 return
-            progress_sink.reply(task.request.source_message_id, message)
+            publish(message)
             last_notified_progress = progress
 
         task.status = AnalysisTaskStatus.RUNNING
@@ -223,7 +244,7 @@ class FeishuAgentCoordinator:
             task.progress_message = "研究完成。"
             task.updated_at = datetime.now(timezone.utc)
             self._store.put(task)
-            progress_sink.reply(task.request.source_message_id, outcome.answer)
+            publish(outcome.answer, terminal=True)
             if outcome.artifact_path is not None:
                 progress_sink.reply_file(
                     task.request.source_message_id,
@@ -237,10 +258,7 @@ class FeishuAgentCoordinator:
             task.error = ServiceError(source="system", message=str(exc))
             task.updated_at = datetime.now(timezone.utc)
             self._store.put(task)
-            progress_sink.reply(
-                task.request.source_message_id,
-                f"研究任务失败：{exc}",
-            )
+            publish(f"研究任务失败：{exc}", terminal=True)
         return task
 
 
