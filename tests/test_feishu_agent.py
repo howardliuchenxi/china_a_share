@@ -326,6 +326,7 @@ def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):
         def run(self, received_request, progress):
             assert received_request == request
             progress("querying", "正在查询市场数据…")
+            progress("querying", "正在查询市场数据…")
             return FeishuAgentOutcome(
                 answer="研究完成。",
                 artifact_path=artifact_path,
@@ -344,6 +345,24 @@ def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):
     ]
     assert sink.files == [("message-1", artifact_path)]
     assert isinstance(store.get("agent-task"), FeishuAgentTask)
+
+
+def test_feishu_client_replies_inside_source_message_thread():
+    session = SequenceSession(
+        [
+            FakeResponse({"code": 0, "tenant_access_token": "tenant-token"}),
+            FakeResponse({"code": 0}),
+        ]
+    )
+
+    FeishuOpenApiClient("app-id", "app-secret", session=session).reply(
+        "message-1",
+        "Research accepted.",
+    )
+
+    assert session.calls[1][0].endswith("/im/v1/messages/message-1/reply")
+    assert session.calls[1][1]["params"] == {"reply_in_thread": "true"}
+    assert session.calls[1][1]["json"]["msg_type"] == "text"
 
 
 def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
@@ -368,6 +387,7 @@ def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
         "file_name": "result.xlsx",
     }
     assert session.calls[2][0].endswith("/im/v1/messages/message-1/reply")
+    assert session.calls[2][1]["params"] == {"reply_in_thread": "true"}
     assert session.calls[2][1]["json"]["msg_type"] == "file"
 
 

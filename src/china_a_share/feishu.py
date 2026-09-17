@@ -486,11 +486,12 @@ class FeishuOpenApiClient:
         self._session = session or requests.Session()
 
     def reply(self, message_id: str, text: str) -> None:
-        """Reply to one source message through the tenant application identity."""
+        """Reply in the source message thread through the application identity."""
         token = self._tenant_access_token()
         response = self._session.post(
             f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
             headers={"Authorization": f"Bearer {token}"},
+            params={"reply_in_thread": "true"},
             json={
                 "msg_type": "text",
                 "content": json.dumps(
@@ -525,6 +526,7 @@ class FeishuOpenApiClient:
         response = self._session.post(
             f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
             headers={"Authorization": f"Bearer {token}"},
+            params={"reply_in_thread": "true"},
             json={
                 "msg_type": "file",
                 "content": json.dumps({"file_key": file_key}),

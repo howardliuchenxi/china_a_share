@@ -191,12 +191,21 @@ class FeishuAgentCoordinator:
         if task.status in {AnalysisTaskStatus.RUNNING, AnalysisTaskStatus.SUCCEEDED}:
             return task
 
+        last_notified_progress: Optional[tuple[str, str]] = None
+
         def report(stage: str, message: str) -> None:
+            nonlocal last_notified_progress
             task.stage = stage
             task.progress_message = message
             task.updated_at = datetime.now(timezone.utc)
             self._store.put(task)
+            progress = (stage, message)
+            # Repeated tool calls may emit the same status, so suppress only exact
+            # consecutive duplicates while preserving distinct progress details.
+            if progress == last_notified_progress:
+                return
             progress_sink.reply(task.request.source_message_id, message)
+            last_notified_progress = progress
 
         task.status = AnalysisTaskStatus.RUNNING
         task.error = None
