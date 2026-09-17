@@ -43,6 +43,10 @@ from china_a_share.feishu import (
     FeishuOpenApiClient,
     FeishuResearchBot,
 )
+from china_a_share.feishu_agent import (
+    FeishuAgentCoordinator,
+    FeishuAgentRuntime,
+)
 
 
 def create_analysis_service(settings: Settings) -> AnalysisService:
@@ -89,13 +93,28 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         for value in settings.feishu_allowed_open_ids.split(",")
         if value.strip()
     }
+    task_coordinator = create_analysis_task_coordinator(settings)
+    agent_coordinator = (
+        FeishuAgentCoordinator(task_coordinator.store, task_coordinator.dispatcher)
+        if isinstance(task_coordinator, AnalysisTaskCoordinator)
+        else None
+    )
     return FeishuResearchBot(
-        create_analysis_task_coordinator(settings),
+        task_coordinator,
         FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),
         CloudStorageConversationStore(settings.tushare_cache_bucket),
         verification_token=settings.feishu_verification_token,
         encrypt_key=settings.feishu_encrypt_key,
         allowed_open_ids=allowed_open_ids,
+        agent_coordinator=agent_coordinator,
+    )
+
+
+def create_feishu_agent_runtime(settings: Settings) -> FeishuAgentRuntime:
+    """Assemble the independent Feishu agent around read-only provider tools."""
+    return FeishuAgentRuntime(
+        settings.deepseek_api_key,
+        _create_data_provider(settings),
     )
 
 

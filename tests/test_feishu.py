@@ -29,6 +29,8 @@ from china_a_share.feishu import (
     MemoryConversationStore,
     format_analysis_task,
 )
+from china_a_share.feishu_agent import FeishuAgentCoordinator
+from china_a_share.tasks import MemoryAnalysisTaskStore
 from google.api_core.exceptions import PreconditionFailed
 
 
@@ -376,6 +378,47 @@ def test_retry_creates_new_task_only_after_failure():
     assert service.requests[1] == service.tasks[task_id].request
     assert f"新任务编号：{bot._task_id_for_event('event-3')}" in sender.replies[2][1]
 
+
+def test_agent_bot_supports_named_sessions_and_parallel_submissions():
+    task_store = MemoryAnalysisTaskStore()
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.task_ids = []
+
+        def dispatch(self, task_id):
+            self.task_ids.append(task_id)
+
+    dispatcher = RecordingDispatcher()
+    agent_coordinator = FeishuAgentCoordinator(task_store, dispatcher)
+    sender = FakeSender()
+    conversation_store = MemoryConversationStore()
+    bot = FeishuResearchBot(
+        agent_coordinator,
+        sender,
+        conversation_store,
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        agent_coordinator=agent_coordinator,
+    )
+
+    create_event = bot.parse_event(message_payload("event-session", "新建会话 银行研究"))
+    first_prompt = bot.parse_event(message_payload("event-agent-1", "查询银行股估值"))
+    second_prompt = bot.parse_event(message_payload("event-agent-2", "再查股息率"))
+    assert create_event is not None
+    assert first_prompt is not None
+    assert second_prompt is not None
+
+    bot.process(create_event)
+    bot.process(first_prompt)
+    bot.process(second_prompt)
+
+    assert "已新建并切换到会话：银行研究" in sender.replies[0][1]
+    assert len(dispatcher.task_ids) == 2
+    submitted_tasks = [task_store.get(task_id) for task_id in dispatcher.task_ids]
+    assert all(task.status == AnalysisTaskStatus.QUEUED for task in submitted_tasks)
+    assert submitted_tasks[0].request.conversation_id == submitted_tasks[1].request.conversation_id
+    assert ":session:" in submitted_tasks[0].request.conversation_id
 
 def test_task_progress_reply_displays_completed_and_total_items():
     now = datetime.now(timezone.utc)

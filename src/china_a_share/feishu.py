@@ -10,16 +10,18 @@ import hashlib
 import hmac
 import json
 import logging
+from pathlib import Path
 import re
 from threading import Lock
 from typing import Any, Dict, Optional, Protocol, Union
+from uuid import uuid4
 
 import requests
 from Crypto.Cipher import AES
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from china_a_share.core.contracts import (
     AnalysisConversationTurn,
@@ -31,13 +33,19 @@ from china_a_share.core.contracts import (
     DiscoveryTask,
 )
 from china_a_share.observability import log_event
+from china_a_share.feishu_agent import (
+    FeishuAgentConversationTurn,
+    FeishuAgentCoordinator,
+    FeishuAgentRequest,
+    FeishuAgentTask,
+)
 
 
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
 FEISHU_TOKEN_TIMEOUT_SECONDS = 10
 FEISHU_MESSAGE_TIMEOUT_SECONDS = 15
 MAX_FEISHU_MESSAGE_LENGTH = 3_000
-MAX_FEISHU_CONTEXT_TURNS = 3
+MAX_FEISHU_CONTEXT_TURNS = 12
 FEISHU_EVENT_LEASE = timedelta(minutes=4)
 FEISHU_EVENT_PROCESSING = "processing"
 FEISHU_EVENT_COMPLETED = "completed"
@@ -47,6 +55,18 @@ STATUS_COMMAND_PATTERN = re.compile(
     r"^(?:查看进度|查询进度|进度|status)(?:\s|$)", re.IGNORECASE
 )
 RETRY_COMMAND_PATTERN = re.compile(r"^(?:重试|retry)(?:\s|$)", re.IGNORECASE)
+NEW_SESSION_COMMAND_PATTERN = re.compile(
+    r"^(?:新建会话|新对话|new\s+session)(?:\s+(?P<name>.+))?$",
+    re.IGNORECASE,
+)
+LIST_SESSIONS_COMMAND_PATTERN = re.compile(
+    r"^(?:会话列表|对话列表|list\s+sessions)$",
+    re.IGNORECASE,
+)
+SWITCH_SESSION_COMMAND_PATTERN = re.compile(
+    r"^(?:切换会话|切换对话|switch\s+session)\s+(?P<target>.+)$",
+    re.IGNORECASE,
+)
 MAX_FEISHU_RESULT_ROWS = 10
 logger = logging.getLogger(__name__)
 
@@ -65,7 +85,15 @@ class FeishuConversationTurn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(min_length=1, max_length=1_000)
-    interpretation: str = Field(min_length=1, max_length=1_000)
+    interpretation: Optional[str] = Field(default=None, min_length=1, max_length=1_000)
+    answer: Optional[str] = Field(default=None, min_length=1, max_length=12_000)
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "FeishuConversationTurn":
+        """Require either a legacy interpretation or a complete agent answer."""
+        if self.interpretation is None and self.answer is None:
+            raise ValueError("conversation turn requires interpretation or answer")
+        return self
 
 
 class FeishuTaskCoordinator(Protocol):
@@ -112,6 +140,32 @@ class FeishuTaskRecord(BaseModel):
     )
 
 
+class FeishuAgentSession(BaseModel):
+    """One named research session available within a Feishu chat scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(min_length=1, description="Stable opaque session identifier.")
+    name: str = Field(min_length=1, max_length=80, description="User-visible session name.")
+
+
+class FeishuAgentSessionState(BaseModel):
+    """Active session pointer and bounded session catalog for one chat scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    active_session_id: str = Field(
+        default="default",
+        description="Session receiving ordinary messages in this chat scope.",
+    )
+    sessions: list[FeishuAgentSession] = Field(
+        default_factory=lambda: [
+            FeishuAgentSession(session_id="default", name="默认会话")
+        ],
+        description="Named sessions available for explicit switching.",
+    )
+
+
 class ConversationStore(Protocol):
     """Persist bounded completed turns for one isolated Feishu conversation."""
 
@@ -143,6 +197,16 @@ class ConversationStore(Protocol):
     def put_task(self, task: FeishuTaskRecord) -> None:
         """Persist task linkage and advance the conversation's latest-task pointer."""
 
+    def get_session_state(self, conversation_scope_id: str) -> FeishuAgentSessionState:
+        """Return named sessions and the active pointer for one chat scope."""
+
+    def put_session_state(
+        self,
+        conversation_scope_id: str,
+        state: FeishuAgentSessionState,
+    ) -> None:
+        """Replace the named-session state for one chat scope."""
+
 
 class MemoryConversationStore:
     """Store isolated Feishu conversations and event claims in memory."""
@@ -153,6 +217,7 @@ class MemoryConversationStore:
         self._tasks: Dict[str, FeishuTaskRecord] = {}
         self._latest_tasks: Dict[str, str] = {}
         self._event_tasks: Dict[str, str] = {}
+        self._session_states: Dict[str, FeishuAgentSessionState] = {}
         self._lock = Lock()
 
     def get(self, conversation_id: str) -> list[FeishuConversationTurn]:
@@ -212,6 +277,25 @@ class MemoryConversationStore:
             self._tasks[task.task_id] = task.model_copy(deep=True)
             self._latest_tasks[task.conversation_id] = task.task_id
             self._event_tasks[task.source_event_id] = task.task_id
+
+    def get_session_state(self, conversation_scope_id: str) -> FeishuAgentSessionState:
+        """Return an isolated named-session state for one chat scope."""
+        with self._lock:
+            state = self._session_states.get(conversation_scope_id)
+            return (
+                state.model_copy(deep=True)
+                if state is not None
+                else FeishuAgentSessionState()
+            )
+
+    def put_session_state(
+        self,
+        conversation_scope_id: str,
+        state: FeishuAgentSessionState,
+    ) -> None:
+        """Replace one named-session state atomically in memory."""
+        with self._lock:
+            self._session_states[conversation_scope_id] = state.model_copy(deep=True)
 
 
 class CloudStorageConversationStore:
@@ -320,6 +404,23 @@ class CloudStorageConversationStore:
             task.task_id, content_type="text/plain"
         )
 
+    def get_session_state(self, conversation_scope_id: str) -> FeishuAgentSessionState:
+        """Read named-session state or return the default session."""
+        blob = self._bucket.blob(self._session_state_object(conversation_scope_id))
+        if not blob.exists():
+            return FeishuAgentSessionState()
+        return FeishuAgentSessionState.model_validate_json(blob.download_as_text())
+
+    def put_session_state(
+        self,
+        conversation_scope_id: str,
+        state: FeishuAgentSessionState,
+    ) -> None:
+        """Persist the complete named-session state for one chat scope."""
+        self._bucket.blob(
+            self._session_state_object(conversation_scope_id)
+        ).upload_from_string(state.model_dump_json(), content_type="application/json")
+
     @staticmethod
     def _conversation_object(conversation_id: str) -> str:
         """Hide Feishu identifiers from storage object names."""
@@ -349,12 +450,21 @@ class CloudStorageConversationStore:
         digest = hashlib.sha256(event_id.encode()).hexdigest()
         return f"feishu/event-tasks/{digest}.txt"
 
+    @staticmethod
+    def _session_state_object(conversation_scope_id: str) -> str:
+        """Hide the chat scope in the named-session object path."""
+        digest = hashlib.sha256(conversation_scope_id.encode()).hexdigest()
+        return f"feishu/agent-sessions/{digest}.json"
+
 
 class FeishuMessageSender(Protocol):
     """Send one reply to the message that initiated an analysis turn."""
 
     def reply(self, message_id: str, text: str) -> None:
         """Reply with bounded plain text to one Feishu message."""
+
+    def reply_file(self, message_id: str, path: "Path") -> None:
+        """Upload and reply with one file attachment."""
 
 
 class FeishuOpenApiClient:
@@ -377,15 +487,7 @@ class FeishuOpenApiClient:
 
     def reply(self, message_id: str, text: str) -> None:
         """Reply to one source message through the tenant application identity."""
-        token_response = self._session.post(
-            f"{FEISHU_API_BASE_URL}/auth/v3/tenant_access_token/internal",
-            json={"app_id": self._app_id, "app_secret": self._app_secret},
-            timeout=FEISHU_TOKEN_TIMEOUT_SECONDS,
-        )
-        self._raise_for_feishu_error(token_response, "tenant token")
-        token = token_response.json().get("tenant_access_token", "")
-        if not token:
-            raise RuntimeError("Feishu tenant token response omitted the access token.")
+        token = self._tenant_access_token()
         response = self._session.post(
             f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
             headers={"Authorization": f"Bearer {token}"},
@@ -398,6 +500,51 @@ class FeishuOpenApiClient:
             timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
         )
         self._raise_for_feishu_error(response, "message reply")
+
+    def reply_file(self, message_id: str, path: "Path") -> None:
+        """Upload one generated workbook and reply with the resulting file key."""
+        token = self._tenant_access_token()
+        with path.open("rb") as file_handle:
+            upload_response = self._session.post(
+                f"{FEISHU_API_BASE_URL}/im/v1/files",
+                headers={"Authorization": f"Bearer {token}"},
+                data={"file_type": "xls", "file_name": path.name},
+                files={
+                    "file": (
+                        path.name,
+                        file_handle,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+                timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
+            )
+        self._raise_for_feishu_error(upload_response, "file upload")
+        file_key = ((upload_response.json().get("data") or {}).get("file_key") or "")
+        if not file_key:
+            raise RuntimeError("Feishu file upload omitted the file key.")
+        response = self._session.post(
+            f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "msg_type": "file",
+                "content": json.dumps({"file_key": file_key}),
+            },
+            timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
+        )
+        self._raise_for_feishu_error(response, "file reply")
+
+    def _tenant_access_token(self) -> str:
+        """Return a fresh tenant token without exposing credentials to callers."""
+        token_response = self._session.post(
+            f"{FEISHU_API_BASE_URL}/auth/v3/tenant_access_token/internal",
+            json={"app_id": self._app_id, "app_secret": self._app_secret},
+            timeout=FEISHU_TOKEN_TIMEOUT_SECONDS,
+        )
+        self._raise_for_feishu_error(token_response, "tenant token")
+        token = token_response.json().get("tenant_access_token", "")
+        if not token:
+            raise RuntimeError("Feishu tenant token response omitted the access token.")
+        return token
 
     @staticmethod
     def _raise_for_feishu_error(response: requests.Response, operation: str) -> None:
@@ -435,6 +582,7 @@ class FeishuResearchBot:
         verification_token: str,
         encrypt_key: str,
         allowed_open_ids: Optional[set[str]] = None,
+        agent_coordinator: Optional[FeishuAgentCoordinator] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
             raise FeishuConfigurationError(
@@ -446,6 +594,7 @@ class FeishuResearchBot:
         self._verification_token = verification_token
         self._encrypt_key = encrypt_key
         self._allowed_open_ids = allowed_open_ids or set()
+        self._agent_coordinator = agent_coordinator
 
     def verify_signature(
         self,
@@ -559,7 +708,13 @@ class FeishuResearchBot:
         if not self._store.claim_event(event.event_id):
             return
         try:
-            if STATUS_COMMAND_PATTERN.match(event.prompt):
+            if self._agent_coordinator is not None and (
+                NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
+                or LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt)
+                or SWITCH_SESSION_COMMAND_PATTERN.match(event.prompt)
+            ):
+                reply = self._session_command_reply(event)
+            elif STATUS_COMMAND_PATTERN.match(event.prompt):
                 reply = self._status_reply(event)
             elif RETRY_COMMAND_PATTERN.match(event.prompt):
                 reply = self._retry_reply(event)
@@ -584,6 +739,8 @@ class FeishuResearchBot:
 
     def _submit_reply(self, event: FeishuMessageEvent) -> str:
         """Create one durable analysis task and return its tracking commands."""
+        if self._agent_coordinator is not None:
+            return self._submit_agent_reply(event)
         existing = self._store.get_event_task(event.event_id)
         if existing is not None:
             return self._accepted_task_reply(existing.task_id)
@@ -623,6 +780,38 @@ class FeishuResearchBot:
         )
         return self._accepted_task_reply(submission.task_id)
 
+    def _submit_agent_reply(self, event: FeishuMessageEvent) -> str:
+        """Submit one independent agent turn with bounded completed context."""
+        existing = self._store.get_event_task(event.event_id)
+        if existing is not None:
+            return self._accepted_task_reply(existing.task_id)
+        conversation_id = self._active_agent_conversation_id(event.conversation_id)
+        prior_turns = self._completed_agent_conversation(conversation_id)
+        task = self._agent_coordinator.submit(
+            FeishuAgentRequest(
+                prompt=event.prompt,
+                conversation_id=conversation_id,
+                source_message_id=event.message_id,
+                conversation=[
+                    FeishuAgentConversationTurn(
+                        prompt=turn.prompt,
+                        answer=turn.answer or turn.interpretation or "",
+                    )
+                    for turn in prior_turns
+                ],
+            ),
+            task_id=self._task_id_for_event(event.event_id),
+        )
+        self._store.put_task(
+            FeishuTaskRecord(
+                task_id=task.task_id,
+                source_event_id=event.event_id,
+                conversation_id=conversation_id,
+                prompt=event.prompt,
+            )
+        )
+        return self._accepted_task_reply(task.task_id)
+
     @staticmethod
     def _accepted_task_reply(task_id: str) -> str:
         """Return the stable acknowledgement for a newly accepted task."""
@@ -639,6 +828,10 @@ class FeishuResearchBot:
         if record is None:
             return "当前对话中没有可跟踪的研究任务。"
         task = self._task_coordinator.get(record.task_id)
+        if isinstance(task, FeishuAgentTask):
+            if task.status == AnalysisTaskStatus.SUCCEEDED:
+                self._record_completed_agent_context(record, task)
+            return format_feishu_agent_task(task)
         if not isinstance(task, AnalysisTask):
             return f"未找到研究任务 {record.task_id}。"
         if task.status == AnalysisTaskStatus.SUCCEEDED:
@@ -654,6 +847,28 @@ class FeishuResearchBot:
         if record is None:
             return "当前对话中没有可重试的研究任务。"
         task = self._task_coordinator.get(record.task_id)
+        if isinstance(task, FeishuAgentTask):
+            if task.status != AnalysisTaskStatus.FAILED:
+                return (
+                    f"任务 {task.task_id} 当前状态为{_task_status_label(task.status)}，"
+                    "只有失败任务可以重试。"
+                )
+            retry_request = task.request.model_copy(
+                update={"source_message_id": event.message_id}
+            )
+            retried_task = self._agent_coordinator.submit(
+                retry_request,
+                task_id=self._task_id_for_event(event.event_id),
+            )
+            retry_record = FeishuTaskRecord(
+                task_id=retried_task.task_id,
+                source_event_id=event.event_id,
+                conversation_id=record.conversation_id,
+                prompt=record.prompt,
+                retry_of_task_id=record.task_id,
+            )
+            self._store.put_task(retry_record)
+            return self._retried_task_reply(retry_record)
         if not isinstance(task, AnalysisTask):
             return f"未找到研究任务 {record.task_id}。"
         if task.status != AnalysisTaskStatus.FAILED:
@@ -689,14 +904,54 @@ class FeishuResearchBot:
     ) -> Optional[FeishuTaskRecord]:
         """Resolve a task while enforcing conversation-level authorization."""
         task_id_match = TASK_ID_PATTERN.search(event.prompt)
+        active_conversation_id = (
+            self._active_agent_conversation_id(event.conversation_id)
+            if self._agent_coordinator is not None
+            else event.conversation_id
+        )
         record = (
             self._store.get_task(task_id_match.group(0).lower())
             if task_id_match
-            else self._store.get_latest_task(event.conversation_id)
+            else self._store.get_latest_task(active_conversation_id)
         )
-        if record is None or record.conversation_id != event.conversation_id:
+        if record is None or record.conversation_id != active_conversation_id:
             return None
         return record
+
+    def _active_agent_conversation_id(self, conversation_scope_id: str) -> str:
+        """Resolve the active named session within one isolated chat scope."""
+        state = self._store.get_session_state(conversation_scope_id)
+        return f"{conversation_scope_id}:session:{state.active_session_id}"
+
+    def _session_command_reply(self, event: FeishuMessageEvent) -> str:
+        """Create, list, or switch named sessions without invoking the model."""
+        state = self._store.get_session_state(event.conversation_id)
+        new_match = NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
+        if new_match:
+            name = (new_match.group("name") or "未命名会话").strip()
+            session = FeishuAgentSession(session_id=uuid4().hex[:8], name=name)
+            state.sessions.append(session)
+            state.active_session_id = session.session_id
+            self._store.put_session_state(event.conversation_id, state)
+            return f"已新建并切换到会话：{session.name}（{session.session_id}）"
+        if LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt):
+            lines = ["当前群聊会话："]
+            for session in state.sessions:
+                marker = "当前" if session.session_id == state.active_session_id else "可切换"
+                lines.append(f"- {session.name}（{session.session_id}，{marker}）")
+            return "\n".join(lines)
+        switch_match = SWITCH_SESSION_COMMAND_PATTERN.match(event.prompt)
+        target = switch_match.group("target").strip()
+        matches = [
+            session
+            for session in state.sessions
+            if session.session_id == target or session.name == target
+        ]
+        if len(matches) != 1:
+            return "未找到唯一匹配的会话，请发送“会话列表”查看名称和编号。"
+        state.active_session_id = matches[0].session_id
+        self._store.put_session_state(event.conversation_id, state)
+        return f"已切换到会话：{matches[0].name}（{matches[0].session_id}）"
 
     @staticmethod
     def _task_id_for_event(event_id: str) -> str:
@@ -713,6 +968,33 @@ class FeishuResearchBot:
             if isinstance(task, AnalysisTask) and task.status == AnalysisTaskStatus.SUCCEEDED:
                 self._record_completed_context(record, task)
         return self._store.get(conversation_id)
+
+    def _completed_agent_conversation(
+        self, conversation_id: str
+    ) -> list[FeishuConversationTurn]:
+        """Synchronize a successful latest agent answer before one follow-up."""
+        record = self._store.get_latest_task(conversation_id)
+        if record is not None and not record.context_recorded:
+            task = self._agent_coordinator.get(record.task_id)
+            if task is not None and task.status == AnalysisTaskStatus.SUCCEEDED:
+                self._record_completed_agent_context(record, task)
+        return self._store.get(conversation_id)
+
+    def _record_completed_agent_context(
+        self,
+        record: FeishuTaskRecord,
+        task: FeishuAgentTask,
+    ) -> None:
+        """Persist one complete agent exchange exactly once."""
+        if record.context_recorded or not task.answer:
+            return
+        turns = self._store.get(record.conversation_id)
+        turns.append(
+            FeishuConversationTurn(prompt=record.prompt, answer=task.answer)
+        )
+        self._store.put(record.conversation_id, turns)
+        record.context_recorded = True
+        self._store.put_task(record)
 
     def _record_completed_context(
         self,
@@ -749,6 +1031,20 @@ def format_analysis_task(task: AnalysisTask) -> str:
     if task.response is None:
         return f"{heading}\n任务已结束，但没有可展示的分析结果。"
     return f"{heading}\n{_format_analysis_response(task.response)}"
+
+
+def format_feishu_agent_task(task: FeishuAgentTask) -> str:
+    """Render one agent lifecycle without exposing internal tool arguments."""
+    heading = f"任务 {task.task_id}\n状态：{_task_status_label(task.status)}"
+    if task.status in {AnalysisTaskStatus.QUEUED, AnalysisTaskStatus.RUNNING}:
+        return f"{heading}\n进度：{task.progress_message}"
+    if task.status == AnalysisTaskStatus.FAILED:
+        message = task.error.message if task.error else "工作进程未返回错误详情。"
+        return f"{heading}\n失败原因：{message}\n回复“重试”可重新提交。"
+    answer = task.answer or "任务已完成，但没有可展示的回答。"
+    if task.artifact_name:
+        answer += f"\n附件：{task.artifact_name}"
+    return f"{heading}\n{answer}"
 
 
 def _format_analysis_response(response: AnalysisResponse) -> str:

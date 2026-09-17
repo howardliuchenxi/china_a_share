@@ -195,24 +195,33 @@ Open [http://127.0.0.1:5173/analysis](http://127.0.0.1:5173/analysis) or
 ## Feishu research bot
 
 The backend can receive signed Feishu custom-app events at
-`/api/integrations/feishu/events`. Each research message creates a durable
-analysis task and immediately returns its task identifier instead of running a
-long analysis inside the callback request. Users can send `查看进度` (optionally
-followed by a task identifier) to display queued, running, succeeded, or failed
-state in the same conversation. A failed task can be resubmitted with `重试`;
-the retry receives a new task identifier and preserves the exact validated
-request. Completed turns are isolated by tenant, chat, thread, and user, and
-only the three most recent validated interpretations are retained as follow-up
-context.
+`/api/integrations/feishu/events`. Each research message creates an independent
+durable agent task and immediately returns its task identifier instead of
+running long research inside the callback request. The worker uses DeepSeek V4
+Pro with an allowlisted read-only Tushare toolbox, deterministic dataframe
+transformations, and bounded tool-call rounds. It proactively replies at
+material stages and posts the terminal answer. Results with more than ten rows,
+or explicit export requests, can produce a two-sheet Excel workbook that is
+uploaded back to the originating Feishu message.
+
+Users can send `查看进度` (optionally followed by a task identifier) to inspect
+queued, running, succeeded, or failed state, and `重试` to resubmit a failed
+turn. Named sessions within the same group or private chat are managed with
+`新建会话 <名称>`, `会话列表`, and `切换会话 <名称或编号>`. Tasks in one named
+session may run concurrently. Completed turns are isolated by tenant, chat,
+thread, user, and named session, and up to twelve completed exchanges are
+retained as follow-up context. The legacy validated analysis workflow remains
+available in code as a rollback path but is not the default Feishu runtime.
 
 The callback validates the Feishu request signature before decrypting AES-256-CBC
 event envelopes. Plaintext bodies remain supported for local integration tests.
 
-Task execution reuses the same validated planning and provider pipeline as the
-web application. Feishu event claims, event-to-task mappings, conversation task
-pointers, and completed context are persisted so callback retries do not create
-duplicate tasks and instance replacement cannot silently lose an accepted
-request.
+Feishu V2 bypasses the web application's `AnalysisService`. It reuses only the
+provider catalog, audited Tushare adapter, and deterministic result-pipeline
+executor. Feishu event claims, event-to-task mappings, named sessions,
+conversation task pointers, and completed context are persisted so callback
+retries do not create duplicate tasks and instance replacement cannot silently
+lose an accepted request.
 
 Configure these additional secrets before enabling the callback:
 

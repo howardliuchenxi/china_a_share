@@ -26,6 +26,7 @@ from china_a_share.core.contracts import (
     ServiceError,
 )
 from china_a_share.core.ports import AnalysisTaskDispatcher, AnalysisTaskStore
+from china_a_share.feishu_agent import FeishuAgentTask
 
 
 ANALYSIS_TASK_PREFIX = "analysis-jobs"
@@ -48,16 +49,22 @@ class MemoryAnalysisTaskStore:
     """Store isolated task records in memory for local tests."""
 
     def __init__(self) -> None:
-        self._tasks: Dict[str, Union[AnalysisTask, DiscoveryTask]] = {}
+        self._tasks: Dict[
+            str, Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
+        ] = {}
         self._lock = Lock()
 
-    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
+    def get(
+        self, task_id: str
+    ) -> Optional[Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]]:
         """Return an isolated copy of one task."""
         with self._lock:
             task = self._tasks.get(task_id)
             return task.model_copy(deep=True) if task else None
 
-    def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
+    def put(
+        self, task: Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
+    ) -> None:
         """Create or replace one task atomically."""
         with self._lock:
             self._tasks[task.task_id] = task.model_copy(deep=True)
@@ -75,17 +82,23 @@ class CloudStorageAnalysisTaskStore:
         self._write_schedule: Dict[str, float] = {}
         self._write_schedule_lock = Lock()
 
-    def get(self, task_id: str) -> Optional[Union[AnalysisTask, DiscoveryTask]]:
+    def get(
+        self, task_id: str
+    ) -> Optional[Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]]:
         """Return one persisted task when its object exists."""
         blob = self._bucket.blob(self._object_name(task_id))
         if not blob.exists():
             return None
         data = json.loads(blob.download_as_text())
+        if data.get("task_type") == "feishu_agent":
+            return FeishuAgentTask.model_validate(data)
         if data.get("task_type") == "discovery":
             return DiscoveryTask.model_validate(data)
         return AnalysisTask.model_validate(data)
 
-    def put(self, task: Union[AnalysisTask, DiscoveryTask]) -> None:
+    def put(
+        self, task: Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
+    ) -> None:
         """Replace one complete task record."""
         object_name = self._object_name(task.task_id)
         self._wait_for_write_slot(object_name)
@@ -177,6 +190,16 @@ class AnalysisTaskCoordinator:
     ) -> None:
         self._store = store
         self._dispatcher = dispatcher
+
+    @property
+    def store(self) -> AnalysisTaskStore:
+        """Return the shared durable store for alternate task runtimes."""
+        return self._store
+
+    @property
+    def dispatcher(self) -> AnalysisTaskDispatcher:
+        """Return the configured asynchronous worker dispatcher."""
+        return self._dispatcher
 
     def submit(
         self,
