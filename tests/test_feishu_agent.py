@@ -403,6 +403,42 @@ def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):
     assert isinstance(store.get("agent-task"), FeishuAgentTask)
 
 
+def test_agent_coordinator_preserves_success_when_file_delivery_fails(tmp_path):
+    store = MemoryAnalysisTaskStore()
+    coordinator = FeishuAgentCoordinator(store, RecordingDispatcher())
+    request = FeishuAgentRequest(
+        prompt="Research banks and export Excel.",
+        conversation_id="tenant:chat:root:user",
+        source_message_id="message-1",
+    )
+    task = coordinator.submit(request, task_id="agent-task")
+    artifact_path = tmp_path / "result.xlsx"
+    artifact_path.write_bytes(b"xlsx")
+
+    class FakeRuntime:
+        def run(self, _request, _progress):
+            return FeishuAgentOutcome(
+                answer="研究完成。",
+                artifact_path=artifact_path,
+            )
+
+    class FailingFileSink(RecordingSink):
+        def reply_file(self, _message_id, _path):
+            raise RuntimeError("Feishu file upload failed.")
+
+    sink = FailingFileSink()
+    completed = coordinator.run(task.task_id, FakeRuntime(), sink)
+
+    assert completed.status == AnalysisTaskStatus.SUCCEEDED
+    assert completed.answer == "研究完成。"
+    assert completed.progress_message == "研究完成，但附件发送失败。"
+    assert completed.error is None
+    assert sink.updates[-1] == (
+        "progress-message-1",
+        "研究完成。\n\n研究已完成，但附件发送失败。请稍后回复“重试”重新生成附件。",
+    )
+
+
 def test_agent_coordinator_reserves_final_message_update():
     store = MemoryAnalysisTaskStore()
     coordinator = FeishuAgentCoordinator(store, RecordingDispatcher())
@@ -518,6 +554,33 @@ def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
     assert "params" not in session.calls[2][1]
     assert session.calls[2][1]["json"]["msg_type"] == "file"
     assert "reply_in_thread" not in session.calls[2][1]["json"]
+
+
+def test_feishu_client_reports_file_upload_permission_error(tmp_path):
+    path = tmp_path / "result.xlsx"
+    path.write_bytes(b"workbook")
+    session = SequenceSession(
+        [
+            FakeResponse({"code": 0, "tenant_access_token": "tenant-token"}),
+            FakeResponse(
+                {
+                    "code": 99991672,
+                    "msg": (
+                        "Access denied. Required scope: "
+                        "im:resource:upload."
+                    ),
+                },
+                status_code=400,
+            ),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="99991672.*im:resource:upload"):
+        FeishuOpenApiClient(
+            "app-id",
+            "app-secret",
+            session=session,
+        ).reply_file("message-1", path)
 
 
 @pytest.mark.live

@@ -253,10 +253,30 @@ class FeishuAgentCoordinator:
             self._store.put(task)
             publish(outcome.answer, terminal=True)
             if outcome.artifact_path is not None:
-                progress_sink.reply_file(
-                    task.request.source_message_id,
-                    outcome.artifact_path,
-                )
+                try:
+                    progress_sink.reply_file(
+                        task.request.source_message_id,
+                        outcome.artifact_path,
+                    )
+                except Exception:
+                    # The research result remains valid when only the external
+                    # attachment channel fails. Preserve success and keep the
+                    # textual answer visible instead of rewriting it as a model
+                    # or analysis failure.
+                    logger.exception(
+                        "feishu_agent_artifact_delivery_failed task_id=%s "
+                        "artifact=%s",
+                        task_id,
+                        outcome.artifact_path.name,
+                    )
+                    task.progress_message = "研究完成，但附件发送失败。"
+                    task.updated_at = datetime.now(timezone.utc)
+                    self._store.put(task)
+                    publish(
+                        outcome.answer
+                        + "\n\n研究已完成，但附件发送失败。请稍后回复“重试”重新生成附件。",
+                        terminal=True,
+                    )
         except Exception as exc:
             logger.exception("feishu_agent_execution_failed task_id=%s", task_id)
             task.status = AnalysisTaskStatus.FAILED

@@ -606,14 +606,23 @@ class FeishuOpenApiClient:
     @staticmethod
     def _raise_for_feishu_error(response: requests.Response, operation: str) -> None:
         """Fail fast on HTTP or Feishu application errors."""
+        try:
+            payload = response.json()
+        except (TypeError, ValueError):
+            payload = {}
+        code = payload.get("code")
+        message = str(payload.get("msg") or "").strip()
+        detail = ""
+        if code is not None or message:
+            detail = f" code={code} message={message[:300]}"
         if response.status_code >= 400:
             raise RuntimeError(
-                f"Feishu {operation} failed with HTTP {response.status_code}."
+                f"Feishu {operation} failed with HTTP {response.status_code}.{detail}"
             )
-        payload = response.json()
         if payload.get("code", 0) != 0:
             raise RuntimeError(
                 f"Feishu {operation} failed with code {payload.get('code')}."
+                f" message={message[:300]}"
             )
 
 
