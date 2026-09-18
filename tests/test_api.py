@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -28,6 +28,13 @@ from china_a_share.e2e_cases import (
     LiveCaseChangeSubmission,
     LiveCaseListResponse,
 )
+from china_a_share.feishu_agent import (
+    FeishuAgentRequest,
+    FeishuAgentTask,
+    FeishuResearchVisualization,
+    research_visualization_token_hash,
+)
+from china_a_share.tasks import MemoryAnalysisTaskStore
 ORIGINAL_COMPLEX_PROMPT = (
     "\u8fc7\u53bb\u4e00\u4e2a\u6708\uff0c\u533b\u7597\u884c\u4e1a\uff0c"
     "\u6309\u7167\u6563\u6237\u6bd4\u4f8b\u5206\u4e24\u534a\uff0c"
@@ -88,6 +95,11 @@ class FakeAnalysisTaskCoordinator:
             status=AnalysisTaskStatus.QUEUED,
             status_url="/api/analysis/tasks/analysis-api-task",
         )
+
+
+class ResearchResultCoordinator:
+    def __init__(self, store):
+        self.store = store
 
 
 class FakeDiscoveryCoordinator:
@@ -687,6 +699,121 @@ def test_analysis_prompt_does_not_select_a_special_delivery_mode():
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
+
+
+def test_research_viewer_requires_token_and_serves_workbook(tmp_path):
+    token = "viewer-token-abcdefghijklmnopqrstuvwxyz-123456"
+    now = datetime.now(timezone.utc)
+    store = MemoryAnalysisTaskStore()
+    task = FeishuAgentTask(
+        task_id="agent-task",
+        status=AnalysisTaskStatus.SUCCEEDED,
+        request=FeishuAgentRequest(
+            prompt="Create an interactive chart.",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        created_at=now,
+        updated_at=now,
+        stage="completed",
+        progress_message="研究完成。",
+        answer="研究结论。",
+        artifact_name="result.xlsx",
+        visualization=FeishuResearchVisualization(
+            title="Valuation ranking",
+            columns=["name", "pe_ttm"],
+            numeric_columns=["pe_ttm"],
+            rows=[{"name": "Example", "pe_ttm": 10.5}],
+            source_row_count=1,
+            truncated=False,
+            suggested_x="name",
+            suggested_y="pe_ttm",
+        ),
+        visualization_token_hash=research_visualization_token_hash(token),
+        visualization_expires_at=now + timedelta(days=30),
+    )
+    store.put(task)
+    workbook = tmp_path / "result.xlsx"
+    workbook.write_bytes(b"xlsx-content")
+    store.put_artifact(task.task_id, workbook)
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            task_coordinator=ResearchResultCoordinator(store),
+        )
+    )
+
+    denied = client.get(
+        "/api/research/visualizations/agent-task",
+        params={"token": "wrong-token-abcdefghijklmnopqrstuvwxyz-123456"},
+    )
+    response = client.get(
+        "/api/research/visualizations/agent-task",
+        params={"token": token},
+    )
+    download = client.get(
+        "/api/research/visualizations/agent-task/workbook",
+        params={"token": token},
+    )
+
+    assert denied.status_code == 404
+    assert response.status_code == 200
+    assert response.json()["answer"] == "研究结论。"
+    assert response.json()["visualization"]["rows"] == [
+        {"name": "Example", "pe_ttm": 10.5}
+    ]
+    assert download.status_code == 200
+    assert download.content == b"xlsx-content"
+    assert download.headers["content-disposition"] == (
+        'attachment; filename="result.xlsx"'
+    )
+
+
+def test_research_viewer_rejects_expired_link():
+    token = "viewer-token-abcdefghijklmnopqrstuvwxyz-123456"
+    now = datetime.now(timezone.utc)
+    store = MemoryAnalysisTaskStore()
+    store.put(
+        FeishuAgentTask(
+            task_id="expired-task",
+            status=AnalysisTaskStatus.SUCCEEDED,
+            request=FeishuAgentRequest(
+                prompt="Create an interactive chart.",
+                conversation_id="conversation",
+                source_message_id="message",
+            ),
+            created_at=now - timedelta(days=31),
+            updated_at=now,
+            stage="completed",
+            progress_message="研究完成。",
+            answer="研究结论。",
+            visualization=FeishuResearchVisualization(
+                title="Expired result",
+                columns=["value"],
+                numeric_columns=["value"],
+                rows=[{"value": 1}],
+                source_row_count=1,
+                truncated=False,
+                suggested_x="value",
+                suggested_y="value",
+            ),
+            visualization_token_hash=research_visualization_token_hash(token),
+            visualization_expires_at=now - timedelta(seconds=1),
+        )
+    )
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            task_coordinator=ResearchResultCoordinator(store),
+        )
+    )
+
+    response = client.get(
+        "/api/research/visualizations/expired-task",
+        params={"token": token},
+    )
+
+    assert response.status_code == 410
 
 
 def test_stock_endpoint_returns_paginated_catalog():

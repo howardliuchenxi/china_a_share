@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+from pathlib import Path
+import re
 from threading import Lock
 import time
 from typing import Dict, Optional, Union
@@ -52,6 +54,7 @@ class MemoryAnalysisTaskStore:
         self._tasks: Dict[
             str, Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
         ] = {}
+        self._artifacts: Dict[tuple[str, str], bytes] = {}
         self._lock = Lock()
 
     def get(
@@ -68,6 +71,28 @@ class MemoryAnalysisTaskStore:
         """Create or replace one task atomically."""
         with self._lock:
             self._tasks[task.task_id] = task.model_copy(deep=True)
+
+    def put_artifact(self, task_id: str, path: Path) -> None:
+        """Persist one generated artifact for local tests."""
+        artifact_name = path.name
+        self._validate_artifact_identity(task_id, artifact_name)
+        with self._lock:
+            self._artifacts[(task_id, artifact_name)] = path.read_bytes()
+
+    def get_artifact(self, task_id: str, artifact_name: str) -> Optional[bytes]:
+        """Return one isolated artifact copy when it exists."""
+        self._validate_artifact_identity(task_id, artifact_name)
+        with self._lock:
+            value = self._artifacts.get((task_id, artifact_name))
+            return bytes(value) if value is not None else None
+
+    @staticmethod
+    def _validate_artifact_identity(task_id: str, artifact_name: str) -> None:
+        """Reject identifiers that could escape the task artifact namespace."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
+            raise ValueError("Task identifier contains unsupported characters.")
+        if not artifact_name or artifact_name != Path(artifact_name).name:
+            raise ValueError("Artifact name must be a plain file name.")
 
 
 class CloudStorageAnalysisTaskStore:
@@ -109,6 +134,28 @@ class CloudStorageAnalysisTaskStore:
             retry=STORAGE_WRITE_RETRY,
         )
 
+    def put_artifact(self, task_id: str, path: Path) -> None:
+        """Persist one generated artifact within the task lifecycle prefix."""
+        object_name = self._artifact_object_name(task_id, path.name)
+        self._bucket.blob(object_name).upload_from_filename(
+            str(path),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                if path.suffix.casefold() == ".xlsx"
+                else "application/octet-stream"
+            ),
+            retry=STORAGE_WRITE_RETRY,
+        )
+
+    def get_artifact(self, task_id: str, artifact_name: str) -> Optional[bytes]:
+        """Return one persisted artifact when its task-scoped object exists."""
+        blob = self._bucket.blob(
+            self._artifact_object_name(task_id, artifact_name)
+        )
+        if not blob.exists():
+            return None
+        return blob.download_as_bytes(retry=STORAGE_WRITE_RETRY)
+
     def _wait_for_write_slot(self, object_name: str) -> None:
         """Reserve a per-object write slot without throttling unrelated tasks."""
         now = time.monotonic()
@@ -130,6 +177,12 @@ class CloudStorageAnalysisTaskStore:
     def _object_name(task_id: str) -> str:
         """Return the private object name for one validated task identifier."""
         return f"{ANALYSIS_TASK_PREFIX}/{task_id}.json"
+
+    @staticmethod
+    def _artifact_object_name(task_id: str, artifact_name: str) -> str:
+        """Return one traversal-safe object name under the task lifecycle prefix."""
+        MemoryAnalysisTaskStore._validate_artifact_identity(task_id, artifact_name)
+        return f"{ANALYSIS_TASK_PREFIX}/{task_id}/artifacts/{artifact_name}"
 
 
 class CloudRunJobDispatcher:

@@ -98,9 +98,22 @@ class FakeAuthorizedSession:
 class FakeStorageBlob:
     def __init__(self):
         self.uploads = []
+        self.artifact_content = None
 
     def upload_from_string(self, payload, *, content_type, retry):
         self.uploads.append((payload, content_type, retry))
+
+    def upload_from_filename(self, filename, *, content_type, retry):
+        with open(filename, "rb") as handle:
+            self.artifact_content = handle.read()
+        self.uploads.append((filename, content_type, retry))
+
+    def exists(self):
+        return self.artifact_content is not None
+
+    def download_as_bytes(self, *, retry):
+        assert retry is not None
+        return self.artifact_content
 
 
 class FakeStorageBucket:
@@ -326,3 +339,19 @@ def test_cloud_storage_store_does_not_throttle_different_objects(monkeypatch):
         )
 
     assert sleeps == []
+
+
+def test_cloud_storage_store_round_trips_task_artifact(tmp_path):
+    client = FakeStorageClient()
+    store = CloudStorageAnalysisTaskStore("bucket", storage_client=client)
+    path = tmp_path / "result.xlsx"
+    path.write_bytes(b"workbook")
+
+    store.put_artifact("agent-task", path)
+
+    object_name = "analysis-jobs/agent-task/artifacts/result.xlsx"
+    blob = client.bucket_instance.blobs[object_name]
+    assert blob.uploads[0][1] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert store.get_artifact("agent-task", "result.xlsx") == b"workbook"

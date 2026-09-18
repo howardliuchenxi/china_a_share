@@ -39,7 +39,11 @@ def main() -> None:
         raise RuntimeError(f"Task {task_id} not found in store.")
         
     if isinstance(task, FeishuAgentTask):
-        coordinator = FeishuAgentCoordinator(store, WorkerDispatcher())
+        coordinator = FeishuAgentCoordinator(
+            store,
+            WorkerDispatcher(),
+            public_app_url=settings.public_app_url,
+        )
         try:
             runtime = create_feishu_agent_runtime(settings)
             progress_sink = FeishuOpenApiClient(

@@ -13,6 +13,7 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("LLM_API_SECRET", raising=False)
     monkeypatch.delenv("RESEARCH_SANDBOX_URL", raising=False)
+    monkeypatch.delenv("PUBLIC_APP_URL", raising=False)
     env_file = tmp_path / ".env"
     env_file.write_text(
         "TUSHARE_TOKEN=abc123\n"
@@ -23,7 +24,8 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
         "LLM_MODEL=research-model\n"
         "LLM_API_KEY=model-key\n"
         "LLM_API_SECRET=model-secret\n"
-        "RESEARCH_SANDBOX_URL=https://sandbox.example\n",
+        "RESEARCH_SANDBOX_URL=https://sandbox.example\n"
+        "PUBLIC_APP_URL=https://research.example/\n",
         encoding="utf-8",
     )
 
@@ -37,6 +39,7 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
     assert settings.llm_api_key == "model-key"
     assert settings.llm_api_secret == "model-secret"
     assert settings.research_sandbox_url == "https://sandbox.example"
+    assert settings.public_app_url == "https://research.example"
 
 
 def test_settings_rejects_missing_token(monkeypatch, tmp_path):

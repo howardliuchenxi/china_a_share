@@ -4,7 +4,10 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
+import secrets
 from time import perf_counter
+from datetime import datetime, timezone
 from typing import Literal, Optional, Union
 from uuid import uuid4
 
@@ -17,7 +20,7 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .application.workflow import (
@@ -60,6 +63,7 @@ from .e2e_cases import (
 from .observability import log_event
 from .tasks import AnalysisTaskCoordinator
 from .feishu import FeishuEventError, FeishuResearchBot
+from .feishu_agent import FeishuAgentTask, research_visualization_token_hash
 
 
 FRONTEND_DIST = Path(
@@ -78,6 +82,8 @@ UI_FEEDBACK_CONFIG_API_ROUTE = "/api/ui-feedback/config"
 UI_FEEDBACK_CHAT_API_ROUTE = "/api/ui-feedback/chat"
 LIVE_CASES_API_ROUTE = "/api/e2e-cases"
 FEISHU_EVENTS_API_ROUTE = "/api/integrations/feishu/events"
+RESEARCH_VISUALIZATION_API_ROUTE = "/api/research/visualizations"
+RESEARCH_PAGE_ROUTE = "/research"
 ANALYSIS_PAGE_ROUTE = "/analysis"
 BASIC_PAGE_ROUTE = "/basic"
 MONITORED_API_ROUTES = {
@@ -90,11 +96,13 @@ MONITORED_API_ROUTES = {
     UI_FEEDBACK_CHAT_API_ROUTE,
     LIVE_CASES_API_ROUTE,
     FEISHU_EVENTS_API_ROUTE,
+    RESEARCH_VISUALIZATION_API_ROUTE,
 }
 MILLISECONDS_PER_SECOND = 1_000
 DEFAULT_STOCK_PAGE_SIZE = 20
 MAX_STOCK_PAGE_SIZE = 100
 MAX_STOCK_FILTER_LENGTH = 100
+RESEARCH_TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 logger = logging.getLogger(__name__)
@@ -153,6 +161,7 @@ def create_app(
                 api_route in MONITORED_API_ROUTES
                 or api_route.startswith(f"{ANALYSIS_TASK_API_ROUTE}/")
                 or api_route.startswith(f"{LIVE_CASES_API_ROUTE}/")
+                or api_route.startswith(f"{RESEARCH_VISUALIZATION_API_ROUTE}/")
             ):
                 response_size = 0
                 try:
@@ -212,6 +221,41 @@ def create_app(
                 Settings.from_env()
             )
         return active_feishu_research_bot
+
+    def get_authorized_research_visualization(
+        task_id: str,
+        token: str,
+    ) -> FeishuAgentTask:
+        """Return one unexpired Feishu result after bearer-token verification."""
+        nonlocal active_task_coordinator
+        if not RESEARCH_TASK_ID_PATTERN.fullmatch(task_id):
+            raise HTTPException(status_code=404, detail="Research result was not found.")
+        if active_task_coordinator is None:
+            active_task_coordinator = create_analysis_task_coordinator(
+                Settings.from_env()
+            )
+        task = active_task_coordinator.store.get(task_id)
+        if (
+            not isinstance(task, FeishuAgentTask)
+            or task.visualization is None
+            or not task.visualization_token_hash
+            or task.visualization_expires_at is None
+        ):
+            raise HTTPException(status_code=404, detail="Research result was not found.")
+        if task.visualization_expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="This research link has expired.",
+            )
+        supplied_hash = research_visualization_token_hash(token)
+        if not secrets.compare_digest(
+            supplied_hash,
+            task.visualization_token_hash,
+        ):
+            # Use the same response as an unknown task so token probes cannot
+            # reveal whether a private research result exists.
+            raise HTTPException(status_code=404, detail="Research result was not found.")
+        return task
 
     @application.post(FEISHU_EVENTS_API_ROUTE)
     async def receive_feishu_event(
@@ -669,6 +713,48 @@ def create_app(
             error=task.error,
         )
 
+    @application.get(f"{RESEARCH_VISUALIZATION_API_ROUTE}/{{task_id}}")
+    def get_research_visualization(
+        task_id: str,
+        token: str = Query(min_length=32, max_length=128),
+    ) -> dict:
+        """Return one token-protected read-only interactive research dataset."""
+        task = get_authorized_research_visualization(task_id, token)
+        return {
+            "task_id": task.task_id,
+            "answer": task.answer,
+            "visualization": task.visualization.model_dump(mode="json"),
+            "artifact_name": task.artifact_name,
+            "expires_at": task.visualization_expires_at,
+        }
+
+    @application.get(
+        f"{RESEARCH_VISUALIZATION_API_ROUTE}/{{task_id}}/workbook"
+    )
+    def download_research_workbook(
+        task_id: str,
+        token: str = Query(min_length=32, max_length=128),
+    ) -> Response:
+        """Download the workbook associated with one authorized research viewer."""
+        task = get_authorized_research_visualization(task_id, token)
+        if not task.artifact_name:
+            raise HTTPException(status_code=404, detail="Workbook was not found.")
+        content = active_task_coordinator.store.get_artifact(
+            task.task_id,
+            task.artifact_name,
+        )
+        if content is None:
+            raise HTTPException(status_code=404, detail="Workbook was not found.")
+        return Response(
+            content=content,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            headers={
+                "Content-Disposition": f'attachment; filename="{task.artifact_name}"'
+            },
+        )
+
     @application.get(STOCKS_API_ROUTE, response_model=StockListResponse)
     def list_stocks(
         http_request: Request,
@@ -773,6 +859,14 @@ def create_app(
         @application.get(ANALYSIS_PAGE_ROUTE, include_in_schema=False)
         def frontend_page() -> FileResponse:
             """Serve the unified frontend entry point."""
+            return FileResponse(FRONTEND_DIST / "index.html")
+
+        @application.get(
+            f"{RESEARCH_PAGE_ROUTE}/{{task_id}}",
+            include_in_schema=False,
+        )
+        def research_visualization_page(task_id: str) -> FileResponse:
+            """Serve the viewer shell without exposing protected research data."""
             return FileResponse(FRONTEND_DIST / "index.html")
 
         application.mount(

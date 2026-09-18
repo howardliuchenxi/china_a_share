@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 import logging
 from pathlib import Path
+import secrets
 import tempfile
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Protocol
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import pandas as pd
@@ -26,6 +29,7 @@ from china_a_share.result_pipeline import ResultPipelineExecutor
 MAX_AGENT_PREVIEW_ROWS = 20
 MAX_AGENT_CONTEXT_TURNS = 12
 MAX_AGENT_PROGRESS_UPDATES = 19
+RESEARCH_VISUALIZATION_LINK_LIFETIME = timedelta(days=30)
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +56,30 @@ class FeishuAgentRequest(BaseModel):
     )
 
 
+class FeishuResearchVisualization(BaseModel):
+    """Bounded tabular data used by the public read-only research viewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, description="Human-readable research title.")
+    columns: List[str] = Field(description="Ordered columns available to the viewer.")
+    numeric_columns: List[str] = Field(
+        description="Columns whose retained values are numeric."
+    )
+    rows: List[Dict[str, Any]] = Field(
+        description="Bounded JSON-safe rows retained for interactive exploration."
+    )
+    source_row_count: int = Field(
+        ge=0,
+        description="Complete row count in the source workbook before viewer limits.",
+    )
+    truncated: bool = Field(
+        description="Whether the viewer contains fewer rows than the source workbook."
+    )
+    suggested_x: str = Field(description="Default horizontal-axis column.")
+    suggested_y: str = Field(description="Default numeric vertical-axis column.")
+
+
 class FeishuAgentTask(BaseModel):
     """Durable lifecycle and output for one independent Feishu agent turn."""
 
@@ -67,6 +95,18 @@ class FeishuAgentTask(BaseModel):
     progress_message: str = Field(default="等待研究任务启动。", min_length=1)
     answer: Optional[str] = None
     artifact_name: Optional[str] = None
+    visualization: Optional[FeishuResearchVisualization] = Field(
+        default=None,
+        description="Bounded dataset exposed by the token-protected research viewer.",
+    )
+    visualization_token_hash: Optional[str] = Field(
+        default=None,
+        description="SHA-256 digest of the bearer token required by the viewer.",
+    )
+    visualization_expires_at: Optional[datetime] = Field(
+        default=None,
+        description="UTC time after which the viewer and workbook are unavailable.",
+    )
     error: Optional[ServiceError] = None
 
 
@@ -78,6 +118,12 @@ class AgentTaskStore(Protocol):
 
     def put(self, task: FeishuAgentTask) -> None:
         """Create or replace one task."""
+
+    def put_artifact(self, task_id: str, path: Path) -> None:
+        """Persist one generated artifact under its task identifier."""
+
+    def get_artifact(self, task_id: str, artifact_name: str) -> Optional[bytes]:
+        """Return one persisted artifact when it exists."""
 
 
 class AgentTaskDispatcher(Protocol):
@@ -147,9 +193,16 @@ class PythonSandbox(Protocol):
 class FeishuAgentCoordinator:
     """Submit independent Feishu turns without conversation-level serialization."""
 
-    def __init__(self, store: AgentTaskStore, dispatcher: AgentTaskDispatcher) -> None:
+    def __init__(
+        self,
+        store: AgentTaskStore,
+        dispatcher: AgentTaskDispatcher,
+        *,
+        public_app_url: str = "",
+    ) -> None:
         self._store = store
         self._dispatcher = dispatcher
+        self._public_app_url = public_app_url.rstrip("/")
 
     def submit(
         self,
@@ -246,12 +299,47 @@ class FeishuAgentCoordinator:
             task.artifact_name = (
                 outcome.artifact_path.name if outcome.artifact_path is not None else None
             )
+            terminal_message = outcome.answer
+            if (
+                outcome.visualization is not None
+                and outcome.artifact_path is not None
+                and self._public_app_url
+            ):
+                try:
+                    self._store.put_artifact(task_id, outcome.artifact_path)
+                    token = secrets.token_urlsafe(32)
+                    task.visualization = outcome.visualization
+                    task.visualization_token_hash = research_visualization_token_hash(
+                        token
+                    )
+                    task.visualization_expires_at = (
+                        datetime.now(timezone.utc)
+                        + RESEARCH_VISUALIZATION_LINK_LIFETIME
+                    )
+                    query = urlencode({"token": token})
+                    visualization_url = (
+                        f"{self._public_app_url}/research/{task_id}?{query}"
+                    )
+                    terminal_message += (
+                        "\n\n交互图表（30天内有效，点击后直接查看）：\n"
+                        + visualization_url
+                    )
+                except Exception:
+                    # A viewer publication failure must not invalidate research or
+                    # the separately delivered Feishu workbook attachment.
+                    logger.exception(
+                        "feishu_agent_visualization_publish_failed task_id=%s",
+                        task_id,
+                    )
+                    task.visualization = None
+                    task.visualization_token_hash = None
+                    task.visualization_expires_at = None
             task.status = AnalysisTaskStatus.SUCCEEDED
             task.stage = "completed"
             task.progress_message = "研究完成。"
             task.updated_at = datetime.now(timezone.utc)
             self._store.put(task)
-            publish(outcome.answer, terminal=True)
+            publish(terminal_message, terminal=True)
             if outcome.artifact_path is not None:
                 try:
                     progress_sink.reply_file(
@@ -296,6 +384,12 @@ class FeishuAgentOutcome(BaseModel):
 
     answer: str = Field(min_length=1)
     artifact_path: Optional[Path] = None
+    visualization: Optional[FeishuResearchVisualization] = None
+
+
+def research_visualization_token_hash(token: str) -> str:
+    """Return the stable digest used to verify one viewer bearer token."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 class ResearchToolbox:

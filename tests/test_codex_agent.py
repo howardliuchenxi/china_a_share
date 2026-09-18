@@ -1,10 +1,15 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from china_a_share.codex_agent import CodexFeishuAgentRuntime
+from china_a_share.codex_agent import (
+    CodexFeishuAgentRuntime,
+    _build_research_visualization,
+)
+from china_a_share.core.contracts import QueryResult, QueryStatus
 from china_a_share.feishu_agent import (
     FeishuAgentConversationTurn,
     FeishuAgentRequest,
+    build_research_workbook,
 )
 
 
@@ -289,3 +294,34 @@ def test_codex_runtime_accepts_latest_agent_message_without_phase():
     )
 
     assert outcome.answer == "DeepSeek 返回的有效最终回答。"
+
+
+def test_workbook_is_converted_to_bounded_interactive_dataset(tmp_path):
+    workbook_path = build_research_workbook(
+        QueryResult(
+            query_id="ranking",
+            provider="tushare",
+            operation="daily_basic",
+            status=QueryStatus.SUCCESS,
+            columns=["name", "trade_date", "pe_ttm"],
+            rows=[
+                {"name": "Example A", "trade_date": "20260916", "pe_ttm": 8.5},
+                {"name": "Example B", "trade_date": "20260916", "pe_ttm": 12.0},
+            ],
+            row_count=2,
+        ),
+        "Valuation ranking",
+        "Rank the complete market snapshot.",
+        output_dir=tmp_path,
+    )
+
+    visualization = _build_research_visualization(workbook_path)
+
+    assert visualization is not None
+    assert visualization.title == "Valuation ranking"
+    assert visualization.columns == ["name", "trade_date", "pe_ttm"]
+    assert visualization.numeric_columns == ["pe_ttm"]
+    assert visualization.rows[0]["pe_ttm"] == 8.5
+    assert visualization.source_row_count == 2
+    assert visualization.suggested_x == "name"
+    assert visualization.suggested_y == "pe_ttm"

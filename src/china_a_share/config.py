@@ -45,6 +45,8 @@ class Settings:
     llm_api_secret: str = ""
     # Private URL of the secretless research sandbox service.
     research_sandbox_url: str = ""
+    # Stable public origin used in token-protected research viewer links.
+    public_app_url: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -88,6 +90,7 @@ class Settings:
         llm_api_key = os.getenv("LLM_API_KEY", "").strip()
         llm_api_secret = os.getenv("LLM_API_SECRET", "").strip()
         research_sandbox_url = os.getenv("RESEARCH_SANDBOX_URL", "").strip()
+        public_app_url = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
@@ -112,4 +115,5 @@ class Settings:
             llm_api_key=llm_api_key,
             llm_api_secret=llm_api_secret,
             research_sandbox_url=research_sandbox_url,
+            public_app_url=public_app_url,
         )

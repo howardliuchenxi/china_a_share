@@ -14,8 +14,10 @@ from china_a_share.feishu_agent import (
     FeishuAgentOutcome,
     FeishuAgentRequest,
     FeishuAgentTask,
+    FeishuResearchVisualization,
     ResearchToolbox,
     build_research_workbook,
+    research_visualization_token_hash,
 )
 from china_a_share.feishu import FeishuOpenApiClient
 from china_a_share.registry import TushareOperationCatalog
@@ -437,6 +439,58 @@ def test_agent_coordinator_preserves_success_when_file_delivery_fails(tmp_path):
         "progress-message-1",
         "研究完成。\n\n研究已完成，但附件发送失败。请稍后回复“重试”重新生成附件。",
     )
+
+
+def test_agent_coordinator_publishes_tokenized_visualization_link(tmp_path):
+    store = MemoryAnalysisTaskStore()
+    coordinator = FeishuAgentCoordinator(
+        store,
+        RecordingDispatcher(),
+        public_app_url="https://research.example/",
+    )
+    task = coordinator.submit(
+        FeishuAgentRequest(
+            prompt="Create an interactive valuation chart.",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        task_id="agent-task",
+    )
+    artifact_path = tmp_path / "result.xlsx"
+    artifact_path.write_bytes(b"workbook")
+    visualization = FeishuResearchVisualization(
+        title="Valuation ranking",
+        columns=["name", "pe_ttm"],
+        numeric_columns=["pe_ttm"],
+        rows=[{"name": "Example", "pe_ttm": 12.5}],
+        source_row_count=1,
+        truncated=False,
+        suggested_x="name",
+        suggested_y="pe_ttm",
+    )
+
+    class FakeRuntime:
+        def run(self, _request, _progress):
+            return FeishuAgentOutcome(
+                answer="研究完成。",
+                artifact_path=artifact_path,
+                visualization=visualization,
+            )
+
+    sink = RecordingSink()
+    completed = coordinator.run(task.task_id, FakeRuntime(), sink)
+
+    terminal_message = sink.updates[-1][1]
+    link = terminal_message.rsplit("\n", 1)[-1]
+    token = link.split("token=", 1)[1]
+    assert link.startswith("https://research.example/research/agent-task?")
+    assert completed.visualization == visualization
+    assert completed.visualization_token_hash == research_visualization_token_hash(
+        token
+    )
+    assert token not in completed.model_dump_json()
+    assert completed.visualization_expires_at is not None
+    assert store.get_artifact("agent-task", "result.xlsx") == b"workbook"
 
 
 def test_agent_coordinator_reserves_final_message_update():

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from datetime import date, datetime
 import json
 import logging
+import math
+from numbers import Real
 from pathlib import Path
 import shutil
 import sys
@@ -14,6 +17,7 @@ from typing import Any, Callable, Optional, Tuple
 from china_a_share.feishu_agent import (
     FeishuAgentOutcome,
     FeishuAgentRequest,
+    FeishuResearchVisualization,
     MAX_AGENT_CONTEXT_TURNS,
 )
 
@@ -23,6 +27,8 @@ CODEX_MODEL_PROVIDER = "deepseek"
 CODEX_TURN_TIMEOUT_SECONDS = 900
 CODEX_INTERRUPT_GRACE_SECONDS = 30
 SUPPORTED_ARTIFACT_SUFFIXES = {".csv", ".docx", ".pdf", ".xlsx"}
+MAX_VISUALIZATION_ROWS = 2_000
+MAX_VISUALIZATION_COLUMNS = 24
 
 
 class CodexFeishuAgentRuntime:
@@ -83,6 +89,7 @@ class CodexFeishuAgentRuntime:
                 final_response, duration_ms = _run_turn_with_progress(turn, progress)
 
             artifact_path = _persist_artifact(artifact_dir)
+            visualization = _build_research_visualization(artifact_path)
             answer = str(final_response or "").strip()
             if not answer:
                 answer = _empty_response_follow_up(artifact_path)
@@ -105,6 +112,7 @@ class CodexFeishuAgentRuntime:
             return FeishuAgentOutcome(
                 answer=answer,
                 artifact_path=artifact_path,
+                visualization=visualization,
             )
 
     def _codex_environment(self, artifact_dir: Path) -> dict[str, str]:
@@ -310,7 +318,9 @@ def _developer_instructions() -> str:
         "a tool rejects invalid arguments, inspect its schema and correct the call "
         "once; do not repeat equivalent failing calls. Never invent missing values. "
         "If a result has more than ten rows or the user asks for a file, create an "
-        "Excel artifact with the export tool. Do not create keyword routes, "
+        "Excel artifact with the export tool. When the user asks for a chart or "
+        "interactive visualization, export the complete final dataset to Excel so "
+        "the delivery layer can render it interactively. Do not create keyword routes, "
         "domain-specific shortcuts, or special cases for individual questions."
     )
 
@@ -350,3 +360,94 @@ def _persist_artifact(artifact_dir: Path) -> Optional[Path]:
     output_path = output_dir / source.name
     shutil.copy2(source, output_path)
     return output_path
+
+
+def _build_research_visualization(
+    artifact_path: Optional[Path],
+) -> Optional[FeishuResearchVisualization]:
+    """Extract a bounded JSON-safe viewer dataset from one generated workbook."""
+    if artifact_path is None or artifact_path.suffix.casefold() != ".xlsx":
+        return None
+    try:
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(artifact_path, read_only=True, data_only=True)
+        sheet = workbook["Results"] if "Results" in workbook.sheetnames else workbook.active
+        title = str(sheet["A2"].value or "A股研究结果").strip()
+        raw_headers = next(
+            sheet.iter_rows(min_row=5, max_row=5, values_only=True),
+            (),
+        )
+        headers = [
+            str(value).strip()
+            for value in raw_headers[:MAX_VISUALIZATION_COLUMNS]
+            if value is not None and str(value).strip()
+        ]
+        if not headers:
+            workbook.close()
+            return None
+        rows = []
+        for values in sheet.iter_rows(
+            min_row=6,
+            max_col=len(headers),
+            values_only=True,
+        ):
+            if len(rows) >= MAX_VISUALIZATION_ROWS:
+                break
+            if not any(value is not None for value in values):
+                continue
+            rows.append(
+                {
+                    column: _json_safe_cell(value)
+                    for column, value in zip(headers, values)
+                }
+            )
+        source_row_count = max(sheet.max_row - 5, 0)
+        workbook.close()
+        numeric_columns = [
+            column
+            for column in headers
+            if any(_is_numeric(row.get(column)) for row in rows)
+        ]
+        suggested_x = next(
+            (column for column in headers if column not in numeric_columns),
+            headers[0],
+        )
+        suggested_y = numeric_columns[-1] if numeric_columns else ""
+        return FeishuResearchVisualization(
+            title=title,
+            columns=headers,
+            numeric_columns=numeric_columns,
+            rows=rows,
+            source_row_count=source_row_count,
+            truncated=source_row_count > len(rows),
+            suggested_x=suggested_x,
+            suggested_y=suggested_y,
+        )
+    except Exception:
+        # Workbook delivery remains useful even when a malformed sheet cannot be
+        # converted into the optional interactive viewer contract.
+        logger.exception(
+            "codex_feishu_visualization_extract_failed artifact=%s",
+            artifact_path.name,
+        )
+        return None
+
+
+def _json_safe_cell(value: Any) -> Any:
+    """Normalize workbook scalars into bounded JSON-compatible values."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Real):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    return str(value)
+
+
+def _is_numeric(value: Any) -> bool:
+    """Return whether one normalized viewer value is a finite number."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)

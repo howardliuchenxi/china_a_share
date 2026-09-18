@@ -41,3 +41,4 @@ def test_worker_deployment_uses_generic_model_configuration():
     assert "LLM_MODEL=${_LLM_MODEL}" in worker_block
     assert "LLM_API_KEY=deepseek-api-key:latest" in worker_block
     assert "RESEARCH_SANDBOX_URL=" in worker_block
+    assert "PUBLIC_APP_URL=${_SERVICE_URL}" in worker_block
