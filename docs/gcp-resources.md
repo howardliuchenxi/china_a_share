@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-08-11**
+Last verified: **2026-09-18**
 
 ## Project boundary
 
@@ -54,6 +54,8 @@ one instance across traffic-serving revisions.
 | `TUSHARE_TOKEN` | Secret Manager secret `tushare-token`, version `latest` |
 | `DEEPSEEK_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest` |
 | `ZAI_API_KEY` | Secret Manager secret `zai-api-key`, version `latest` |
+| `MASSIVE_API_KEY` | Secret Manager secret `massive-api-key`, version `latest` |
+| `FINNHUB_API_KEY` | Secret Manager secret `finnhub-api-key`, version `latest` |
 | `GITHUB_FIX_TOKEN` | Secret Manager secret `github-fix-token`, version `latest` |
 | `TUSHARE_CACHE_BUCKET` | Plain value `china-a-share-lab-cache-asia-east2` |
 | `GOOGLE_CLOUD_PROJECT` | Plain value `china-a-share-lab` |
@@ -164,11 +166,15 @@ size exceeds the 0.5 GiB monthly Artifact Registry free allowance by roughly
 | `feishu-verification-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `feishu-encrypt-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `feishu-bot-webhook` | Version 2, enabled | Automatic | Deployment automation identity only |
+| `finnhub-api-key` | Version 1, enabled | Automatic | No runtime binding yet |
+| `massive-api-key` | Version 1, enabled | Automatic | No runtime binding yet |
 
-The seven application secrets grant `roles/secretmanager.secretAccessor`
+The seven existing application secrets grant `roles/secretmanager.secretAccessor`
 directly to `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`.
 The Feishu webhook grants the same role only to the deployment automation
 identity so verified production deployments can notify the administrator group.
+The two U.S. market-data secrets were created manually on 2026-09-18 and remain
+unreadable by the runtime until their explicit secret-level grants are applied.
 Secret values must never be added to this document.
 
 ## Logging and Monitoring
@@ -210,7 +216,9 @@ account's monthly free allotment; expected low traffic should remain within the
 
 `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`
 
-- Reads the seven application secrets through secret-level IAM grants.
+- Reads the seven existing application secrets through secret-level IAM grants.
+- Does not yet read `finnhub-api-key` or `massive-api-key`; both require explicit
+  secret-level grants before the U.S. market-data integration is deployed.
 - Creates, reads, updates, and deletes objects in the private cache bucket.
 - Executes only `china-a-share-analysis-worker` with per-execution overrides.
 - Does not have a broad project-level role.
@@ -322,7 +330,8 @@ The following services are not live resources for this project:
   to applicable free allowances.
 - Artifact Registry is approximately 0.5 GiB above its monthly free storage
   allowance, with a low single-digit-cent expected monthly charge.
-- Four active secret versions are within the Secret Manager free allowance.
+- Secret Manager access remains low volume. The two U.S. market-data credentials
+  add two active versions and no continuous compute cost.
 - The Feishu deployment webhook adds one low-volume secret access and one
   outbound request after each real deployment, with no material expected cost.
 - The persistent cache has a 90-day deletion lifecycle to prevent unbounded

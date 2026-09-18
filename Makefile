@@ -76,7 +76,7 @@ deploy: check
 		--timeout 300 \
 		--service-account "$(RUNTIME_SERVICE_ACCOUNT)" \
 		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)",ADMIN_EMAIL="$(ADMIN_EMAIL)",GOOGLE_OAUTH_CLIENT_ID="$(GOOGLE_OAUTH_CLIENT_ID)",GITHUB_FIX_REPO="$(GITHUB_FIX_REPO)",FEISHU_APP_ID="$(FEISHU_APP_ID)" \
-		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest \
+		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,MASSIVE_API_KEY=massive-api-key:latest,FINNHUB_API_KEY=finnhub-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest \
 		--quiet
 	image="$$(CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run services describe "$(SERVICE)" \
 		--project "$(PROJECT_ID)" \
@@ -97,7 +97,7 @@ deploy: check
 		--memory 4Gi \
 		--service-account "$(RUNTIME_SERVICE_ACCOUNT)" \
 		--set-env-vars TUSHARE_CACHE_BUCKET="$(CACHE_BUCKET)",GOOGLE_CLOUD_PROJECT="$(PROJECT_ID)",CLOUD_RUN_REGION="$(REGION)",ANALYSIS_JOB_NAME="$(ANALYSIS_JOB)",APP_GIT_BRANCH="$(TARGET_BRANCH)",APP_GIT_SHA="$$(git rev-parse HEAD)" \
-		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest \
+		--set-secrets TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,MASSIVE_API_KEY=massive-api-key:latest,FINNHUB_API_KEY=finnhub-api-key:latest \
 		--quiet
 	CLOUDSDK_PYTHON="$(CLOUDSDK_PYTHON)" "$(GCLOUD)" run jobs add-iam-policy-binding "$(ANALYSIS_JOB)" \
 		--project "$(PROJECT_ID)" \
