@@ -174,11 +174,23 @@ def create_server_from_env() -> ResearchMcpServer:
 
     artifact_dir_value = os.getenv("CODEX_AGENT_ARTIFACT_DIR", "").strip()
     artifact_dir = Path(artifact_dir_value) if artifact_dir_value else None
+    task_id = os.getenv("ANALYSIS_TASK_ID", "").strip()
+    conversation_id = os.getenv("CODEX_AGENT_CONVERSATION_ID", "").strip()
+    dataset_archive = None
+    session_dataset = None
+    if task_id and conversation_id:
+        from china_a_share.tasks import CloudStorageAnalysisTaskStore
+
+        dataset_archive = CloudStorageAnalysisTaskStore(bucket)
+        session_dataset = dataset_archive.get_session_workspace(conversation_id)
     toolbox = ResearchToolbox(
         _create_data_provider(settings),
         uuid4().hex,
         python_sandbox=RemotePythonSandbox(sandbox_url),
         artifact_dir=artifact_dir,
+        dataset_archive=dataset_archive,
+        task_id=task_id,
+        session_dataset=session_dataset,
     )
     return ResearchMcpServer(toolbox)
 

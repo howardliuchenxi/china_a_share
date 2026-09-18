@@ -314,6 +314,65 @@ def test_generic_query_and_python_sandbox_replace_prompt_specific_ranking_tool()
     assert {stage for stage, _message in progress} == {"querying", "calculating"}
 
 
+def test_toolbox_restores_session_dataset_and_archives_follow_up_result(tmp_path):
+    session_result = QueryResult(
+        query_id="previous_final",
+        provider="tushare",
+        operation="daily_basic",
+        status=QueryStatus.SUCCESS,
+        columns=["ts_code", "total_mv"],
+        rows=[
+            {"ts_code": "000001.SZ", "total_mv": 120.0},
+            {"ts_code": "600000.SH", "total_mv": 90.0},
+        ],
+        row_count=2,
+        completeness="complete",
+    )
+    store = MemoryAnalysisTaskStore()
+    toolbox = ResearchToolbox(
+        FakeProvider(),
+        "request-1",
+        artifact_dir=tmp_path,
+        dataset_archive=store,
+        task_id="agent-task",
+        session_dataset=session_result,
+    )
+
+    inspected = toolbox.call(
+        "inspect_session_dataset",
+        {},
+        lambda _stage, _message: None,
+    )
+    ranked = toolbox.call(
+        "rank_dataset",
+        {
+            "dataset_id": "session_dataset",
+            "sort_by": "total_mv",
+            "direction": "asc",
+            "limit": 1,
+            "fields": ["ts_code", "total_mv"],
+        },
+        lambda _stage, _message: None,
+    )
+    toolbox.call(
+        "export_excel",
+        {
+            "dataset_id": ranked["dataset_id"],
+            "title": "Filtered result",
+            "methodology": "Continued from the complete session dataset.",
+        },
+        lambda _stage, _message: None,
+    )
+
+    assert inspected["dataset_id"] == "session_dataset"
+    assert inspected["row_count"] == 2
+    assert ranked["preview"] == [{"ts_code": "600000.SH", "total_mv": 90.0}]
+    assert store.promote_session_workspace("chat:session", "agent-task") is True
+    restored = store.get_session_workspace("chat:session")
+    assert restored is not None
+    assert restored.rows == ranked["preview"]
+
+
 def test_transform_tool_exposes_complete_pipeline_contract():
     toolbox = ResearchToolbox(RecentReturnProvider(), "request-1")
 
@@ -402,6 +461,7 @@ def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):
         ("progress-message-1", "研究完成。"),
     ]
     assert sink.files == [("message-1", artifact_path)]
+    assert store.get_artifact("agent-task", "result.xlsx") == b"xlsx"
     assert isinstance(store.get("agent-task"), FeishuAgentTask)
 
 

@@ -131,6 +131,18 @@ class AgentTaskStore(Protocol):
     def get_artifact(self, task_id: str, artifact_name: str) -> Optional[bytes]:
         """Return one persisted artifact when it exists."""
 
+    def archive_dataset(self, task_id: str, result: QueryResult) -> None:
+        """Persist one complete intermediate or final dataset for a task."""
+
+    def mark_final_dataset(self, task_id: str, dataset_id: str) -> None:
+        """Mark the dataset selected for the task's terminal artifact."""
+
+    def promote_session_workspace(self, conversation_id: str, task_id: str) -> bool:
+        """Promote the task's final or latest dataset into the session workspace."""
+
+    def get_session_workspace(self, conversation_id: str) -> Optional[QueryResult]:
+        """Return the complete dataset currently active for one named session."""
+
 
 class AgentTaskDispatcher(Protocol):
     """Dispatch one persisted Feishu agent task to a worker."""
@@ -306,13 +318,26 @@ class FeishuAgentCoordinator:
                 outcome.artifact_path.name if outcome.artifact_path is not None else None
             )
             terminal_message = outcome.answer
+            artifact_persisted = False
+            if outcome.artifact_path is not None:
+                try:
+                    self._store.put_artifact(task_id, outcome.artifact_path)
+                    artifact_persisted = True
+                except Exception:
+                    # Attachment delivery may still succeed when durable artifact
+                    # storage is temporarily unavailable, so preserve the answer.
+                    logger.exception(
+                        "feishu_agent_artifact_archive_failed task_id=%s artifact=%s",
+                        task_id,
+                        outcome.artifact_path.name,
+                    )
             if (
                 outcome.visualization is not None
                 and outcome.artifact_path is not None
+                and artifact_persisted
                 and self._public_app_url
             ):
                 try:
-                    self._store.put_artifact(task_id, outcome.artifact_path)
                     token = secrets.token_urlsafe(32)
                     task.visualization = outcome.visualization
                     task.visualization_token_hash = research_visualization_token_hash(
@@ -340,6 +365,16 @@ class FeishuAgentCoordinator:
                     task.visualization = None
                     task.visualization_token_hash = None
                     task.visualization_expires_at = None
+            if self._store.promote_session_workspace(
+                task.request.conversation_id,
+                task_id,
+            ):
+                logger.info(
+                    "feishu_agent_session_workspace_promoted task_id=%s "
+                    "conversation_id=%s",
+                    task_id,
+                    task.request.conversation_id,
+                )
             task.status = AnalysisTaskStatus.SUCCEEDED
             task.stage = "completed"
             task.progress_message = "研究完成。"
@@ -408,13 +443,23 @@ class ResearchToolbox:
         *,
         python_sandbox: Optional[PythonSandbox] = None,
         artifact_dir: Optional[Path] = None,
+        dataset_archive: Optional[AgentTaskStore] = None,
+        task_id: str = "",
+        session_dataset: Optional[QueryResult] = None,
     ) -> None:
         """Store provider access and the optional secretless Python boundary."""
         self._provider = provider
         self._request_id = request_id
         self._python_sandbox = python_sandbox
         self._artifact_dir = artifact_dir
+        self._dataset_archive = dataset_archive
+        self._task_id = task_id
         self._datasets: Dict[str, QueryResult] = {}
+        if session_dataset is not None:
+            self._datasets["session_dataset"] = session_dataset.model_copy(
+                update={"query_id": "session_dataset"},
+                deep=True,
+            )
 
     @property
     def definitions(self) -> List[Dict[str, Any]]:
@@ -560,6 +605,27 @@ class ResearchToolbox:
                 },
             },
         ]
+        if "session_dataset" in self._datasets:
+            definitions.insert(
+                0,
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "inspect_session_dataset",
+                        "description": (
+                            "Inspect the complete final dataset retained from the "
+                            "previous successful turn in this named session. Use "
+                            "dataset_id session_dataset for follow-up filtering, "
+                            "ranking, joining, or Python analysis."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+            )
         if self._python_sandbox is not None:
             definitions.insert(
                 -1,
@@ -602,6 +668,11 @@ class ResearchToolbox:
         progress: Callable[[str, str], None],
     ) -> Dict[str, Any]:
         """Execute one named tool or fail fast on an unknown capability."""
+        if name == "inspect_session_dataset":
+            result = self._datasets.get("session_dataset")
+            if result is None:
+                raise ValueError("This named session has no retained dataset.")
+            return _result_payload(result)
         if name == "request_clarification":
             return {
                 "clarification": _format_clarification(arguments),
@@ -651,7 +722,7 @@ class ResearchToolbox:
                 query_id=dataset_id,
             )
             result = _frame_to_result(dataset_id, self._provider.name, operation, frame)
-            self._datasets[dataset_id] = result
+            self._retain_dataset(result)
             return _result_payload(result)
         if name == "rank_dataset":
             progress("calculating", "正在执行排序与排名…")
@@ -682,7 +753,7 @@ class ResearchToolbox:
                 f"{source.operation}_ranked",
                 ranked,
             )
-            self._datasets[output_id] = result
+            self._retain_dataset(result)
             return _result_payload(result)
         if name == "join_datasets":
             progress("calculating", "正在合并市场与财务数据…")
@@ -711,7 +782,7 @@ class ResearchToolbox:
                 f"{left.operation}_joined",
                 merged,
             )
-            self._datasets[output_id] = result
+            self._retain_dataset(result)
             return _result_payload(result)
         if name == "transform_dataset":
             progress("calculating", "正在执行确定性筛选与计算…")
@@ -726,7 +797,7 @@ class ResearchToolbox:
                 source,
                 self._datasets,
             )
-            self._datasets[result.query_id] = result
+            self._retain_dataset(result)
             return _result_payload(result)
         if name == "run_python_analysis":
             if self._python_sandbox is None:
@@ -757,7 +828,7 @@ class ResearchToolbox:
                 "python_dataframe",
                 frame,
             )
-            self._datasets[output_id] = result
+            self._retain_dataset(result)
             return _result_payload(result)
         if name == "export_excel":
             dataset_id = str(arguments["dataset_id"])
@@ -771,12 +842,22 @@ class ResearchToolbox:
                 str(arguments["methodology"]),
                 output_dir=self._artifact_dir,
             )
+            if self._dataset_archive is not None and self._task_id:
+                if dataset_id == "session_dataset":
+                    self._dataset_archive.archive_dataset(self._task_id, result)
+                self._dataset_archive.mark_final_dataset(self._task_id, dataset_id)
             return {
                 "file_name": artifact_path.name,
                 "file_path": str(artifact_path),
                 "row_count": result.row_count,
             }
         raise ValueError(f"Unknown research tool: {name}")
+
+    def _retain_dataset(self, result: QueryResult) -> None:
+        """Retain a complete dataset in memory and the durable task archive."""
+        self._datasets[result.query_id] = result
+        if self._dataset_archive is not None and self._task_id:
+            self._dataset_archive.archive_dataset(self._task_id, result)
 
 
 def build_research_workbook(

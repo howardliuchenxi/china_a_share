@@ -115,7 +115,10 @@ class FakeCodex:
         return FakeThread()
 
 
-def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact():
+def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
+    monkeypatch,
+):
+    monkeypatch.setenv("ANALYSIS_TASK_ID", "agent-task")
     FakeCodex.instances.clear()
     FakeCodexConfig.instances.clear()
     runtime = CodexFeishuAgentRuntime(
@@ -164,6 +167,10 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     assert codex.thread_kwargs["sandbox"] == "workspace-write"
     assert config["env"]["LLM_API_KEY"] == "model-secret"
     assert config["env"]["TUSHARE_TOKEN"] == "data-secret"
+    assert config["env"]["ANALYSIS_TASK_ID"] == "agent-task"
+    assert config["env"]["CODEX_AGENT_CONVERSATION_ID"] == (
+        "tenant:chat:session:user"
+    )
     assert 'model_provider="deepseek"' in overrides
     assert 'model_providers.deepseek.wire_api="responses"' in overrides
     assert "shell_environment_policy.ignore_default_excludes=false" in overrides
@@ -177,6 +184,8 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
         if value.startswith("mcp_servers.market_data.env_vars=")
     )
     assert "TUSHARE_TOKEN" in mcp_env
+    assert "ANALYSIS_TASK_ID" in mcp_env
+    assert "CODEX_AGENT_CONVERSATION_ID" in mcp_env
     assert "LLM_API_KEY" not in mcp_env
     assert progress == [
         ("researching", "Codex 正在调用通用工具并处理完整数据集…"),

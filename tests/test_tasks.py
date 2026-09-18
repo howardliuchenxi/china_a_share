@@ -10,6 +10,8 @@ from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     DiscoveryTask,
     DiscoveryTaskRequest,
+    QueryResult,
+    QueryStatus,
 )
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
@@ -99,8 +101,10 @@ class FakeStorageBlob:
     def __init__(self):
         self.uploads = []
         self.artifact_content = None
+        self.content = None
 
     def upload_from_string(self, payload, *, content_type, retry):
+        self.content = payload
         self.uploads.append((payload, content_type, retry))
 
     def upload_from_filename(self, filename, *, content_type, retry):
@@ -109,11 +113,17 @@ class FakeStorageBlob:
         self.uploads.append((filename, content_type, retry))
 
     def exists(self):
-        return self.artifact_content is not None
+        return self.artifact_content is not None or self.content is not None
 
     def download_as_bytes(self, *, retry):
         assert retry is not None
-        return self.artifact_content
+        return self.artifact_content if self.artifact_content is not None else self.content
+
+    def download_as_text(self, *, retry):
+        assert retry is not None
+        if isinstance(self.content, bytes):
+            return self.content.decode("utf-8")
+        return self.content
 
 
 class FakeStorageBucket:
@@ -355,3 +365,51 @@ def test_cloud_storage_store_round_trips_task_artifact(tmp_path):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     assert store.get_artifact("agent-task", "result.xlsx") == b"workbook"
+
+
+def test_task_store_archives_intermediate_datasets_and_promotes_final_workspace():
+    store = MemoryAnalysisTaskStore()
+    first = QueryResult(
+        query_id="dataset_1",
+        provider="tushare",
+        operation="daily",
+        status=QueryStatus.SUCCESS,
+        columns=["ts_code", "close"],
+        rows=[{"ts_code": "000001.SZ", "close": 10.0}],
+        row_count=1,
+        completeness="complete",
+    )
+    final = first.model_copy(
+        update={"query_id": "dataset_2", "operation": "daily_ranked"}
+    )
+
+    store.archive_dataset("agent-task", first)
+    store.archive_dataset("agent-task", final)
+    store.mark_final_dataset("agent-task", "dataset_2")
+
+    assert store.promote_session_workspace("chat:session", "agent-task") is True
+    restored = store.get_session_workspace("chat:session")
+    assert restored is not None
+    assert restored.query_id == "dataset_2"
+    assert restored.rows == final.rows
+
+
+def test_cloud_storage_store_round_trips_promoted_session_workspace():
+    client = FakeStorageClient()
+    store = CloudStorageAnalysisTaskStore("bucket", storage_client=client)
+    result = QueryResult(
+        query_id="dataset_7",
+        provider="tushare",
+        operation="daily_basic",
+        status=QueryStatus.SUCCESS,
+        columns=["ts_code", "total_mv"],
+        rows=[{"ts_code": "600000.SH", "total_mv": 900_000.0}],
+        row_count=1,
+        completeness="complete",
+    )
+
+    store.archive_dataset("agent-task", result)
+    store.mark_final_dataset("agent-task", "dataset_7")
+
+    assert store.promote_session_workspace("chat:session", "agent-task") is True
+    assert store.get_session_workspace("chat:session") == result

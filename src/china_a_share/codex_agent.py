@@ -8,6 +8,7 @@ import json
 import logging
 import math
 from numbers import Real
+import os
 from pathlib import Path
 import re
 import shutil
@@ -71,7 +72,7 @@ class CodexFeishuAgentRuntime:
             artifact_dir.mkdir()
             config = CodexConfig(
                 cwd=str(workspace),
-                env=self._codex_environment(artifact_dir),
+                env=self._codex_environment(artifact_dir, request),
                 config_overrides=self._codex_overrides(),
             )
             progress(
@@ -121,14 +122,22 @@ class CodexFeishuAgentRuntime:
                 visualization=visualization,
             )
 
-    def _codex_environment(self, artifact_dir: Path) -> dict[str, str]:
+    def _codex_environment(
+        self,
+        artifact_dir: Path,
+        request: FeishuAgentRequest,
+    ) -> dict[str, str]:
         env = {
             "LLM_API_KEY": self._api_key,
             "TUSHARE_TOKEN": self._tushare_token,
             "TUSHARE_CACHE_BUCKET": self._cache_bucket,
             "RESEARCH_SANDBOX_URL": self._sandbox_url,
             "CODEX_AGENT_ARTIFACT_DIR": str(artifact_dir),
+            "CODEX_AGENT_CONVERSATION_ID": request.conversation_id,
         }
+        task_id = os.getenv("ANALYSIS_TASK_ID", "").strip()
+        if task_id:
+            env["ANALYSIS_TASK_ID"] = task_id
         if self._google_cloud_project:
             env["GOOGLE_CLOUD_PROJECT"] = self._google_cloud_project
         return env
@@ -140,7 +149,10 @@ class CodexFeishuAgentRuntime:
             "TUSHARE_CACHE_BUCKET",
             "RESEARCH_SANDBOX_URL",
             "CODEX_AGENT_ARTIFACT_DIR",
+            "CODEX_AGENT_CONVERSATION_ID",
         ]
+        if os.getenv("ANALYSIS_TASK_ID", "").strip():
+            mcp_env_vars.append("ANALYSIS_TASK_ID")
         if self._google_cloud_project:
             mcp_env_vars.append("GOOGLE_CLOUD_PROJECT")
         values = {
@@ -294,6 +306,7 @@ def _event_payload(payload: Any) -> dict[str, Any]:
 
 def _tool_progress_message(tool: str) -> str:
     messages = {
+        "inspect_session_dataset": "Codex 正在读取当前会话的完整结果…",
         "request_clarification": "Codex 正在整理需要你确认的选项…",
         "search_market_data": "Codex 正在查找可用数据接口…",
         "query_market_data": "Codex 正在读取完整数据集…",
@@ -318,7 +331,11 @@ def _developer_instructions() -> str:
         "call request_clarification once with two to four numbered choices, mark the "
         "safest default as recommended, and return its clarification verbatim. When "
         "conversation history shows the user answering that clarification, resolve "
-        "the answer from context instead of asking again. For calculations that need "
+        "the answer from context instead of asking again. If the "
+        "inspect_session_dataset tool is available and the user refers to the "
+        "previous list, result, table, or screening output, inspect and reuse that "
+        "complete session dataset instead of reconstructing it from text or querying "
+        "the same base universe again. For calculations that need "
         "several tabular operations, "
         "prefer one Python sandbox call over a long sequence of transformations. If "
         "a tool rejects invalid arguments, inspect its schema and correct the call "
