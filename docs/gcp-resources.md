@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00251-t5f` |
+| Latest ready revision | `china-a-share-lab-00252-rms` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `049b3f43bc3db4069e2c6c692f2d285f3a57be69` |
+| Deployed Git commit | `9f42c883d522a5632ee2d2c1f537719b5d442c3c` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -102,9 +102,9 @@ protected from anonymous consumption.
 | Service | `china-a-share-research-sandbox` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app> |
-| Latest ready revision | `china-a-share-research-sandbox-00010-f97` |
+| Latest ready revision | `china-a-share-research-sandbox-00011-ms9` |
 | Purpose | Execute restricted pandas and NumPy calculations for the Feishu research agent |
-| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:049b3f43bc3db4069e2c6c692f2d285f3a57be69` |
+| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:9f42c883d522a5632ee2d2c1f537719b5d442c3c` |
 | Command | `python -m uvicorn china_a_share.sandbox_server:app --host 0.0.0.0 --port 8080` |
 | Traffic | 100% to the latest revision |
 | CPU and memory | 1 vCPU, 2 GiB |
@@ -481,3 +481,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-17 | Deployed revision `china-a-share-lab-00249-gq4` through the main reconciliation trigger from `main@498386dcc716d99281bde3bd3526be9b68734a29`; verified 100% traffic, the synchronized `china-a-share-analysis-worker` image, and private sandbox revision `china-a-share-research-sandbox-00008-86m`. The release adds recommended numbered clarification choices, exposes the complete audited market-data catalog to the research model, and normalizes DeepSeek DSML tool calls at the model transport boundary. Production verification in the `测试1` Feishu group used the full PE_TTM ranking prompt: the bot requested the missing A-share universe definition, accepted the short reply `1` as the recommended Shanghai/Shenzhen-only choice, queried `daily_basic`, executed the calculation in the private sandbox, and returned the requested ten-row result without exposing DSML markup. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00250-5p8` through the main push trigger from `main@f3e22c19e20d04d36afbcdf240088f6d5cc3bd79`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, and private sandbox revision `china-a-share-research-sandbox-00009-wpr`. The release replaces the bespoke bounded DeepSeek tool loop with the Codex SDK agent runtime, retains DeepSeek V4 Pro as the configured model, exposes generic retained-dataset capabilities through stdio MCP with complete schemas, and reports material MCP progress in one edited Feishu reply. The exact reported 30-trading-day ranking prompt passed a live pre-deployment regression against the configured model, Tushare, and private sandbox. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00251-t5f` through the main reconciliation trigger from `main@049b3f43bc3db4069e2c6c692f2d285f3a57be69`; verified 100% traffic, the synchronized `china-a-share-analysis-worker` image and Git SHA, and private sandbox revision `china-a-share-research-sandbox-00010-f97`. The release aligns final-response collection with the Codex SDK contract by accepting the latest agent message when a third-party model omits phase metadata, while preserving explicit final answers. A genuinely textless completed turn now produces recoverable numbered choices, or an attachment notice when an artifact exists, instead of exposing an internal empty-response failure. Production verification in the `测试1` Feishu group submitted the exact reported ambiguous PE-ranking prompt through the quick card and received three numbered valuation choices with a recommended PE(TTM) option. Existing conversation and named-session objects remained in the persistent Cloud Storage store. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
+| 2026-09-17 | Deployed revision `china-a-share-lab-00252-rms` through the main push trigger from `main@9f42c883d522a5632ee2d2c1f537719b5d442c3c`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, and private sandbox revision `china-a-share-research-sandbox-00011-ms9`. The release preserves successful research results when only Feishu attachment delivery fails and includes bounded Feishu API error details in diagnostics. Enabled the existing Feishu application's `im:resource` tenant permission after error `99991672`, then verified the file-upload API returned code `0` and a file key. No GCP resource type, IAM boundary, lifecycle policy, or material cost changed. |
