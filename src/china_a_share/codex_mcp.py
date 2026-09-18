@@ -167,15 +167,17 @@ def create_server_from_env() -> ResearchMcpServer:
         tushare_cache_bucket=bucket,
         google_cloud_project=os.getenv("GOOGLE_CLOUD_PROJECT", "").strip(),
         research_sandbox_url=sandbox_url,
+        massive_api_key=os.getenv("MASSIVE_API_KEY", "").strip(),
+        finnhub_api_key=os.getenv("FINNHUB_API_KEY", "").strip(),
     )
     # Import lazily so the worker can assemble its Codex runtime without a
     # module-import cycle through bootstrap.
-    from china_a_share.bootstrap import _create_data_provider
+    from china_a_share.bootstrap import _create_feishu_data_provider
 
     artifact_dir_value = os.getenv("CODEX_AGENT_ARTIFACT_DIR", "").strip()
     artifact_dir = Path(artifact_dir_value) if artifact_dir_value else None
     toolbox = ResearchToolbox(
-        _create_data_provider(settings),
+        _create_feishu_data_provider(settings),
         uuid4().hex,
         python_sandbox=RemotePythonSandbox(sandbox_url),
         artifact_dir=artifact_dir,

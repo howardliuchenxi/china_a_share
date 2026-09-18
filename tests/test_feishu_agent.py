@@ -67,6 +67,11 @@ class FakeProvider:
     def supports(self, operation):
         return operation == "daily"
 
+    def validate_query(self, operation, params, fields):
+        assert operation == "daily"
+        assert params == {"trade_date": "20260916"}
+        assert fields == ["ts_code", "close"]
+
     def query(
         self,
         operation,

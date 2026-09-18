@@ -241,6 +241,20 @@ class TushareDataProvider:
         """Return whether the Tushare stock catalog contains the operation."""
         return self._catalog.contains(operation)
 
+    def validate_query(
+        self,
+        operation: str,
+        params: Dict[str, Any],
+        fields: Sequence[str],
+    ) -> None:
+        """Require one audited Tushare request shape before agent execution."""
+        if not self.supports(operation):
+            raise ValueError(f"Unsupported Tushare operation: {operation}")
+        if resolve_query_shape(operation, params) is None:
+            raise ValueError(
+                f"Operation lacks an audited Tushare query shape: {operation}"
+            )
+
     def describe_result_completeness(
         self,
         operation: str,

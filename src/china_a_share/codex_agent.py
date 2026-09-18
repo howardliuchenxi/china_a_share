@@ -43,6 +43,8 @@ class CodexFeishuAgentRuntime:
         tushare_token: str,
         cache_bucket: str,
         sandbox_url: str,
+        massive_api_key: str = "",
+        finnhub_api_key: str = "",
         google_cloud_project: str = "",
         sdk_loader: Optional[Callable[[], Tuple[Any, Any, Any, Any]]] = None,
     ) -> None:
@@ -50,6 +52,8 @@ class CodexFeishuAgentRuntime:
         self._model = model
         self._api_key = api_key
         self._tushare_token = tushare_token
+        self._massive_api_key = massive_api_key
+        self._finnhub_api_key = finnhub_api_key
         self._cache_bucket = cache_bucket
         self._sandbox_url = sandbox_url
         self._google_cloud_project = google_cloud_project
@@ -125,6 +129,10 @@ class CodexFeishuAgentRuntime:
         }
         if self._google_cloud_project:
             env["GOOGLE_CLOUD_PROJECT"] = self._google_cloud_project
+        if self._massive_api_key:
+            env["MASSIVE_API_KEY"] = self._massive_api_key
+        if self._finnhub_api_key:
+            env["FINNHUB_API_KEY"] = self._finnhub_api_key
         return env
 
     def _codex_overrides(self) -> tuple[str, ...]:
@@ -137,6 +145,10 @@ class CodexFeishuAgentRuntime:
         ]
         if self._google_cloud_project:
             mcp_env_vars.append("GOOGLE_CLOUD_PROJECT")
+        if self._massive_api_key:
+            mcp_env_vars.append("MASSIVE_API_KEY")
+        if self._finnhub_api_key:
+            mcp_env_vars.append("FINNHUB_API_KEY")
         values = {
             "model": self._model,
             "model_provider": CODEX_MODEL_PROVIDER,

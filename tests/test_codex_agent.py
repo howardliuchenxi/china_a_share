@@ -116,6 +116,8 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
         model="deepseek-v4-pro",
         api_key="model-secret",
         tushare_token="data-secret",
+        massive_api_key="massive-secret",
+        finnhub_api_key="finnhub-secret",
         cache_bucket="cache-bucket",
         sandbox_url="https://sandbox.example",
         google_cloud_project="project-id",
@@ -155,6 +157,8 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     assert codex.thread_kwargs["sandbox"] == "workspace-write"
     assert config["env"]["LLM_API_KEY"] == "model-secret"
     assert config["env"]["TUSHARE_TOKEN"] == "data-secret"
+    assert config["env"]["MASSIVE_API_KEY"] == "massive-secret"
+    assert config["env"]["FINNHUB_API_KEY"] == "finnhub-secret"
     assert 'model_provider="deepseek"' in overrides
     assert 'model_providers.deepseek.wire_api="responses"' in overrides
     assert "shell_environment_policy.ignore_default_excludes=false" in overrides
@@ -168,6 +172,8 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
         if value.startswith("mcp_servers.market_data.env_vars=")
     )
     assert "TUSHARE_TOKEN" in mcp_env
+    assert "MASSIVE_API_KEY" in mcp_env
+    assert "FINNHUB_API_KEY" in mcp_env
     assert "LLM_API_KEY" not in mcp_env
     assert progress == [
         ("researching", "Codex 正在调用通用工具并处理完整数据集…"),

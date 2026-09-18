@@ -66,6 +66,15 @@ class MarketDataProvider(Protocol):
         """Return whether the provider exposes the requested read operation."""
         ...
 
+    def validate_query(
+        self,
+        operation: str,
+        params: Dict[str, Any],
+        fields: Sequence[str],
+    ) -> None:
+        """Validate one provider-native request before network access."""
+        ...
+
     def query(
         self,
         operation: str,
