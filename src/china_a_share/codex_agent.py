@@ -82,10 +82,18 @@ class CodexFeishuAgentRuntime:
                 turn = thread.turn(_request_prompt(request))
                 final_response, duration_ms = _run_turn_with_progress(turn, progress)
 
+            artifact_path = _persist_artifact(artifact_dir)
             answer = str(final_response or "").strip()
             if not answer:
-                raise RuntimeError("Codex returned an empty final response.")
-            artifact_path = _persist_artifact(artifact_dir)
+                answer = _empty_response_follow_up(artifact_path)
+                logger.warning(
+                    "codex_feishu_turn_empty_response conversation_id=%s model=%s "
+                    "duration_ms=%s artifact=%s",
+                    request.conversation_id,
+                    self._model,
+                    duration_ms,
+                    artifact_path.name if artifact_path is not None else "none",
+                )
             logger.info(
                 "codex_feishu_turn_completed conversation_id=%s model=%s "
                 "duration_ms=%s artifact=%s",
@@ -196,6 +204,7 @@ def _collect_turn(
     progress: Callable[[str, str], None],
 ) -> tuple[Optional[str], Optional[int]]:
     final_response: Optional[str] = None
+    last_unknown_phase_response: Optional[str] = None
     duration_ms: Optional[int] = None
     completed = False
     for event in turn.stream():
@@ -217,11 +226,17 @@ def _collect_turn(
                     item.get("status"),
                     item.get("durationMs"),
                 )
-            elif (
-                item_type == "agentMessage"
-                and item.get("phase") == "final_answer"
-            ):
-                final_response = str(item.get("text") or "").strip()
+            elif item_type == "agentMessage":
+                text = str(item.get("text") or "").strip()
+                if not text:
+                    continue
+                if item.get("phase") == "final_answer":
+                    final_response = text
+                elif item.get("phase") is None:
+                    # The official SDK accepts the latest agent message whose phase
+                    # is absent when a model provider does not emit final-answer
+                    # metadata. DeepSeek uses this valid compatibility path.
+                    last_unknown_phase_response = text
             continue
         if event.method == "turn/completed":
             completed = True
@@ -234,7 +249,19 @@ def _collect_turn(
                 raise RuntimeError(str(message))
     if not completed:
         raise RuntimeError("Codex turn ended without a completion event.")
-    return final_response, duration_ms
+    return final_response or last_unknown_phase_response, duration_ms
+
+
+def _empty_response_follow_up(artifact_path: Optional[Path]) -> str:
+    """Return a recoverable user response when a completed turn has no text."""
+    if artifact_path is not None:
+        return "研究结果文件已生成，请查看附件。"
+    return (
+        "这次没有生成可验证的回答。请选择下一步：\n"
+        "1. 按原问题重试（推荐）\n"
+        "2. 补充查询范围、时间和指标口径后再试\n"
+        "请回复序号，或直接补充你的完整口径。"
+    )
 
 
 def _event_payload(payload: Any) -> dict[str, Any]:

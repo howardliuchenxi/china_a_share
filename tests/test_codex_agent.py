@@ -170,7 +170,7 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     ]
 
 
-def test_codex_runtime_rejects_empty_final_response():
+def test_codex_runtime_turns_empty_final_response_into_recoverable_follow_up():
     class EmptyCodex(FakeCodex):
         def thread_start(self, **kwargs):
             self.thread_kwargs = kwargs
@@ -213,16 +213,79 @@ def test_codex_runtime_rejects_empty_final_response():
         ),
     )
 
-    try:
-        runtime.run(
-            FeishuAgentRequest(
-                prompt="Analyze the dataset.",
-                conversation_id="conversation",
-                source_message_id="message",
-            ),
-            lambda _stage, _message: None,
-        )
-    except RuntimeError as exc:
-        assert str(exc) == "Codex returned an empty final response."
-    else:
-        raise AssertionError("Expected an empty Codex response to fail fast.")
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="Analyze the dataset.",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert "没有生成可验证的回答" in outcome.answer
+    assert "1. 按原问题重试（推荐）" in outcome.answer
+    assert "请回复序号" in outcome.answer
+
+
+def test_codex_runtime_accepts_latest_agent_message_without_phase():
+    class UnknownPhaseCodex(FakeCodex):
+        def thread_start(self, **kwargs):
+            self.thread_kwargs = kwargs
+
+            class UnknownPhaseThread:
+                def turn(self, _prompt):
+                    class UnknownPhaseTurn:
+                        def stream(self):
+                            yield SimpleNamespace(
+                                method="item/completed",
+                                payload={
+                                    "item": {
+                                        "type": "agentMessage",
+                                        "text": "DeepSeek 返回的有效最终回答。",
+                                    }
+                                },
+                            )
+                            yield SimpleNamespace(
+                                method="turn/completed",
+                                payload={
+                                    "turn": {
+                                        "status": "completed",
+                                        "durationMs": 2,
+                                    }
+                                },
+                            )
+
+                        def interrupt(self):
+                            raise AssertionError(
+                                "Successful turns must not be interrupted."
+                            )
+
+                    return UnknownPhaseTurn()
+
+            return UnknownPhaseThread()
+
+    runtime = CodexFeishuAgentRuntime(
+        base_url="https://model.example/v1",
+        model="deepseek-v4-pro",
+        api_key="model-secret",
+        tushare_token="data-secret",
+        cache_bucket="cache-bucket",
+        sandbox_url="https://sandbox.example",
+        sdk_loader=lambda: (
+            UnknownPhaseCodex,
+            FakeCodexConfig,
+            FakeSandbox,
+            FakeApprovalMode,
+        ),
+    )
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="Analyze the dataset.",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert outcome.answer == "DeepSeek 返回的有效最终回答。"
