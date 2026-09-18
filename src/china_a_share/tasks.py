@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import gzip
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -25,6 +27,7 @@ from china_a_share.core.contracts import (
     DiscoveryTaskRequest,
     AnalysisTaskStatus,
     AnalysisTaskSubmission,
+    QueryResult,
     ServiceError,
 )
 from china_a_share.core.ports import AnalysisTaskDispatcher, AnalysisTaskStore
@@ -55,6 +58,10 @@ class MemoryAnalysisTaskStore:
             str, Union[AnalysisTask, DiscoveryTask, FeishuAgentTask]
         ] = {}
         self._artifacts: Dict[tuple[str, str], bytes] = {}
+        self._datasets: Dict[tuple[str, str], QueryResult] = {}
+        self._latest_datasets: Dict[str, str] = {}
+        self._final_datasets: Dict[str, str] = {}
+        self._session_workspaces: Dict[str, tuple[str, str]] = {}
         self._lock = Lock()
 
     def get(
@@ -86,6 +93,39 @@ class MemoryAnalysisTaskStore:
             value = self._artifacts.get((task_id, artifact_name))
             return bytes(value) if value is not None else None
 
+    def archive_dataset(self, task_id: str, result: QueryResult) -> None:
+        """Persist one complete task dataset and advance its latest pointer."""
+        self._validate_dataset_identity(task_id, result.query_id)
+        with self._lock:
+            self._datasets[(task_id, result.query_id)] = result.model_copy(deep=True)
+            self._latest_datasets[task_id] = result.query_id
+
+    def mark_final_dataset(self, task_id: str, dataset_id: str) -> None:
+        """Mark one already archived dataset as the terminal task result."""
+        self._validate_dataset_identity(task_id, dataset_id)
+        with self._lock:
+            if (task_id, dataset_id) not in self._datasets:
+                raise ValueError(f"Dataset is not archived for task {task_id}: {dataset_id}")
+            self._final_datasets[task_id] = dataset_id
+
+    def promote_session_workspace(self, conversation_id: str, task_id: str) -> bool:
+        """Promote the task's final or latest dataset for future session turns."""
+        with self._lock:
+            dataset_id = self._final_datasets.get(task_id) or self._latest_datasets.get(
+                task_id
+            )
+            if dataset_id is None:
+                return False
+            self._session_workspaces[conversation_id] = (task_id, dataset_id)
+            return True
+
+    def get_session_workspace(self, conversation_id: str) -> Optional[QueryResult]:
+        """Return an isolated copy of the active complete session dataset."""
+        with self._lock:
+            identity = self._session_workspaces.get(conversation_id)
+            result = self._datasets.get(identity) if identity is not None else None
+            return result.model_copy(deep=True) if result is not None else None
+
     @staticmethod
     def _validate_artifact_identity(task_id: str, artifact_name: str) -> None:
         """Reject identifiers that could escape the task artifact namespace."""
@@ -93,6 +133,13 @@ class MemoryAnalysisTaskStore:
             raise ValueError("Task identifier contains unsupported characters.")
         if not artifact_name or artifact_name != Path(artifact_name).name:
             raise ValueError("Artifact name must be a plain file name.")
+
+    @staticmethod
+    def _validate_dataset_identity(task_id: str, dataset_id: str) -> None:
+        """Reject identifiers that could escape the task dataset namespace."""
+        MemoryAnalysisTaskStore._validate_artifact_identity(task_id, "dataset")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", dataset_id):
+            raise ValueError("Dataset identifier contains unsupported characters.")
 
 
 class CloudStorageAnalysisTaskStore:
@@ -156,6 +203,82 @@ class CloudStorageAnalysisTaskStore:
             return None
         return blob.download_as_bytes(retry=STORAGE_WRITE_RETRY)
 
+    def archive_dataset(self, task_id: str, result: QueryResult) -> None:
+        """Persist one compressed dataset snapshot and advance its latest pointer."""
+        MemoryAnalysisTaskStore._validate_dataset_identity(task_id, result.query_id)
+        payload = gzip.compress(result.model_dump_json().encode("utf-8"))
+        self._bucket.blob(
+            self._dataset_object_name(task_id, result.query_id)
+        ).upload_from_string(
+            payload,
+            content_type="application/gzip",
+            retry=STORAGE_WRITE_RETRY,
+        )
+        self._bucket.blob(self._dataset_pointer_name(task_id, "latest")).upload_from_string(
+            result.query_id,
+            content_type="text/plain",
+            retry=STORAGE_WRITE_RETRY,
+        )
+
+    def mark_final_dataset(self, task_id: str, dataset_id: str) -> None:
+        """Mark one archived snapshot as the task's final working dataset."""
+        MemoryAnalysisTaskStore._validate_dataset_identity(task_id, dataset_id)
+        dataset_blob = self._bucket.blob(
+            self._dataset_object_name(task_id, dataset_id)
+        )
+        if not dataset_blob.exists():
+            raise ValueError(f"Dataset is not archived for task {task_id}: {dataset_id}")
+        self._bucket.blob(self._dataset_pointer_name(task_id, "final")).upload_from_string(
+            dataset_id,
+            content_type="text/plain",
+            retry=STORAGE_WRITE_RETRY,
+        )
+
+    def promote_session_workspace(self, conversation_id: str, task_id: str) -> bool:
+        """Point one named session at the task's final or latest complete dataset."""
+        dataset_id = self._read_dataset_pointer(task_id, "final")
+        if dataset_id is None:
+            dataset_id = self._read_dataset_pointer(task_id, "latest")
+        if dataset_id is None:
+            return False
+        payload = json.dumps(
+            {"task_id": task_id, "dataset_id": dataset_id},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        self._bucket.blob(self._session_workspace_object(conversation_id)).upload_from_string(
+            payload,
+            content_type="application/json",
+            retry=STORAGE_WRITE_RETRY,
+        )
+        return True
+
+    def get_session_workspace(self, conversation_id: str) -> Optional[QueryResult]:
+        """Load the complete dataset currently promoted for one named session."""
+        pointer_blob = self._bucket.blob(self._session_workspace_object(conversation_id))
+        if not pointer_blob.exists():
+            return None
+        pointer = json.loads(pointer_blob.download_as_text(retry=STORAGE_WRITE_RETRY))
+        task_id = str(pointer.get("task_id") or "")
+        dataset_id = str(pointer.get("dataset_id") or "")
+        MemoryAnalysisTaskStore._validate_dataset_identity(task_id, dataset_id)
+        dataset_blob = self._bucket.blob(
+            self._dataset_object_name(task_id, dataset_id)
+        )
+        if not dataset_blob.exists():
+            return None
+        compressed = dataset_blob.download_as_bytes(retry=STORAGE_WRITE_RETRY)
+        return QueryResult.model_validate_json(gzip.decompress(compressed))
+
+    def _read_dataset_pointer(self, task_id: str, kind: str) -> Optional[str]:
+        """Read one validated task dataset pointer when present."""
+        blob = self._bucket.blob(self._dataset_pointer_name(task_id, kind))
+        if not blob.exists():
+            return None
+        dataset_id = blob.download_as_text(retry=STORAGE_WRITE_RETRY).strip()
+        MemoryAnalysisTaskStore._validate_dataset_identity(task_id, dataset_id)
+        return dataset_id
+
     def _wait_for_write_slot(self, object_name: str) -> None:
         """Reserve a per-object write slot without throttling unrelated tasks."""
         now = time.monotonic()
@@ -183,6 +306,28 @@ class CloudStorageAnalysisTaskStore:
         """Return one traversal-safe object name under the task lifecycle prefix."""
         MemoryAnalysisTaskStore._validate_artifact_identity(task_id, artifact_name)
         return f"{ANALYSIS_TASK_PREFIX}/{task_id}/artifacts/{artifact_name}"
+
+    @staticmethod
+    def _dataset_object_name(task_id: str, dataset_id: str) -> str:
+        """Return one traversal-safe complete dataset object name."""
+        MemoryAnalysisTaskStore._validate_dataset_identity(task_id, dataset_id)
+        return f"{ANALYSIS_TASK_PREFIX}/{task_id}/datasets/{dataset_id}.json.gz"
+
+    @staticmethod
+    def _dataset_pointer_name(task_id: str, kind: str) -> str:
+        """Return the final or latest dataset pointer for one task."""
+        MemoryAnalysisTaskStore._validate_dataset_identity(task_id, "dataset")
+        if kind not in {"latest", "final"}:
+            raise ValueError("Dataset pointer kind is unsupported.")
+        return f"{ANALYSIS_TASK_PREFIX}/{task_id}/datasets/{kind}.txt"
+
+    @staticmethod
+    def _session_workspace_object(conversation_id: str) -> str:
+        """Hide the private conversation identity in the workspace object name."""
+        if not conversation_id:
+            raise ValueError("Conversation identifier must not be empty.")
+        digest = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
+        return f"{ANALYSIS_TASK_PREFIX}/sessions/{digest}.json"
 
 
 class CloudRunJobDispatcher:

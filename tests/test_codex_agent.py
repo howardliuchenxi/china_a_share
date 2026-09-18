@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from china_a_share.codex_agent import (
     CodexFeishuAgentRuntime,
     _build_research_visualization,
+    _normalize_token_usage,
+    _safe_artifact_filename_stem,
 )
 from china_a_share.core.contracts import QueryResult, QueryStatus
 from china_a_share.feishu_agent import (
@@ -27,6 +29,12 @@ class FakeSandbox:
 
 class FakeApprovalMode:
     deny_all = "deny-all"
+
+
+def test_artifact_filename_preserves_safe_session_name_and_replaces_separators():
+    assert _safe_artifact_filename_stem(" 银行/低估值:筛选? ") == (
+        "银行_低估值_筛选_"
+    )
 
 
 class FakeCodex:
@@ -70,6 +78,29 @@ class FakeCodex:
                             },
                         )
                         yield SimpleNamespace(
+                            method="thread/tokenUsage/updated",
+                            payload={
+                                "threadId": "thread-1",
+                                "turnId": "turn-1",
+                                "tokenUsage": {
+                                    "total": {
+                                        "inputTokens": 1_200,
+                                        "cachedInputTokens": 900,
+                                        "outputTokens": 240,
+                                        "reasoningOutputTokens": 80,
+                                        "totalTokens": 1_440,
+                                    },
+                                    "last": {
+                                        "inputTokens": 400,
+                                        "cachedInputTokens": 300,
+                                        "outputTokens": 80,
+                                        "reasoningOutputTokens": 20,
+                                        "totalTokens": 480,
+                                    },
+                                },
+                            },
+                        )
+                        yield SimpleNamespace(
                             method="item/completed",
                             payload={
                                 "item": {
@@ -108,7 +139,12 @@ class FakeCodex:
         return FakeThread()
 
 
-def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact():
+def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setenv("ANALYSIS_TASK_ID", "agent-task")
+    caplog.set_level("INFO")
     FakeCodex.instances.clear()
     FakeCodexConfig.instances.clear()
     runtime = CodexFeishuAgentRuntime(
@@ -134,6 +170,7 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
         FeishuAgentRequest(
             prompt="Rank every row in the latest complete dataset.",
             conversation_id="tenant:chat:session:user",
+            conversation_name="银行低估值研究",
             source_message_id="message-1",
             conversation=[
                 FeishuAgentConversationTurn(
@@ -150,15 +187,21 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     overrides = set(config["config_overrides"])
     assert outcome.answer == "通用分析已完成。"
     assert outcome.artifact_path is not None
+    assert outcome.artifact_path.name == "银行低估值研究.xlsx"
     assert outcome.artifact_path.read_bytes() == b"xlsx"
     assert "Load the dataset." in codex.prompt
     assert "Rank every row in the latest complete dataset." in codex.prompt
+    assert '"conversation_id"' not in codex.prompt
     assert codex.thread_kwargs["ephemeral"] is True
     assert codex.thread_kwargs["sandbox"] == "workspace-write"
     assert config["env"]["LLM_API_KEY"] == "model-secret"
     assert config["env"]["TUSHARE_TOKEN"] == "data-secret"
     assert config["env"]["MASSIVE_API_KEY"] == "massive-secret"
     assert config["env"]["FINNHUB_API_KEY"] == "finnhub-secret"
+    assert config["env"]["ANALYSIS_TASK_ID"] == "agent-task"
+    assert config["env"]["CODEX_AGENT_CONVERSATION_ID"] == (
+        "tenant:chat:session:user"
+    )
     assert 'model_provider="deepseek"' in overrides
     assert 'model_providers.deepseek.wire_api="responses"' in overrides
     assert "shell_environment_policy.ignore_default_excludes=false" in overrides
@@ -174,11 +217,44 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     assert "TUSHARE_TOKEN" in mcp_env
     assert "MASSIVE_API_KEY" in mcp_env
     assert "FINNHUB_API_KEY" in mcp_env
+    assert "ANALYSIS_TASK_ID" in mcp_env
+    assert "CODEX_AGENT_CONVERSATION_ID" in mcp_env
     assert "LLM_API_KEY" not in mcp_env
     assert progress == [
         ("researching", "Codex 正在调用通用工具并处理完整数据集…"),
         ("tool", "Codex 正在读取完整数据集…"),
     ]
+    usage_record = next(
+        record.message
+        for record in caplog.records
+        if record.message.startswith("codex_feishu_turn_usage")
+    )
+    assert "workload=feishu_user" in usage_record
+    assert "input_tokens=1200" in usage_record
+    assert "cached_input_tokens=900" in usage_record
+    assert "reasoning_output_tokens=80" in usage_record
+
+
+def test_token_usage_rejects_partial_or_non_numeric_snapshots():
+    assert _normalize_token_usage({"inputTokens": 10}) is None
+    assert (
+        _normalize_token_usage(
+            {
+                "inputTokens": 10,
+                "cachedInputTokens": 4,
+                "outputTokens": 3,
+                "reasoningOutputTokens": 1,
+                "totalTokens": 13,
+            }
+        )
+        == {
+            "input_tokens": 10,
+            "cached_input_tokens": 4,
+            "output_tokens": 3,
+            "reasoning_output_tokens": 1,
+            "total_tokens": 13,
+        }
+    )
 
 
 def test_codex_runtime_turns_empty_final_response_into_recoverable_follow_up():

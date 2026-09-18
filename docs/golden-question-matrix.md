@@ -17,6 +17,11 @@ load that canonical file. The broader deterministic planning corpus remains in
 `tests/golden_questions.py`; CI validates its breadth, uniqueness, catalog
 references, unsupported boundaries, and enforced asynchronous routes.
 
+`make live-check` is disabled unless the caller explicitly sets
+`ALLOW_PAID_LIVE_TESTS=1`. This guard keeps routine local checks and agent-driven
+validation offline while preserving an intentional path for full live quality
+audits.
+
 ## Coverage
 
 | Area | Families |

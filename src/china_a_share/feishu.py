@@ -917,12 +917,16 @@ class FeishuResearchBot:
         existing = self._store.get_event_task(event.event_id)
         if existing is not None:
             return self._accepted_task_reply(existing.task_id)
-        conversation_id = self._active_agent_conversation_id(event.conversation_id)
+        active_session = self._active_agent_session(event.conversation_id)
+        conversation_id = (
+            f"{event.conversation_id}:session:{active_session.session_id}"
+        )
         prior_turns = self._completed_agent_conversation(conversation_id)
         task = self._agent_coordinator.submit(
             FeishuAgentRequest(
                 prompt=event.prompt,
                 conversation_id=conversation_id,
+                conversation_name=active_session.name,
                 source_message_id=event.message_id,
                 conversation=[
                     FeishuAgentConversationTurn(
@@ -1054,8 +1058,21 @@ class FeishuResearchBot:
 
     def _active_agent_conversation_id(self, conversation_scope_id: str) -> str:
         """Resolve the active named session within one isolated chat scope."""
+        session = self._active_agent_session(conversation_scope_id)
+        return f"{conversation_scope_id}:session:{session.session_id}"
+
+    def _active_agent_session(
+        self,
+        conversation_scope_id: str,
+    ) -> FeishuAgentSession:
+        """Return the active named session or fail on corrupted persisted state."""
         state = self._store.get_session_state(conversation_scope_id)
-        return f"{conversation_scope_id}:session:{state.active_session_id}"
+        for session in state.sessions:
+            if session.session_id == state.active_session_id:
+                return session
+        raise RuntimeError(
+            "Active Feishu session is missing from the persisted session catalog."
+        )
 
     def _create_session_and_submit(
         self,

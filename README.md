@@ -433,10 +433,12 @@ Run the unified 100-question end-to-end quality matrix and production-reported
 regressions against the real DeepSeek and Tushare APIs:
 
 ```bash
-make live-check
+ALLOW_PAID_LIVE_TESTS=1 make live-check
 ```
 
-This opt-in check validates planning semantics, provider operations, result
+The explicit acknowledgment prevents routine development and automated agent
+work from accidentally spending model or market-data quota. This opt-in check
+validates planning semantics, provider operations, result
 pipelines, business invariants, unsupported capability boundaries, and prompts
 reported from production rather than exact model JSON. It loads
 `DEEPSEEK_API_KEY` and `TUSHARE_TOKEN` from `.env`, uses an in-process cache

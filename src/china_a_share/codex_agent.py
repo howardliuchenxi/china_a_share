@@ -8,7 +8,9 @@ import json
 import logging
 import math
 from numbers import Real
+import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -29,6 +31,8 @@ CODEX_INTERRUPT_GRACE_SECONDS = 30
 SUPPORTED_ARTIFACT_SUFFIXES = {".csv", ".docx", ".pdf", ".xlsx"}
 MAX_VISUALIZATION_ROWS = 2_000
 MAX_VISUALIZATION_COLUMNS = 24
+MAX_ARTIFACT_FILENAME_STEM_LENGTH = 80
+INVALID_ARTIFACT_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 class CodexFeishuAgentRuntime:
@@ -72,7 +76,7 @@ class CodexFeishuAgentRuntime:
             artifact_dir.mkdir()
             config = CodexConfig(
                 cwd=str(workspace),
-                env=self._codex_environment(artifact_dir),
+                env=self._codex_environment(artifact_dir, request),
                 config_overrides=self._codex_overrides(),
             )
             progress(
@@ -90,9 +94,17 @@ class CodexFeishuAgentRuntime:
                     sandbox=Sandbox.workspace_write,
                 )
                 turn = thread.turn(_request_prompt(request))
-                final_response, duration_ms = _run_turn_with_progress(turn, progress)
+                (
+                    final_response,
+                    duration_ms,
+                    token_usage,
+                    usage_update_count,
+                ) = _run_turn_with_progress(turn, progress)
 
-            artifact_path = _persist_artifact(artifact_dir)
+            artifact_path = _persist_artifact(
+                artifact_dir,
+                request.conversation_name,
+            )
             visualization = _build_research_visualization(artifact_path)
             answer = str(final_response or "").strip()
             if not answer:
@@ -113,20 +125,34 @@ class CodexFeishuAgentRuntime:
                 duration_ms,
                 artifact_path.name if artifact_path is not None else "none",
             )
+            _log_turn_usage(
+                request,
+                self._model,
+                token_usage,
+                usage_update_count,
+            )
             return FeishuAgentOutcome(
                 answer=answer,
                 artifact_path=artifact_path,
                 visualization=visualization,
             )
 
-    def _codex_environment(self, artifact_dir: Path) -> dict[str, str]:
+    def _codex_environment(
+        self,
+        artifact_dir: Path,
+        request: FeishuAgentRequest,
+    ) -> dict[str, str]:
         env = {
             "LLM_API_KEY": self._api_key,
             "TUSHARE_TOKEN": self._tushare_token,
             "TUSHARE_CACHE_BUCKET": self._cache_bucket,
             "RESEARCH_SANDBOX_URL": self._sandbox_url,
             "CODEX_AGENT_ARTIFACT_DIR": str(artifact_dir),
+            "CODEX_AGENT_CONVERSATION_ID": request.conversation_id,
         }
+        task_id = os.getenv("ANALYSIS_TASK_ID", "").strip()
+        if task_id:
+            env["ANALYSIS_TASK_ID"] = task_id
         if self._google_cloud_project:
             env["GOOGLE_CLOUD_PROJECT"] = self._google_cloud_project
         if self._massive_api_key:
@@ -142,7 +168,10 @@ class CodexFeishuAgentRuntime:
             "TUSHARE_CACHE_BUCKET",
             "RESEARCH_SANDBOX_URL",
             "CODEX_AGENT_ARTIFACT_DIR",
+            "CODEX_AGENT_CONVERSATION_ID",
         ]
+        if os.getenv("ANALYSIS_TASK_ID", "").strip():
+            mcp_env_vars.append("ANALYSIS_TASK_ID")
         if self._google_cloud_project:
             mcp_env_vars.append("GOOGLE_CLOUD_PROJECT")
         if self._massive_api_key:
@@ -196,7 +225,7 @@ def _load_codex_sdk() -> Tuple[Any, Any, Any, Any]:
 def _run_turn_with_progress(
     turn: Any,
     progress: Callable[[str, str], None],
-) -> tuple[Optional[str], Optional[int]]:
+) -> tuple[Optional[str], Optional[int], Optional[dict[str, int]], int]:
     """Collect one turn while surfacing material MCP activity and bounding runtime."""
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="codex-turn")
     future = executor.submit(_collect_turn, turn, progress)
@@ -222,13 +251,23 @@ def _run_turn_with_progress(
 def _collect_turn(
     turn: Any,
     progress: Callable[[str, str], None],
-) -> tuple[Optional[str], Optional[int]]:
+) -> tuple[Optional[str], Optional[int], Optional[dict[str, int]], int]:
     final_response: Optional[str] = None
     last_unknown_phase_response: Optional[str] = None
     duration_ms: Optional[int] = None
+    token_usage: Optional[dict[str, int]] = None
+    usage_update_count = 0
     completed = False
     for event in turn.stream():
         payload = _event_payload(event.payload)
+        if event.method == "thread/tokenUsage/updated":
+            # Token usage notifications are cumulative snapshots. Keep only the
+            # latest total so repeated notifications are never double-counted.
+            usage_update_count += 1
+            token_usage = _normalize_token_usage(
+                ((payload.get("tokenUsage") or {}).get("total") or {})
+            ) or token_usage
+            continue
         if event.method == "item/started":
             item = payload.get("item") or {}
             if item.get("type") == "mcpToolCall":
@@ -269,7 +308,64 @@ def _collect_turn(
                 raise RuntimeError(str(message))
     if not completed:
         raise RuntimeError("Codex turn ended without a completion event.")
-    return final_response or last_unknown_phase_response, duration_ms
+    return (
+        final_response or last_unknown_phase_response,
+        duration_ms,
+        token_usage,
+        usage_update_count,
+    )
+
+
+def _normalize_token_usage(value: Any) -> Optional[dict[str, int]]:
+    """Return the stable raw Codex token counters from one usage snapshot."""
+    if not isinstance(value, dict):
+        return None
+    fields = {
+        "input_tokens": "inputTokens",
+        "cached_input_tokens": "cachedInputTokens",
+        "output_tokens": "outputTokens",
+        "reasoning_output_tokens": "reasoningOutputTokens",
+        "total_tokens": "totalTokens",
+    }
+    normalized: dict[str, int] = {}
+    for output_name, source_name in fields.items():
+        raw_value = value.get(source_name)
+        if isinstance(raw_value, bool) or not isinstance(raw_value, Real):
+            return None
+        normalized[output_name] = max(int(raw_value), 0)
+    return normalized
+
+
+def _log_turn_usage(
+    request: FeishuAgentRequest,
+    model: str,
+    token_usage: Optional[dict[str, int]],
+    usage_update_count: int,
+) -> None:
+    """Log task-scoped raw usage without coupling runtime behavior to billing rates."""
+    usage = token_usage or {}
+    workload = (
+        "live_regression"
+        if os.getenv("RUN_LIVE_ANALYSIS", "").strip() == "1"
+        else "feishu_user"
+    )
+    logger.info(
+        "codex_feishu_turn_usage task_id=%s conversation_id=%s model=%s "
+        "workload=%s usage_available=%s usage_updates=%s input_tokens=%s "
+        "cached_input_tokens=%s output_tokens=%s reasoning_output_tokens=%s "
+        "total_tokens=%s",
+        os.getenv("ANALYSIS_TASK_ID", "").strip() or "none",
+        request.conversation_id,
+        model,
+        workload,
+        bool(token_usage),
+        usage_update_count,
+        usage.get("input_tokens", 0),
+        usage.get("cached_input_tokens", 0),
+        usage.get("output_tokens", 0),
+        usage.get("reasoning_output_tokens", 0),
+        usage.get("total_tokens", 0),
+    )
 
 
 def _empty_response_follow_up(artifact_path: Optional[Path]) -> str:
@@ -300,6 +396,7 @@ def _event_payload(payload: Any) -> dict[str, Any]:
 
 def _tool_progress_message(tool: str) -> str:
     messages = {
+        "inspect_session_dataset": "Codex 正在读取当前会话的完整结果…",
         "request_clarification": "Codex 正在整理需要你确认的选项…",
         "search_market_data": "Codex 正在查找可用数据接口…",
         "query_market_data": "Codex 正在读取完整数据集…",
@@ -324,9 +421,17 @@ def _developer_instructions() -> str:
         "call request_clarification once with two to four numbered choices, mark the "
         "safest default as recommended, and return its clarification verbatim. When "
         "conversation history shows the user answering that clarification, resolve "
-        "the answer from context instead of asking again. For calculations that need "
+        "the answer from context instead of asking again. If the "
+        "inspect_session_dataset tool is available and the user refers to the "
+        "previous list, result, table, or screening output, inspect and reuse that "
+        "complete session dataset instead of reconstructing it from text or querying "
+        "the same base universe again. For calculations that need "
         "several tabular operations, "
         "prefer one Python sandbox call over a long sequence of transformations. If "
+        "several independent data reads are required, request them in the same model "
+        "turn. Search the operation catalog only when the operation or parameter "
+        "shape is not already established, and never repeat an equivalent catalog "
+        "search or provider query within one turn. "
         "a tool rejects invalid arguments, inspect its schema and correct the call "
         "once; do not repeat equivalent failing calls. Never invent missing values. "
         "If a result has more than ten rows or the user asks for a file, create an "
@@ -343,18 +448,20 @@ def _request_prompt(request: FeishuAgentRequest) -> str:
         for turn in request.conversation[-MAX_AGENT_CONTEXT_TURNS:]
     ]
     payload = {
-        "conversation_id": request.conversation_id,
         "previous_conversation": conversation,
         "current_user_request": request.prompt,
     }
     return (
         "Continue the following backend-managed conversation. Previous exchanges are "
         "context only; answer current_user_request directly.\n"
-        + json.dumps(payload, ensure_ascii=False, indent=2)
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     )
 
 
-def _persist_artifact(artifact_dir: Path) -> Optional[Path]:
+def _persist_artifact(
+    artifact_dir: Path,
+    conversation_name: str,
+) -> Optional[Path]:
     candidates = [
         path
         for path in artifact_dir.iterdir()
@@ -369,9 +476,18 @@ def _persist_artifact(artifact_dir: Path) -> Optional[Path]:
         raise RuntimeError("Codex produced more than one terminal artifact.")
     source = candidates[0]
     output_dir = Path(tempfile.mkdtemp(prefix="feishu-agent-output-"))
-    output_path = output_dir / source.name
+    output_path = output_dir / (
+        _safe_artifact_filename_stem(conversation_name) + source.suffix.casefold()
+    )
     shutil.copy2(source, output_path)
     return output_path
+
+
+def _safe_artifact_filename_stem(value: str) -> str:
+    """Return a portable filename stem while preserving the session name."""
+    sanitized = INVALID_ARTIFACT_FILENAME_PATTERN.sub("_", value).strip(" .")
+    sanitized = sanitized[:MAX_ARTIFACT_FILENAME_STEM_LENGTH].rstrip(" .")
+    return sanitized or "a_share_research"
 
 
 def _build_research_visualization(
