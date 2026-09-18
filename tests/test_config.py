@@ -8,6 +8,8 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("ZAI_API_KEY", raising=False)
     monkeypatch.delenv("TUSHARE_CACHE_BUCKET", raising=False)
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
@@ -20,6 +22,8 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
         "DEEPSEEK_API_KEY=deepseek123\n"
         "ZAI_API_KEY=zai123\n"
         "TUSHARE_CACHE_BUCKET=test-cache-bucket\n"
+        "MASSIVE_API_KEY=massive123\n"
+        "FINNHUB_API_KEY=finnhub123\n"
         "LLM_BASE_URL=https://model.example/v1\n"
         "LLM_MODEL=research-model\n"
         "LLM_API_KEY=model-key\n"
@@ -34,6 +38,8 @@ def test_settings_reads_credentials_from_environment(monkeypatch, tmp_path):
     assert settings.deepseek_api_key == "deepseek123"
     assert settings.zai_api_key == "zai123"
     assert settings.tushare_cache_bucket == "test-cache-bucket"
+    assert settings.massive_api_key == "massive123"
+    assert settings.finnhub_api_key == "finnhub123"
     assert settings.llm_base_url == "https://model.example/v1"
     assert settings.llm_model == "research-model"
     assert settings.llm_api_key == "model-key"
@@ -47,6 +53,8 @@ def test_settings_rejects_missing_token(monkeypatch, tmp_path):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("ZAI_API_KEY", raising=False)
     monkeypatch.delenv("TUSHARE_CACHE_BUCKET", raising=False)
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
 
     with pytest.raises(ConfigurationError):
         Settings.from_env(tmp_path / "missing.env")

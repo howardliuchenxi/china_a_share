@@ -35,6 +35,8 @@ class Settings:
     feishu_verification_token: str = ""
     feishu_encrypt_key: str = ""
     feishu_allowed_open_ids: str = ""
+    massive_api_key: str = ""
+    finnhub_api_key: str = ""
     # Base URL for the active OpenAI-compatible model API.
     llm_base_url: str = ""
     # Provider-native model identifier sent to the configured API.
@@ -85,6 +87,8 @@ class Settings:
         ).strip()
         feishu_encrypt_key = os.getenv("FEISHU_ENCRYPT_KEY", "").strip()
         feishu_allowed_open_ids = os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").strip()
+        massive_api_key = os.getenv("MASSIVE_API_KEY", "").strip()
+        finnhub_api_key = os.getenv("FINNHUB_API_KEY", "").strip()
         llm_base_url = os.getenv("LLM_BASE_URL", "").strip()
         llm_model = os.getenv("LLM_MODEL", "").strip()
         llm_api_key = os.getenv("LLM_API_KEY", "").strip()
@@ -110,6 +114,8 @@ class Settings:
             feishu_verification_token=feishu_verification_token,
             feishu_encrypt_key=feishu_encrypt_key,
             feishu_allowed_open_ids=feishu_allowed_open_ids,
+            massive_api_key=massive_api_key,
+            finnhub_api_key=finnhub_api_key,
             llm_base_url=llm_base_url,
             llm_model=llm_model,
             llm_api_key=llm_api_key,

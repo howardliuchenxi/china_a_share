@@ -15,7 +15,6 @@ from uuid import uuid4
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
-from china_a_share.capabilities import get_operation_capability, resolve_query_shape
 from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     QueryResult,
@@ -169,6 +168,17 @@ class MarketDataProvider(Protocol):
 
     def supports(self, operation: str) -> bool:
         """Return whether one operation is allowlisted."""
+
+    def describe_query_shapes(self, operation: str) -> List[Dict[str, Any]]:
+        """Return audited parameter shapes exposed to the research model."""
+
+    def validate_query(
+        self,
+        operation: str,
+        params: Dict[str, Any],
+        fields: List[str],
+    ) -> None:
+        """Validate one provider-native request before network access."""
 
     def query(
         self,
@@ -606,36 +616,30 @@ class ResearchToolbox:
             }
         if name == "search_market_data":
             operations = self._provider.search_operations(str(arguments["query"]))
-            return {
-                "operations": [
+            operation_results = []
+            for operation in operations:
+                query_shapes = self._provider.describe_query_shapes(operation.name)
+                if not query_shapes:
+                    continue
+                operation_results.append(
                     {
                         "name": operation.name,
                         "description": operation.description,
-                        "query_shapes": [
-                            {
-                                "shape_id": shape.shape_id,
-                                "required_params": list(shape.required_params),
-                            }
-                            for shape in capability.query_shapes
-                        ],
+                        "query_shapes": list(query_shapes),
                     }
-                    for operation in operations
-                    if (capability := get_operation_capability(operation.name))
-                    is not None
-                ]
+                )
+            return {
+                "operations": operation_results
             }
         if name == "query_market_data":
             operation = str(arguments["operation"])
             if not self._provider.supports(operation):
                 raise ValueError(f"Unsupported market-data operation: {operation}")
             params = dict(arguments["params"])
-            if resolve_query_shape(operation, params) is None:
-                raise ValueError(
-                    f"Operation lacks an audited Feishu agent query shape: {operation}"
-                )
+            fields = [str(field) for field in arguments["fields"]]
+            self._provider.validate_query(operation, params, fields)
             progress("querying", f"正在查询市场数据：{operation}…")
             dataset_id = f"dataset_{len(self._datasets) + 1}"
-            fields = [str(field) for field in arguments["fields"]]
             frame = self._provider.query(
                 operation,
                 params,
@@ -644,7 +648,12 @@ class ResearchToolbox:
                 request_id=self._request_id,
                 query_id=dataset_id,
             )
-            result = _frame_to_result(dataset_id, self._provider.name, operation, frame)
+            result = _frame_to_result(
+                dataset_id,
+                str(frame.attrs.get("provider") or self._provider.name),
+                operation,
+                frame,
+            )
             self._datasets[dataset_id] = result
             return _result_payload(result)
         if name == "rank_dataset":
