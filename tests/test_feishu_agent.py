@@ -768,3 +768,34 @@ def test_live_feishu_agent_clarifies_reported_ambiguous_pe_ranking():
     assert "1." in outcome.answer
     assert "推荐" in outcome.answer
     assert "请回复序号" in outcome.answer
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
+)
+def test_live_feishu_agent_answers_reported_precise_pe_ranking():
+    runtime = create_feishu_agent_runtime(Settings.from_env())
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt=(
+                "查询最近一个已完成交易日，全A股中 PE_TTM 最低且大于0的10只股票，"
+                "排除ST、退市整理和市盈率为空的股票，列出代码、名称、PE_TTM和总市值。"
+            ),
+            conversation_id="live:feishu:agent:precise-pe-ranking",
+            source_message_id="live-precise-pe-ranking",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert "DSML" not in outcome.answer
+    assert "<｜｜" not in outcome.answer
+    answered_with_data = "PE" in outcome.answer and any(
+        character.isdigit() for character in outcome.answer
+    )
+    requested_clarification = (
+        "推荐" in outcome.answer and "请回复序号" in outcome.answer
+    )
+    assert answered_with_data or requested_clarification

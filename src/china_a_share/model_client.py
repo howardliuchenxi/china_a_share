@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+from html import unescape
+import json
+import re
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence
+from uuid import uuid4
 
 import requests
 
 
 DEFAULT_MODEL_TIMEOUT_SECONDS = 180
+DSML_TOOL_CALLS_MARKER = "<｜｜DSML｜｜tool_calls>"
+DSML_INVOKE_PATTERN = re.compile(
+    r'<｜｜DSML｜｜invoke\s+name="([^"]+)">(.*?)</｜｜DSML｜｜invoke>',
+    re.DOTALL,
+)
+DSML_PARAMETER_PATTERN = re.compile(
+    r"<｜｜DSML｜｜parameter\b([^>]*)>(.*?)</｜｜DSML｜｜parameter>",
+    re.DOTALL,
+)
+DSML_ATTRIBUTE_PATTERN = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
 
 
 class ChatModel(Protocol):
@@ -101,4 +115,51 @@ class OpenAICompatibleChatModel:
             raise RuntimeError("Model API returned an invalid response contract.") from exc
         if not isinstance(message, dict):
             raise RuntimeError("Model API returned a non-object assistant message.")
-        return dict(message)
+        return _normalize_assistant_message(dict(message))
+
+
+def _normalize_assistant_message(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert one known provider tool-call encoding into the shared contract."""
+    content = message.get("content")
+    if message.get("tool_calls") or not isinstance(content, str):
+        return message
+    if DSML_TOOL_CALLS_MARKER not in content:
+        return message
+    calls = []
+    for function_name, invocation_body in DSML_INVOKE_PATTERN.findall(content):
+        arguments: Dict[str, Any] = {}
+        for raw_attributes, raw_value in DSML_PARAMETER_PATTERN.findall(
+            invocation_body
+        ):
+            attributes = dict(DSML_ATTRIBUTE_PATTERN.findall(raw_attributes))
+            parameter_name = attributes.get("name", "").strip()
+            if not parameter_name or parameter_name in arguments:
+                raise RuntimeError("Model API returned malformed DSML tool calls.")
+            value = unescape(raw_value.strip())
+            if attributes.get("string") == "true":
+                arguments[parameter_name] = value
+                continue
+            try:
+                arguments[parameter_name] = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "Model API returned malformed DSML tool arguments."
+                ) from exc
+        if not function_name.strip() or not arguments:
+            raise RuntimeError("Model API returned malformed DSML tool calls.")
+        calls.append(
+            {
+                "id": f"dsml-{uuid4().hex}",
+                "type": "function",
+                "function": {
+                    "name": function_name.strip(),
+                    "arguments": json.dumps(arguments, ensure_ascii=False),
+                },
+            }
+        )
+    if not calls:
+        raise RuntimeError("Model API returned malformed DSML tool calls.")
+    normalized = dict(message)
+    normalized["content"] = None
+    normalized["tool_calls"] = calls
+    return normalized
