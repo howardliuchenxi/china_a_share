@@ -40,6 +40,11 @@
 - Never solve a failure by hard-coding the reported prompt, tracking ID, stock,
   company, industry, metric, date, or returned value. Do not add enumerated
   special cases that only disguise the same defect for nearby inputs.
+- Keep the Feishu and remote-agent orchestration layer domain-agnostic. It must
+  not route on financial wording or implement finance-specific calculators,
+  trading-period rules, ranking shortcuts, or metric-specific recovery paths.
+  Expose provider data through generic schemas and let the shared agent runtime
+  use general query, transformation, and sandbox capabilities.
 - Regression tests must express the invariant or input class that was broken,
   not merely replay one reported example. Include a materially different case
   when needed to prove the behavior generalizes.

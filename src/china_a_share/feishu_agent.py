@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 import logging
 from pathlib import Path
 import tempfile
@@ -21,12 +20,9 @@ from china_a_share.core.contracts import (
     ResultPipeline,
     ServiceError,
 )
-from china_a_share.model_client import ChatModel
 from china_a_share.result_pipeline import ResultPipelineExecutor
 
 
-MAX_AGENT_ROUNDS = 16
-MAX_REPEATED_TOOL_CALLS = 2
 MAX_AGENT_PREVIEW_ROWS = 20
 MAX_AGENT_CONTEXT_TURNS = 12
 MAX_AGENT_PROGRESS_UPDATES = 19
@@ -102,6 +98,17 @@ class AgentProgressSink(Protocol):
 
     def reply_file(self, message_id: str, path: Path) -> None:
         """Upload and reply with one generated file."""
+
+
+class FeishuAgentRunner(Protocol):
+    """Execute one backend-managed Feishu conversation turn."""
+
+    def run(
+        self,
+        request: FeishuAgentRequest,
+        progress: Callable[[str, str], None],
+    ) -> "FeishuAgentOutcome":
+        """Return one terminal answer and optional artifact."""
 
 
 class MarketDataProvider(Protocol):
@@ -187,7 +194,7 @@ class FeishuAgentCoordinator:
     def run(
         self,
         task_id: str,
-        runtime: "FeishuAgentRuntime",
+        runtime: FeishuAgentRunner,
         progress_sink: AgentProgressSink,
     ) -> FeishuAgentTask:
         """Execute one queued task and proactively report material stages."""
@@ -280,18 +287,30 @@ class ResearchToolbox:
         request_id: str,
         *,
         python_sandbox: Optional[PythonSandbox] = None,
+        artifact_dir: Optional[Path] = None,
     ) -> None:
         """Store provider access and the optional secretless Python boundary."""
         self._provider = provider
         self._request_id = request_id
         self._python_sandbox = python_sandbox
+        self._artifact_dir = artifact_dir
         self._datasets: Dict[str, QueryResult] = {}
-        self._data_query_attempted = False
-        self.artifact_path: Optional[Path] = None
 
     @property
     def definitions(self) -> List[Dict[str, Any]]:
         """Return provider-neutral research tools advertised to the model."""
+        pipeline_schema = ResultPipeline.model_json_schema()
+        pipeline_definitions = pipeline_schema.pop("$defs", {})
+        transform_parameters: Dict[str, Any] = {
+            "type": "object",
+            "properties": {"pipeline": pipeline_schema},
+            "required": ["pipeline"],
+            "additionalProperties": False,
+        }
+        if pipeline_definitions:
+            # JSON Schema references resolve from the tool-input root, so move
+            # Pydantic's definitions beside the wrapper object.
+            transform_parameters["$defs"] = pipeline_definitions
         definitions = [
             {
                 "type": "function",
@@ -400,12 +419,7 @@ class ResearchToolbox:
                         "Apply an allowlisted ResultPipeline to retained datasets. "
                         "Use source_query_id and output_query_id plus 1-16 validated steps."
                     ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"pipeline": {"type": "object"}},
-                        "required": ["pipeline"],
-                        "additionalProperties": False,
-                    },
+                    "parameters": transform_parameters,
                 },
             },
             {
@@ -468,6 +482,14 @@ class ResearchToolbox:
         progress: Callable[[str, str], None],
     ) -> Dict[str, Any]:
         """Execute one named tool or fail fast on an unknown capability."""
+        if name == "request_clarification":
+            return {
+                "clarification": _format_clarification(arguments),
+                "instruction": (
+                    "Return the clarification verbatim as the final answer and do "
+                    "not call another tool in this turn."
+                ),
+            }
         if name == "search_market_data":
             operations = self._provider.search_operations(str(arguments["query"]))
             return {
@@ -489,7 +511,6 @@ class ResearchToolbox:
                 ]
             }
         if name == "query_market_data":
-            self._data_query_attempted = True
             operation = str(arguments["operation"])
             if not self._provider.supports(operation):
                 raise ValueError(f"Unsupported market-data operation: {operation}")
@@ -624,163 +645,26 @@ class ResearchToolbox:
             if result is None:
                 raise ValueError(f"Unknown Excel dataset: {dataset_id}")
             progress("exporting", "正在生成 Excel 研究结果…")
-            self.artifact_path = build_research_workbook(
+            artifact_path = build_research_workbook(
                 result,
                 str(arguments["title"]),
                 str(arguments["methodology"]),
+                output_dir=self._artifact_dir,
             )
-            return {"file_name": self.artifact_path.name, "row_count": result.row_count}
-        raise ValueError(f"Unknown research tool: {name}")
-
-    def validate_outcome(self, answer: str) -> None:
-        """Reject unsupported terminal answers and corrupt generated artifacts."""
-        if not answer.strip():
-            raise RuntimeError("Research model returned an empty answer.")
-        if self._data_query_attempted and not self._datasets:
-            raise RuntimeError(
-                "Research model produced no validated dataset after requesting data."
-            )
-        for result in self._datasets.values():
-            if result.row_count != len(result.rows):
-                raise RuntimeError(
-                    f"Dataset row-count validation failed: {result.query_id}"
-                )
-            if len(result.columns) != len(set(result.columns)):
-                raise RuntimeError(
-                    f"Dataset column validation failed: {result.query_id}"
-                )
-        if self.artifact_path is not None:
-            if (
-                not self.artifact_path.is_file()
-                or self.artifact_path.stat().st_size == 0
-            ):
-                raise RuntimeError("Generated research artifact failed validation.")
-
-
-class FeishuAgentRuntime:
-    """Run a provider-neutral tool loop over audited research capabilities."""
-
-    def __init__(
-        self,
-        model: ChatModel,
-        provider: MarketDataProvider,
-        *,
-        python_sandbox: Optional[PythonSandbox] = None,
-    ) -> None:
-        """Store the replaceable model, data provider, and optional sandbox."""
-        self._model = model
-        self._provider = provider
-        self._python_sandbox = python_sandbox
-
-    def run(
-        self,
-        request: FeishuAgentRequest,
-        progress: Callable[[str, str], None],
-    ) -> FeishuAgentOutcome:
-        """Return a final answer after at most the configured tool-call rounds."""
-        toolbox = ResearchToolbox(
-            self._provider,
-            uuid4().hex,
-            python_sandbox=self._python_sandbox,
-        )
-        messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": _agent_system_prompt()},
-        ]
-        for turn in request.conversation[-MAX_AGENT_CONTEXT_TURNS:]:
-            messages.append({"role": "user", "content": turn.prompt})
-            messages.append({"role": "assistant", "content": turn.answer})
-        messages.append({"role": "user", "content": request.prompt})
-        repeated_calls: Dict[str, int] = {}
-
-        for _round in range(MAX_AGENT_ROUNDS):
-            message = self._model.complete(messages, toolbox.definitions)
-            tool_calls = message.get("tool_calls") or []
-            if not tool_calls:
-                answer = str(message.get("content") or "").strip()
-                toolbox.validate_outcome(answer)
-                return FeishuAgentOutcome(
-                    answer=answer,
-                    artifact_path=toolbox.artifact_path,
-                )
-            clarification_calls = [
-                tool_call
-                for tool_call in tool_calls
-                if (tool_call.get("function") or {}).get("name")
-                == "request_clarification"
-            ]
-            if clarification_calls:
-                function = clarification_calls[0].get("function") or {}
-                try:
-                    arguments = json.loads(str(function.get("arguments") or "{}"))
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError(
-                        "Research model returned invalid clarification arguments."
-                    ) from exc
-                return FeishuAgentOutcome(
-                    answer=_format_clarification(arguments),
-                )
-            messages.append(message)
-            for tool_call in tool_calls:
-                function = tool_call.get("function") or {}
-                name = str(function.get("name") or "")
-                raw_arguments = str(function.get("arguments") or "{}")
-                signature = json.dumps(
-                    {"name": name, "arguments": raw_arguments},
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-                repeated_calls[signature] = repeated_calls.get(signature, 0) + 1
-                try:
-                    if repeated_calls[signature] > MAX_REPEATED_TOOL_CALLS:
-                        raise ValueError(
-                            "Identical tool call repeated without changing the plan."
-                        )
-                    arguments = json.loads(raw_arguments)
-                    if not isinstance(arguments, dict):
-                        raise ValueError("Tool arguments must be a JSON object.")
-                    result = toolbox.call(name, arguments, progress)
-                except Exception as exc:
-                    logger.warning(
-                        "feishu_agent_tool_failed model=%s tool=%s error=%s",
-                        self._model.model,
-                        name,
-                        exc,
-                    )
-                    result = {"error": str(exc)}
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "content": json.dumps(result, ensure_ascii=False),
-                    }
-                )
-
-        # A bounded tool budget protects cost and latency. When it is exhausted,
-        # force one tool-free synthesis from already validated evidence instead of
-        # surfacing an internal loop-limit error to the user.
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "The research tool budget is exhausted. Return the best final "
-                    "Chinese answer supported only by existing tool evidence. State "
-                    "any unresolved limitation explicitly and do not request tools."
-                ),
+            return {
+                "file_name": artifact_path.name,
+                "file_path": str(artifact_path),
+                "row_count": result.row_count,
             }
-        )
-        message = self._model.complete(messages, [])
-        answer = str(message.get("content") or "").strip()
-        toolbox.validate_outcome(answer)
-        return FeishuAgentOutcome(
-            answer=answer,
-            artifact_path=toolbox.artifact_path,
-        )
+        raise ValueError(f"Unknown research tool: {name}")
 
 
 def build_research_workbook(
     result: QueryResult,
     title: str,
     methodology: str,
+    *,
+    output_dir: Optional[Path] = None,
 ) -> Path:
     """Create one readable two-tab workbook from a complete result dataset."""
     try:
@@ -860,8 +744,9 @@ def build_research_workbook(
     methodology_sheet.page_setup.fitToHeight = 1
     methodology_sheet.print_area = "A1:B9"
 
-    output_dir = Path(tempfile.mkdtemp(prefix="feishu-agent-"))
-    output_path = output_dir / "a_share_research.xlsx"
+    target_dir = output_dir or Path(tempfile.mkdtemp(prefix="feishu-agent-"))
+    target_dir.mkdir(parents=True, exist_ok=True)
+    output_path = target_dir / "a_share_research.xlsx"
     workbook.save(output_path)
     return output_path
 
@@ -897,6 +782,11 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
         "summary": result.summary,
         "preview": result.rows[:MAX_AGENT_PREVIEW_ROWS],
         "preview_truncated": result.row_count > MAX_AGENT_PREVIEW_ROWS,
+        "dataset_scope": "complete_retained_result",
+        "preview_note": (
+            "The preview is display-only. Every downstream dataset tool and the "
+            "Python sandbox operate on all retained rows identified by dataset_id."
+        ),
     }
 
 
@@ -917,34 +807,3 @@ def _format_clarification(arguments: Any) -> str:
     lines.extend(f"{index}. {option}" for index, option in enumerate(options, start=1))
     lines.append("请回复序号，或直接补充你的完整口径。")
     return "\n".join(lines)
-
-
-def _agent_system_prompt() -> str:
-    """Return stable tool-use and evidence rules for the Feishu research agent."""
-    return (
-        "You are an A-share research agent. Answer in concise Chinese. Use tools for "
-        "every market-data claim and never invent prices, rankings, dates, companies, "
-        "or financial metrics. Behave like an interactive research assistant: when "
-        "a material choice such as ranking direction, metric definition, as-of basis, "
-        "security universe, or exclusion rule is ambiguous, do not guess and do not "
-        "query data. Call request_clarification with two to four concrete choices, "
-        "mark the safest default with （推荐）, and ask every material clarification "
-        "in one turn. When conversation history shows that the user is answering a "
-        "clarification with a number or short phrase, resolve it from the preceding "
-        "exchange instead of repeating the question. Search the operation catalog "
-        "before using the generic "
-        "query_market_data tool. Use only audited query shapes accepted by that tool. "
-        "Use only returned dataset identifiers and deterministic transformations. "
-        "Prefer transform_dataset, rank_dataset, and join_datasets for ordinary "
-        "calculations. Use run_python_analysis only when those structured operations "
-        "cannot express the calculation. Sandbox code may use pandas as pd, numpy as "
-        "np, and datasets[dataset_id]; it must not import modules, access files or the "
-        "network, and must assign the final DataFrame to result. "
-        "When the user requests Excel, or a result contains more than ten rows, call "
-        "export_excel after producing the final retained dataset. Explain proxy metrics "
-        "and missing data explicitly. Never provide personalized buy or sell advice. "
-        "ResultPipeline supports advanced allowlisted operations such as select_fields, filter, "
-        "filter_range, sort, limit, aggregate, summarize, distinct, latest_by_group, "
-        "derive, join_fields, inner_join, and union_all. If a tool returns an error, "
-        "correct the arguments or explain the limitation instead of guessing."
-    )

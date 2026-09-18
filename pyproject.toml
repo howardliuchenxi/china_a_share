@@ -7,14 +7,14 @@ name = "china-a-share"
 version = "0.1.0"
 description = "Provider-neutral A-share market-data laboratory"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115,<1.0",
-    # Keep the local Python 3.9 environment on the pre-cryptography google-auth line.
     "google-api-core>=2.15,<2.25",
     "google-auth>=2.26,<2.40",
     "google-cloud-storage>=2.18,<3.0",
     "openpyxl>=3.1,<4.0",
+    "openai-codex>=0.154,<0.155",
     "pandas>=2.0,<3.0",
     "pycryptodome>=3.20,<4.0",
     "pydantic>=2.8,<3.0",
@@ -39,6 +39,9 @@ a-share-web = "china_a_share.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+china_a_share = ["deepseek_models.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

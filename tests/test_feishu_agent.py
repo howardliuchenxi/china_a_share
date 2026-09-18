@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import re
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -12,14 +13,11 @@ from china_a_share.feishu_agent import (
     FeishuAgentCoordinator,
     FeishuAgentOutcome,
     FeishuAgentRequest,
-    FeishuAgentRuntime,
     FeishuAgentTask,
-    MAX_AGENT_ROUNDS,
     ResearchToolbox,
     build_research_workbook,
 )
 from china_a_share.feishu import FeishuOpenApiClient
-from china_a_share.model_client import OpenAICompatibleChatModel
 from china_a_share.registry import TushareOperationCatalog
 from china_a_share.tasks import MemoryAnalysisTaskStore
 
@@ -61,7 +59,7 @@ class UnauditedFakeOperation:
 class FakeProvider:
     name = "test-provider"
 
-    def search_operations(self, prompt):
+    def search_operations(self, _prompt):
         return [FakeOperation()]
 
     def supports(self, operation):
@@ -203,234 +201,37 @@ class RecordingSink:
         self.files.append((message_id, path))
 
 
-def test_agent_runtime_uses_tools_and_exports_complete_excel():
-    session = SequenceSession(
-        [
-            FakeResponse(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": None,
-                                "tool_calls": [
-                                    {
-                                        "id": "call-query",
-                                        "type": "function",
-                                        "function": {
-                                            "name": "query_market_data",
-                                            "arguments": (
-                                                '{"operation":"daily","params":'
-                                                '{"trade_date":"20260916"},'
-                                                '"fields":["ts_code","close"]}'
-                                            ),
-                                        },
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ),
-            FakeResponse(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": None,
-                                "tool_calls": [
-                                    {
-                                        "id": "call-export",
-                                        "type": "function",
-                                        "function": {
-                                            "name": "export_excel",
-                                            "arguments": (
-                                                '{"dataset_id":"dataset_1",'
-                                                '"title":"Daily prices",'
-                                                '"methodology":"Tushare daily query."}'
-                                            ),
-                                        },
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ),
-            FakeResponse(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": "查询完成，Excel 已生成。",
-                            }
-                        }
-                    ]
-                }
-            ),
-        ]
-    )
-    progress = []
+def test_request_clarification_returns_one_bounded_prompt():
+    toolbox = ResearchToolbox(FakeProvider(), "request-1")
 
-    model = OpenAICompatibleChatModel(
-        "https://model.example/v1",
-        "research-model",
-        "test-key",
-        session=session,
-    )
-    outcome = FeishuAgentRuntime(
-        model,
-        FakeProvider(),
-    ).run(
-        FeishuAgentRequest(
-            prompt="导出最近交易日收盘价 Excel",
-            conversation_id="tenant:chat:root:user",
-            source_message_id="message-1",
-        ),
-        lambda stage, message: progress.append((stage, message)),
-    )
-
-    assert outcome.answer == "查询完成，Excel 已生成。"
-    assert outcome.artifact_path is not None
-    workbook = load_workbook(outcome.artifact_path, data_only=False)
-    assert workbook.sheetnames == ["Results", "Methodology"]
-    assert workbook["Results"]["A6"].value == "000001.SZ"
-    assert workbook["Results"]["B6"].value == 10.25
-    assert workbook["Methodology"]["B4"].value == "test-provider"
-    assert [call[1]["json"]["model"] for call in session.calls] == [
-        "research-model",
-        "research-model",
-        "research-model",
-    ]
-    assert all(
-        call[0] == "https://model.example/v1/chat/completions"
-        for call in session.calls
-    )
-    assert {stage for stage, _message in progress} == {"querying", "exporting"}
-
-
-def test_agent_runtime_synthesizes_answer_after_tool_budget_is_exhausted():
-    class LoopingModel:
-        model = "looping-model"
-
-        def __init__(self):
-            self.calls = 0
-
-        def complete(self, messages, tools):
-            self.calls += 1
-            if not tools:
-                return {
-                    "role": "assistant",
-                    "content": "已根据现有数据完成回答。",
-                }
-            return {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": f"call-{self.calls}",
-                        "type": "function",
-                        "function": {
-                            "name": "query_market_data",
-                            "arguments": (
-                                '{"operation":"daily","params":'
-                                '{"trade_date":"20260916"},'
-                                '"fields":["ts_code","close"]}'
-                            ),
-                        },
-                    }
-                ],
-            }
-
-    model = LoopingModel()
-
-    outcome = FeishuAgentRuntime(model, FakeProvider()).run(
-        FeishuAgentRequest(
-            prompt="查询行情。",
-            conversation_id="conversation",
-            source_message_id="message",
-        ),
+    payload = toolbox.call(
+        "request_clarification",
+        {
+            "question": "请确认排名口径：",
+            "options": ["口径一（推荐）", "口径二", "自定义口径"],
+        },
         lambda _stage, _message: None,
     )
 
-    assert outcome.answer == "已根据现有数据完成回答。"
-    assert model.calls == MAX_AGENT_ROUNDS + 1
-
-
-def test_agent_runtime_returns_bounded_clarification_before_querying():
-    class ClarifyingModel:
-        model = "clarifying-model"
-
-        def complete(self, messages, tools):
-            assert messages[-1] == {
-                "role": "user",
-                "content": "你能查到今天市盈率前10的股票吗",
-            }
-            assert "request_clarification" in {
-                definition["function"]["name"] for definition in tools
-            }
-            return {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call-clarify",
-                        "type": "function",
-                        "function": {
-                            "name": "request_clarification",
-                            "arguments": (
-                                '{"question":"请确认市盈率排名口径：",'
-                                '"options":["最近完成交易日，PE_TTM最低且大于0（推荐）",'
-                                '"最近完成交易日，PE_TTM最高","自定义口径"]}'
-                            ),
-                        },
-                    },
-                    {
-                        "id": "call-query",
-                        "type": "function",
-                        "function": {
-                            "name": "query_market_data",
-                            "arguments": (
-                                '{"operation":"daily","params":'
-                                '{"trade_date":"20260917"},'
-                                '"fields":["ts_code","close"]}'
-                            ),
-                        },
-                    },
-                ],
-            }
-
-    outcome = FeishuAgentRuntime(ClarifyingModel(), FakeProvider()).run(
-        FeishuAgentRequest(
-            prompt="你能查到今天市盈率前10的股票吗",
-            conversation_id="conversation",
-            source_message_id="message",
-        ),
-        lambda _stage, _message: None,
-    )
-
-    assert outcome.answer == (
-        "请确认市盈率排名口径：\n"
-        "1. 最近完成交易日，PE_TTM最低且大于0（推荐）\n"
-        "2. 最近完成交易日，PE_TTM最高\n"
+    assert payload["clarification"] == (
+        "请确认排名口径：\n"
+        "1. 口径一（推荐）\n"
+        "2. 口径二\n"
         "3. 自定义口径\n"
         "请回复序号，或直接补充你的完整口径。"
     )
+    assert "final answer" in payload["instruction"]
 
 
 def test_search_market_data_returns_all_audited_operations_with_query_shapes():
     class DiscoveryProvider(FakeProvider):
         def search_operations(self, prompt):
-            assert prompt == "市盈率估值"
+            assert prompt == "valuation"
             return [UnauditedFakeOperation(), FakeOperation()]
 
-    toolbox = ResearchToolbox(DiscoveryProvider(), "request-1")
-
-    payload = toolbox.call(
+    payload = ResearchToolbox(DiscoveryProvider(), "request-1").call(
         "search_market_data",
-        {"query": "市盈率估值"},
+        {"query": "valuation"},
         lambda _stage, _message: None,
     )
 
@@ -451,15 +252,15 @@ def test_search_market_data_returns_all_audited_operations_with_query_shapes():
     ]
 
 
-def test_search_market_data_exposes_daily_basic_from_the_production_catalog():
+def test_search_market_data_exposes_production_catalog_operations():
     class CatalogProvider(FakeProvider):
         def search_operations(self, prompt):
-            assert prompt == "全市场市盈率排名"
+            assert prompt == "valuation ranking"
             return TushareOperationCatalog().search(prompt)
 
     payload = ResearchToolbox(CatalogProvider(), "request-1").call(
         "search_market_data",
-        {"query": "全市场市盈率排名"},
+        {"query": "valuation ranking"},
         lambda _stage, _message: None,
     )
 
@@ -509,6 +310,26 @@ def test_generic_query_and_python_sandbox_replace_prompt_specific_ranking_tool()
         definition["function"]["name"] for definition in toolbox.definitions
     }
     assert {stage for stage, _message in progress} == {"querying", "calculating"}
+
+
+def test_transform_tool_exposes_complete_pipeline_contract():
+    toolbox = ResearchToolbox(RecentReturnProvider(), "request-1")
+
+    transform = next(
+        definition["function"]
+        for definition in toolbox.definitions
+        if definition["function"]["name"] == "transform_dataset"
+    )
+    parameters = transform["parameters"]
+    pipeline = parameters["properties"]["pipeline"]
+
+    assert parameters["additionalProperties"] is False
+    assert parameters["required"] == ["pipeline"]
+    assert pipeline["properties"]["steps"]["items"] == {
+        "$ref": "#/$defs/ResultPipelineStep"
+    }
+    assert "ResultPipelineStep" in parameters["$defs"]
+    assert "operation" in parameters["$defs"]["ResultPipelineStep"]["properties"]
 
 
 def test_research_workbook_preserves_numeric_values_and_source_context():
@@ -745,6 +566,30 @@ def test_live_feishu_agent_answers_reported_five_day_return_ranking():
     assert "复权收益" not in outcome.answer
     assert "并非复权" in outcome.answer or "复权" not in outcome.answer
     assert any(character.isdigit() for character in outcome.answer)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
+)
+def test_live_feishu_agent_answers_reported_thirty_day_return_ranking():
+    runtime = create_feishu_agent_runtime(Settings.from_env())
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="查出最近30个交易日累计涨幅最大的个股",
+            conversation_id="live:feishu:agent:reported-thirty-day-return",
+            source_message_id="live-reported-thirty-day-return",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert "无法可靠查出" not in outcome.answer
+    assert "工具调用额度" not in outcome.answer
+    assert "只返回前 20 行" not in outcome.answer
+    assert re.search(r"\b\d{6}\.(?:SH|SZ|BJ)\b", outcome.answer)
+    assert "%" in outcome.answer
 
 
 @pytest.mark.live
