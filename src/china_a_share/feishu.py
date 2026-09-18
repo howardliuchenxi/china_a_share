@@ -659,8 +659,14 @@ class FeishuResearchBot:
         timestamp: str,
         nonce: str,
         signature: str,
+        *,
+        allow_missing: bool = False,
     ) -> None:
         """Reject callbacks whose Feishu request signature does not match."""
+        if allow_missing and not timestamp and not nonce and not signature:
+            # Some card-callback security modes authenticate only with the
+            # verification token embedded in the V2 event header.
+            return
         if not timestamp or not nonce or not signature:
             raise FeishuEventError("Feishu signature headers are required.")
         expected = hashlib.sha256(

@@ -228,13 +228,15 @@ def create_app(
             payload = bot.decode_payload(body)
             if payload.get("type") == "url_verification":
                 return {"challenge": bot.verify_challenge(payload)}
+            event_type = (payload.get("header") or {}).get("event_type")
             bot.verify_signature(
                 body,
                 x_lark_request_timestamp,
                 x_lark_request_nonce,
                 x_lark_signature,
+                allow_missing=event_type == "card.action.trigger",
             )
-            if (payload.get("header") or {}).get("event_type") == "card.action.trigger":
+            if event_type == "card.action.trigger":
                 event = bot.parse_card_action(payload)
                 if event is not None:
                     background_tasks.add_task(bot.process, event)
@@ -255,6 +257,14 @@ def create_app(
                 background_tasks.add_task(bot.process, event)
             return {"code": 0}
         except FeishuEventError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "feishu_callback_rejected",
+                api_route=FEISHU_EVENTS_API_ROUTE,
+                reason=str(exc),
+                request_id=request.state.request_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=str(exc),

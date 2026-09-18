@@ -270,6 +270,24 @@ def test_signature_validation_accepts_exact_body_and_rejects_mutation():
         bot.verify_signature(body + b" ", "123", "nonce", signature)
 
 
+def test_signature_validation_allows_only_fully_missing_card_headers():
+    bot, _, _, _ = build_bot()
+
+    bot.verify_signature(b'{"schema":"2.0"}', "", "", "", allow_missing=True)
+
+    with pytest.raises(FeishuEventError, match="headers are required"):
+        bot.verify_signature(b'{"schema":"2.0"}', "", "", "")
+
+    with pytest.raises(FeishuEventError, match="headers are required"):
+        bot.verify_signature(
+            b'{"schema":"2.0"}',
+            "123",
+            "",
+            "",
+            allow_missing=True,
+        )
+
+
 def test_callback_decoder_accepts_plaintext_and_encrypted_payloads():
     bot, _, _, _ = build_bot()
     payload = message_payload()
@@ -378,6 +396,15 @@ def test_card_shortcut_becomes_existing_command(action, expected_prompt):
 
     assert event is not None
     assert event.prompt == expected_prompt
+
+
+def test_card_action_requires_matching_verification_token():
+    bot, _, _, _ = build_bot()
+    payload = card_action_payload("list_sessions")
+    payload["header"]["token"] = "wrong-token"
+
+    with pytest.raises(FeishuEventError, match="token is invalid"):
+        bot.parse_card_action(payload)
 
 
 def test_processing_submits_durable_task_and_deduplicates_event():
@@ -871,10 +898,21 @@ def test_endpoint_verification_requires_matching_token():
 class FakeEndpointBot:
     def __init__(self):
         self.processed = []
+        self.signature_allow_missing = []
 
-    def verify_signature(self, body, timestamp, nonce, signature):
+    def verify_signature(
+        self,
+        body,
+        timestamp,
+        nonce,
+        signature,
+        *,
+        allow_missing=False,
+    ):
         assert body
-        assert (timestamp, nonce, signature) == ("123", "nonce", "signature")
+        if timestamp or nonce or signature:
+            assert (timestamp, nonce, signature) == ("123", "nonce", "signature")
+        self.signature_allow_missing.append(allow_missing)
 
     def decode_payload(self, body):
         return json.loads(body)
@@ -910,6 +948,7 @@ def test_feishu_endpoint_acknowledges_and_processes_authenticated_event():
     assert response.status_code == 200
     assert response.json() == {"code": 0}
     assert bot.processed == [{"event_id": "event-1"}]
+    assert bot.signature_allow_missing == [False]
 
 
 def test_feishu_endpoint_acknowledges_card_action_with_toast():
@@ -931,6 +970,24 @@ def test_feishu_endpoint_acknowledges_card_action_with_toast():
         "toast": {"type": "success", "content": "操作已提交"}
     }
     assert bot.processed == [{"action": "list_sessions"}]
+    assert bot.signature_allow_missing == [True]
+
+
+def test_feishu_endpoint_accepts_token_authenticated_card_action_without_signature():
+    bot = FakeEndpointBot()
+    client = TestClient(create_app(feishu_research_bot=bot))
+
+    response = client.post(
+        "/api/integrations/feishu/events",
+        json=card_action_payload("list_sessions"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "toast": {"type": "success", "content": "操作已提交"}
+    }
+    assert bot.processed == [{"action": "list_sessions"}]
+    assert bot.signature_allow_missing == [True]
 
 
 def test_feishu_endpoint_returns_verified_challenge():
