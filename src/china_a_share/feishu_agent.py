@@ -26,7 +26,7 @@ from china_a_share.core.contracts import (
 from china_a_share.result_pipeline import ResultPipelineExecutor
 
 
-MAX_AGENT_PREVIEW_ROWS = 20
+MAX_AGENT_PREVIEW_ROWS = 10
 MAX_AGENT_CONTEXT_TURNS = 12
 MAX_AGENT_PROGRESS_UPDATES = 19
 RESEARCH_VISUALIZATION_LINK_LIFETIME = timedelta(days=30)
@@ -984,10 +984,7 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
         "preview": result.rows[:MAX_AGENT_PREVIEW_ROWS],
         "preview_truncated": result.row_count > MAX_AGENT_PREVIEW_ROWS,
         "dataset_scope": "complete_retained_result",
-        "preview_note": (
-            "The preview is display-only. Every downstream dataset tool and the "
-            "Python sandbox operate on all retained rows identified by dataset_id."
-        ),
+        "preview_note": "Display only; tools use every row retained by dataset_id.",
     }
 
 

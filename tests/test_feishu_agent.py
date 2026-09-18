@@ -314,6 +314,33 @@ def test_generic_query_and_python_sandbox_replace_prompt_specific_ranking_tool()
     assert {stage for stage, _message in progress} == {"querying", "calculating"}
 
 
+def test_model_preview_keeps_top_ten_rows_and_retains_the_complete_dataset():
+    rows = [
+        {"ts_code": f"{index:06d}.SZ", "close": float(index)}
+        for index in range(12)
+    ]
+    result = QueryResult(
+        query_id="ranking",
+        provider="tushare",
+        operation="daily",
+        status=QueryStatus.SUCCESS,
+        columns=["ts_code", "close"],
+        rows=rows,
+        row_count=len(rows),
+    )
+
+    toolbox = ResearchToolbox(FakeProvider(), "request-1", session_dataset=result)
+    payload = toolbox.call(
+        "inspect_session_dataset",
+        {},
+        lambda _stage, _message: None,
+    )
+
+    assert len(payload["preview"]) == 10
+    assert payload["preview_truncated"] is True
+    assert payload["dataset_scope"] == "complete_retained_result"
+
+
 def test_toolbox_restores_session_dataset_and_archives_follow_up_result(tmp_path):
     session_result = QueryResult(
         query_id="previous_final",

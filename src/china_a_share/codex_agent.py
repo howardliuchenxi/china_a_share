@@ -90,7 +90,12 @@ class CodexFeishuAgentRuntime:
                     sandbox=Sandbox.workspace_write,
                 )
                 turn = thread.turn(_request_prompt(request))
-                final_response, duration_ms = _run_turn_with_progress(turn, progress)
+                (
+                    final_response,
+                    duration_ms,
+                    token_usage,
+                    usage_update_count,
+                ) = _run_turn_with_progress(turn, progress)
 
             artifact_path = _persist_artifact(
                 artifact_dir,
@@ -115,6 +120,12 @@ class CodexFeishuAgentRuntime:
                 self._model,
                 duration_ms,
                 artifact_path.name if artifact_path is not None else "none",
+            )
+            _log_turn_usage(
+                request,
+                self._model,
+                token_usage,
+                usage_update_count,
             )
             return FeishuAgentOutcome(
                 answer=answer,
@@ -202,7 +213,7 @@ def _load_codex_sdk() -> Tuple[Any, Any, Any, Any]:
 def _run_turn_with_progress(
     turn: Any,
     progress: Callable[[str, str], None],
-) -> tuple[Optional[str], Optional[int]]:
+) -> tuple[Optional[str], Optional[int], Optional[dict[str, int]], int]:
     """Collect one turn while surfacing material MCP activity and bounding runtime."""
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="codex-turn")
     future = executor.submit(_collect_turn, turn, progress)
@@ -228,13 +239,23 @@ def _run_turn_with_progress(
 def _collect_turn(
     turn: Any,
     progress: Callable[[str, str], None],
-) -> tuple[Optional[str], Optional[int]]:
+) -> tuple[Optional[str], Optional[int], Optional[dict[str, int]], int]:
     final_response: Optional[str] = None
     last_unknown_phase_response: Optional[str] = None
     duration_ms: Optional[int] = None
+    token_usage: Optional[dict[str, int]] = None
+    usage_update_count = 0
     completed = False
     for event in turn.stream():
         payload = _event_payload(event.payload)
+        if event.method == "thread/tokenUsage/updated":
+            # Token usage notifications are cumulative snapshots. Keep only the
+            # latest total so repeated notifications are never double-counted.
+            usage_update_count += 1
+            token_usage = _normalize_token_usage(
+                ((payload.get("tokenUsage") or {}).get("total") or {})
+            ) or token_usage
+            continue
         if event.method == "item/started":
             item = payload.get("item") or {}
             if item.get("type") == "mcpToolCall":
@@ -275,7 +296,64 @@ def _collect_turn(
                 raise RuntimeError(str(message))
     if not completed:
         raise RuntimeError("Codex turn ended without a completion event.")
-    return final_response or last_unknown_phase_response, duration_ms
+    return (
+        final_response or last_unknown_phase_response,
+        duration_ms,
+        token_usage,
+        usage_update_count,
+    )
+
+
+def _normalize_token_usage(value: Any) -> Optional[dict[str, int]]:
+    """Return the stable raw Codex token counters from one usage snapshot."""
+    if not isinstance(value, dict):
+        return None
+    fields = {
+        "input_tokens": "inputTokens",
+        "cached_input_tokens": "cachedInputTokens",
+        "output_tokens": "outputTokens",
+        "reasoning_output_tokens": "reasoningOutputTokens",
+        "total_tokens": "totalTokens",
+    }
+    normalized: dict[str, int] = {}
+    for output_name, source_name in fields.items():
+        raw_value = value.get(source_name)
+        if isinstance(raw_value, bool) or not isinstance(raw_value, Real):
+            return None
+        normalized[output_name] = max(int(raw_value), 0)
+    return normalized
+
+
+def _log_turn_usage(
+    request: FeishuAgentRequest,
+    model: str,
+    token_usage: Optional[dict[str, int]],
+    usage_update_count: int,
+) -> None:
+    """Log task-scoped raw usage without coupling runtime behavior to billing rates."""
+    usage = token_usage or {}
+    workload = (
+        "live_regression"
+        if os.getenv("RUN_LIVE_ANALYSIS", "").strip() == "1"
+        else "feishu_user"
+    )
+    logger.info(
+        "codex_feishu_turn_usage task_id=%s conversation_id=%s model=%s "
+        "workload=%s usage_available=%s usage_updates=%s input_tokens=%s "
+        "cached_input_tokens=%s output_tokens=%s reasoning_output_tokens=%s "
+        "total_tokens=%s",
+        os.getenv("ANALYSIS_TASK_ID", "").strip() or "none",
+        request.conversation_id,
+        model,
+        workload,
+        bool(token_usage),
+        usage_update_count,
+        usage.get("input_tokens", 0),
+        usage.get("cached_input_tokens", 0),
+        usage.get("output_tokens", 0),
+        usage.get("reasoning_output_tokens", 0),
+        usage.get("total_tokens", 0),
+    )
 
 
 def _empty_response_follow_up(artifact_path: Optional[Path]) -> str:
@@ -338,6 +416,10 @@ def _developer_instructions() -> str:
         "the same base universe again. For calculations that need "
         "several tabular operations, "
         "prefer one Python sandbox call over a long sequence of transformations. If "
+        "several independent data reads are required, request them in the same model "
+        "turn. Search the operation catalog only when the operation or parameter "
+        "shape is not already established, and never repeat an equivalent catalog "
+        "search or provider query within one turn. "
         "a tool rejects invalid arguments, inspect its schema and correct the call "
         "once; do not repeat equivalent failing calls. Never invent missing values. "
         "If a result has more than ten rows or the user asks for a file, create an "
@@ -354,14 +436,13 @@ def _request_prompt(request: FeishuAgentRequest) -> str:
         for turn in request.conversation[-MAX_AGENT_CONTEXT_TURNS:]
     ]
     payload = {
-        "conversation_id": request.conversation_id,
         "previous_conversation": conversation,
         "current_user_request": request.prompt,
     }
     return (
         "Continue the following backend-managed conversation. Previous exchanges are "
         "context only; answer current_user_request directly.\n"
-        + json.dumps(payload, ensure_ascii=False, indent=2)
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     )
 
 

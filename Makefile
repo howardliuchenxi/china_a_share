@@ -53,7 +53,7 @@ help:
 		'make check   Build the frontend; backend release tests are temporarily disabled.' \
 		'make full-check  Build the frontend and run every backend test.' \
 		'make install-hooks  Enable the repository-managed Git hooks.' \
-		'make live-check  Run the unified 100-case live matrix and regressions.' \
+		'make live-check  Run paid live cases only with ALLOW_PAID_LIVE_TESTS=1.' \
 		'make pre-push  Run the complete local release gate.' \
 		'make deploy  Deploy the clean, pushed main commit and update the GCP inventory.' \
 		'make merge   Validate, merge the current clean branch into main, and push main.' \
@@ -74,6 +74,10 @@ install-hooks:
 pre-push: check
 
 live-check:
+	test "$(ALLOW_PAID_LIVE_TESTS)" = "1" || { \
+		echo "Paid live tests are disabled. Set ALLOW_PAID_LIVE_TESTS=1 explicitly to run them." >&2; \
+		exit 1; \
+	}
 	RUN_LIVE_ANALYSIS=1 LIVE_ANALYSIS_PARALLEL=1 .venv/bin/python -m pytest tests/test_live_analysis.py -v -s
 
 deploy: check

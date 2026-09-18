@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from china_a_share.codex_agent import (
     CodexFeishuAgentRuntime,
     _build_research_visualization,
+    _normalize_token_usage,
     _safe_artifact_filename_stem,
 )
 from china_a_share.core.contracts import QueryResult, QueryStatus
@@ -77,6 +78,29 @@ class FakeCodex:
                             },
                         )
                         yield SimpleNamespace(
+                            method="thread/tokenUsage/updated",
+                            payload={
+                                "threadId": "thread-1",
+                                "turnId": "turn-1",
+                                "tokenUsage": {
+                                    "total": {
+                                        "inputTokens": 1_200,
+                                        "cachedInputTokens": 900,
+                                        "outputTokens": 240,
+                                        "reasoningOutputTokens": 80,
+                                        "totalTokens": 1_440,
+                                    },
+                                    "last": {
+                                        "inputTokens": 400,
+                                        "cachedInputTokens": 300,
+                                        "outputTokens": 80,
+                                        "reasoningOutputTokens": 20,
+                                        "totalTokens": 480,
+                                    },
+                                },
+                            },
+                        )
+                        yield SimpleNamespace(
                             method="item/completed",
                             payload={
                                 "item": {
@@ -117,8 +141,10 @@ class FakeCodex:
 
 def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     monkeypatch,
+    caplog,
 ):
     monkeypatch.setenv("ANALYSIS_TASK_ID", "agent-task")
+    caplog.set_level("INFO")
     FakeCodex.instances.clear()
     FakeCodexConfig.instances.clear()
     runtime = CodexFeishuAgentRuntime(
@@ -163,6 +189,7 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     assert outcome.artifact_path.read_bytes() == b"xlsx"
     assert "Load the dataset." in codex.prompt
     assert "Rank every row in the latest complete dataset." in codex.prompt
+    assert '"conversation_id"' not in codex.prompt
     assert codex.thread_kwargs["ephemeral"] is True
     assert codex.thread_kwargs["sandbox"] == "workspace-write"
     assert config["env"]["LLM_API_KEY"] == "model-secret"
@@ -191,6 +218,37 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
         ("researching", "Codex 正在调用通用工具并处理完整数据集…"),
         ("tool", "Codex 正在读取完整数据集…"),
     ]
+    usage_record = next(
+        record.message
+        for record in caplog.records
+        if record.message.startswith("codex_feishu_turn_usage")
+    )
+    assert "workload=feishu_user" in usage_record
+    assert "input_tokens=1200" in usage_record
+    assert "cached_input_tokens=900" in usage_record
+    assert "reasoning_output_tokens=80" in usage_record
+
+
+def test_token_usage_rejects_partial_or_non_numeric_snapshots():
+    assert _normalize_token_usage({"inputTokens": 10}) is None
+    assert (
+        _normalize_token_usage(
+            {
+                "inputTokens": 10,
+                "cachedInputTokens": 4,
+                "outputTokens": 3,
+                "reasoningOutputTokens": 1,
+                "totalTokens": 13,
+            }
+        )
+        == {
+            "input_tokens": 10,
+            "cached_input_tokens": 4,
+            "output_tokens": 3,
+            "reasoning_output_tokens": 1,
+            "total_tokens": 13,
+        }
+    )
 
 
 def test_codex_runtime_turns_empty_final_response_into_recoverable_follow_up():
