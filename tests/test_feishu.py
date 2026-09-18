@@ -38,6 +38,7 @@ from google.api_core.exceptions import PreconditionFailed
 class FakeSender:
     def __init__(self):
         self.replies = []
+        self.cards = []
 
     def reply(self, message_id, text):
         self.replies.append((message_id, text))
@@ -45,6 +46,10 @@ class FakeSender:
 
     def update(self, message_id, text):
         raise AssertionError("Unexpected message update")
+
+    def reply_card(self, message_id, card):
+        self.cards.append((message_id, card))
+        return f"card-{len(self.cards)}"
 
 
 class FailOnceSender(FakeSender):
@@ -213,6 +218,35 @@ def message_payload(
     }
 
 
+def card_action_payload(
+    action,
+    *,
+    event_id="card-event-1",
+    form_value=None,
+):
+    return {
+        "header": {
+            "event_id": event_id,
+            "event_type": "card.action.trigger",
+            "tenant_key": "tenant-1",
+            "token": "verification-token",
+        },
+        "event": {
+            "operator": {"operator_id": {"open_id": "user-1"}},
+            "context": {
+                "open_message_id": "card-message-1",
+                "open_chat_id": "chat-1",
+            },
+            "action": {
+                "tag": "button",
+                "name": action,
+                "value": {"action": action},
+                "form_value": form_value or {},
+            },
+        },
+    }
+
+
 def encrypt_payload(payload, encrypt_key="encrypt-key"):
     plaintext = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     padding_size = AES.block_size - len(plaintext) % AES.block_size
@@ -282,6 +316,68 @@ def test_message_event_rejects_unapproved_user():
 
     with pytest.raises(FeishuEventError, match="not allowed"):
         bot.parse_event(message_payload())
+
+
+def test_empty_bot_mention_opens_quick_menu_without_submitting_task():
+    bot, service, sender, _ = build_bot()
+    event = bot.parse_event(
+        message_payload("event-menu", '<at user_id="bot">Bot</at>')
+    )
+    assert event is not None
+
+    bot.process(event)
+
+    assert service.requests == []
+    assert sender.replies == []
+    assert len(sender.cards) == 1
+    message_id, card = sender.cards[0]
+    assert message_id == "message-event-menu"
+    form = next(element for element in card["elements"] if element["tag"] == "form")
+    assert {element["name"] for element in form["elements"]} == {
+        "prompt",
+        "submit_research",
+    }
+    actions = next(
+        element for element in card["elements"] if element["tag"] == "action"
+    )
+    assert [button["value"]["action"] for button in actions["actions"]] == [
+        "new_session",
+        "list_sessions",
+        "task_status",
+    ]
+
+
+def test_card_form_submission_becomes_research_prompt():
+    bot, _, _, _ = build_bot(allowed_open_ids={"user-1"})
+
+    event = bot.parse_card_action(
+        card_action_payload(
+            "submit_research",
+            form_value={"prompt": "查询最近5个交易日涨幅最大的10只A股"},
+        )
+    )
+
+    assert event is not None
+    assert event.prompt == "查询最近5个交易日涨幅最大的10只A股"
+    assert event.message_id == "card-message-1"
+    assert event.conversation_id == "tenant-1:chat-1:root:user-1"
+
+
+@pytest.mark.parametrize(
+    "action, expected_prompt",
+    [
+        ("new_session", "新建会话"),
+        ("list_sessions", "会话列表"),
+        ("task_status", "查看进度"),
+    ],
+)
+def test_card_shortcut_becomes_existing_command(action, expected_prompt):
+    bot, _, _, _ = build_bot()
+
+    event = bot.parse_card_action(card_action_payload(action))
+
+    assert event is not None
+    assert event.prompt == expected_prompt
 
 
 def test_processing_submits_durable_task_and_deduplicates_event():
@@ -790,6 +886,9 @@ class FakeEndpointBot:
     def parse_event(self, payload):
         return payload["event"]
 
+    def parse_card_action(self, payload):
+        return {"action": payload["event"]["action"]["value"]["action"]}
+
     def process(self, event):
         self.processed.append(event)
 
@@ -811,6 +910,27 @@ def test_feishu_endpoint_acknowledges_and_processes_authenticated_event():
     assert response.status_code == 200
     assert response.json() == {"code": 0}
     assert bot.processed == [{"event_id": "event-1"}]
+
+
+def test_feishu_endpoint_acknowledges_card_action_with_toast():
+    bot = FakeEndpointBot()
+    client = TestClient(create_app(feishu_research_bot=bot))
+
+    response = client.post(
+        "/api/integrations/feishu/events",
+        headers={
+            "X-Lark-Request-Timestamp": "123",
+            "X-Lark-Request-Nonce": "nonce",
+            "X-Lark-Signature": "signature",
+        },
+        json=card_action_payload("list_sessions"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "toast": {"type": "success", "content": "操作已提交"}
+    }
+    assert bot.processed == [{"action": "list_sessions"}]
 
 
 def test_feishu_endpoint_returns_verified_challenge():

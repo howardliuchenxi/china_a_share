@@ -234,6 +234,22 @@ def create_app(
                 x_lark_request_nonce,
                 x_lark_signature,
             )
+            if (payload.get("header") or {}).get("event_type") == "card.action.trigger":
+                event = bot.parse_card_action(payload)
+                if event is not None:
+                    background_tasks.add_task(bot.process, event)
+                    return {
+                        "toast": {
+                            "type": "success",
+                            "content": "操作已提交",
+                        }
+                    }
+                return {
+                    "toast": {
+                        "type": "warning",
+                        "content": "暂不支持这个操作",
+                    }
+                }
             event = bot.parse_event(payload)
             if event is not None:
                 background_tasks.add_task(bot.process, event)

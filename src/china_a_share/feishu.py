@@ -72,6 +72,10 @@ SWITCH_SESSION_COMMAND_PATTERN = re.compile(
     r"^(?:切换会话|切换对话|switch\s+session)\s+(?P<target>.+)$",
     re.IGNORECASE,
 )
+QUICK_MENU_COMMAND_PATTERN = re.compile(
+    r"^(?:帮助|菜单|快捷菜单|help)$",
+    re.IGNORECASE,
+)
 MAX_FEISHU_RESULT_ROWS = 10
 logger = logging.getLogger(__name__)
 
@@ -471,6 +475,9 @@ class FeishuMessageSender(Protocol):
     def update(self, message_id: str, text: str) -> None:
         """Replace one application-authored text message."""
 
+    def reply_card(self, message_id: str, card: Dict[str, Any]) -> str:
+        """Reply with one interactive card and return the created message ID."""
+
     def reply_file(self, message_id: str, path: "Path") -> None:
         """Upload and reply with one file attachment."""
 
@@ -530,6 +537,26 @@ class FeishuOpenApiClient:
             timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
         )
         self._raise_for_feishu_error(response, "message update")
+
+    def reply_card(self, message_id: str, card: Dict[str, Any]) -> str:
+        """Reply with one interactive card through the application identity."""
+        token = self._tenant_access_token()
+        response = self._session.post(
+            f"{FEISHU_API_BASE_URL}/im/v1/messages/{message_id}/reply",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+            },
+            timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
+        )
+        self._raise_for_feishu_error(response, "card reply")
+        reply_message_id = str(
+            ((response.json().get("data") or {}).get("message_id") or "")
+        ).strip()
+        if not reply_message_id:
+            raise RuntimeError("Feishu card reply omitted the message ID.")
+        return reply_message_id
 
     def reply_file(self, message_id: str, path: "Path") -> None:
         """Upload one generated workbook and reply with the resulting file key."""
@@ -715,9 +742,7 @@ class FeishuResearchBot:
             key = str(mention.get("key") or "").strip()
             if key:
                 prompt = prompt.replace(key, " ")
-        prompt = prompt.strip()
-        if not prompt:
-            return None
+        prompt = prompt.strip() or "快捷菜单"
         chat_id = str(message.get("chat_id", "")).strip()
         message_id = str(message.get("message_id", "")).strip()
         event_id = str(header.get("event_id", "")).strip()
@@ -726,6 +751,53 @@ class FeishuResearchBot:
         thread_id = str(message.get("thread_id") or message.get("root_id") or "root")
         conversation_id = ":".join(
             [str(header.get("tenant_key", "")), chat_id, thread_id, sender_id]
+        )
+        return FeishuMessageEvent(event_id, message_id, conversation_id, prompt)
+
+    def parse_card_action(
+        self, payload: Dict[str, Any]
+    ) -> Optional[FeishuMessageEvent]:
+        """Validate one card interaction and translate it to an existing command."""
+        header = payload.get("header") or {}
+        if header.get("token") != self._verification_token:
+            raise FeishuEventError("Feishu callback verification token is invalid.")
+        if header.get("event_type") != "card.action.trigger":
+            return None
+        event = payload.get("event") or {}
+        operator_id = ((event.get("operator") or {}).get("operator_id") or {}).get(
+            "open_id", ""
+        )
+        if self._allowed_open_ids and operator_id not in self._allowed_open_ids:
+            raise FeishuEventError("This Feishu user is not allowed to run research.")
+        context = event.get("context") or {}
+        chat_id = str(context.get("open_chat_id") or "").strip()
+        message_id = str(context.get("open_message_id") or "").strip()
+        event_id = str(header.get("event_id") or "").strip()
+        if not chat_id or not message_id or not event_id or not operator_id:
+            raise FeishuEventError("Feishu card callback omitted required identifiers.")
+
+        action = event.get("action") or {}
+        value = action.get("value") or {}
+        action_value = value.get("action") if isinstance(value, dict) else None
+        action_name = str(action_value or action.get("name") or "").strip()
+        form_value = action.get("form_value") or {}
+        if action_name == "submit_research":
+            prompt = str(
+                form_value.get("prompt") if isinstance(form_value, dict) else ""
+            ).strip()
+            if not prompt:
+                raise FeishuEventError("Research prompt is required.")
+        else:
+            prompt = {
+                "new_session": "新建会话",
+                "list_sessions": "会话列表",
+                "task_status": "查看进度",
+            }.get(action_name, "")
+        if not prompt:
+            return None
+
+        conversation_id = ":".join(
+            [str(header.get("tenant_key") or ""), chat_id, "root", operator_id]
         )
         return FeishuMessageEvent(event_id, message_id, conversation_id, prompt)
 
@@ -743,25 +815,29 @@ class FeishuResearchBot:
         if not self._store.claim_event(event.event_id):
             return
         try:
-            combined_session = (
-                NEW_SESSION_AND_PROMPT_PATTERN.match(event.prompt)
-                if self._agent_coordinator is not None
-                else None
-            )
-            if combined_session is not None:
-                reply = self._create_session_and_submit(event, combined_session)
-            elif self._agent_coordinator is not None and (
-                NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
-                or LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt)
-                or SWITCH_SESSION_COMMAND_PATTERN.match(event.prompt)
-            ):
-                reply = self._session_command_reply(event)
-            elif STATUS_COMMAND_PATTERN.match(event.prompt):
-                reply = self._status_reply(event)
-            elif RETRY_COMMAND_PATTERN.match(event.prompt):
-                reply = self._retry_reply(event)
+            if QUICK_MENU_COMMAND_PATTERN.match(event.prompt):
+                self._sender.reply_card(event.message_id, build_feishu_quick_menu_card())
+                reply = None
             else:
-                reply = self._submit_reply(event)
+                combined_session = (
+                    NEW_SESSION_AND_PROMPT_PATTERN.match(event.prompt)
+                    if self._agent_coordinator is not None
+                    else None
+                )
+                if combined_session is not None:
+                    reply = self._create_session_and_submit(event, combined_session)
+                elif self._agent_coordinator is not None and (
+                    NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
+                    or LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt)
+                    or SWITCH_SESSION_COMMAND_PATTERN.match(event.prompt)
+                ):
+                    reply = self._session_command_reply(event)
+                elif STATUS_COMMAND_PATTERN.match(event.prompt):
+                    reply = self._status_reply(event)
+                elif RETRY_COMMAND_PATTERN.match(event.prompt):
+                    reply = self._retry_reply(event)
+                else:
+                    reply = self._submit_reply(event)
             if reply is not None:
                 self._sender.reply(event.message_id, reply)
             self._store.complete_event(event.event_id)
@@ -993,7 +1069,7 @@ class FeishuResearchBot:
         state = self._store.get_session_state(event.conversation_id)
         new_match = NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
         if new_match:
-            name = (new_match.group("name") or "未命名会话").strip()
+            name = (new_match.group("name") or f"会话 {len(state.sessions)}").strip()
             session = self._create_agent_session(
                 event.conversation_id,
                 event.event_id,
@@ -1183,6 +1259,79 @@ def _format_analysis_response(response: AnalysisResponse) -> str:
     if len(result.rows) > MAX_FEISHU_RESULT_ROWS:
         lines.append(f"仅展示前 {MAX_FEISHU_RESULT_ROWS} 行，共 {len(result.rows)} 行。")
     return "\n".join(lines)
+
+
+def build_feishu_quick_menu_card() -> Dict[str, Any]:
+    """Return the interactive research form and common command shortcuts."""
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "A股研究助手"},
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "输入研究问题，或者选择一个快捷操作。",
+                },
+            },
+            {
+                "tag": "form",
+                "name": "research_form",
+                "elements": [
+                    {
+                        "tag": "input",
+                        "name": "prompt",
+                        "required": True,
+                        "max_length": 1_000,
+                        "placeholder": {
+                            "tag": "plain_text",
+                            "content": "例如：查询最近5个交易日涨幅最大的10只A股",
+                        },
+                    },
+                    {
+                        "tag": "button",
+                        "name": "submit_research",
+                        "type": "primary",
+                        "action_type": "form_submit",
+                        "text": {"tag": "plain_text", "content": "开始研究"},
+                        "value": {"action": "submit_research"},
+                    },
+                ],
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "新建会话"},
+                        "value": {"action": "new_session"},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "会话列表"},
+                        "value": {"action": "list_sessions"},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看进度"},
+                        "value": {"action": "task_status"},
+                    },
+                ],
+            },
+            {
+                "tag": "note",
+                "elements": [
+                    {
+                        "tag": "plain_text",
+                        "content": "也可以继续直接 @A股研究助手 并输入问题。",
+                    }
+                ],
+            },
+        ],
+    }
 
 
 def _format_cell(value: object) -> str:

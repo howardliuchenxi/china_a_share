@@ -226,6 +226,12 @@ chat, thread, user, and named session, and up to twelve completed exchanges are
 retained as follow-up context. The legacy validated analysis workflow remains
 available in code as a rollback path but is not the default Feishu runtime.
 
+Mentioning the bot without additional text opens an interactive quick menu.
+The card accepts a research prompt and exposes shortcuts for creating a session,
+listing sessions, and checking task progress. Enable the Feishu
+`card.action.trigger` callback and point its developer-server subscription to
+the same `/api/integrations/feishu/events` endpoint used by message events.
+
 The callback validates the Feishu request signature before decrypting AES-256-CBC
 event envelopes. Plaintext bodies remain supported for local integration tests.
 

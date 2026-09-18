@@ -535,6 +535,27 @@ def test_feishu_client_updates_existing_text_reply():
     )
 
 
+def test_feishu_client_replies_with_interactive_card():
+    session = SequenceSession(
+        [
+            FakeResponse({"code": 0, "tenant_access_token": "tenant-token"}),
+            FakeResponse({"code": 0, "data": {"message_id": "card-message-1"}}),
+        ]
+    )
+    card = {"elements": [{"tag": "div"}]}
+
+    message_id = FeishuOpenApiClient(
+        "app-id", "app-secret", session=session
+    ).reply_card("message-1", card)
+
+    assert message_id == "card-message-1"
+    assert session.calls[1][0].endswith("/im/v1/messages/message-1/reply")
+    assert session.calls[1][1]["json"] == {
+        "msg_type": "interactive",
+        "content": '{"elements": [{"tag": "div"}]}',
+    }
+
+
 def test_feishu_client_uploads_and_replies_with_excel_file(tmp_path):
     path = tmp_path / "result.xlsx"
     path.write_bytes(b"workbook")
