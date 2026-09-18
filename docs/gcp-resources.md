@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-09-17**
+Last verified: **2026-09-18**
 
 ## Project boundary
 
@@ -60,6 +60,8 @@ idle service to zero.
 | `DEEPSEEK_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest` |
 | `LLM_API_KEY` | Secret Manager secret `deepseek-api-key`, version `latest`; generic model credential alias |
 | `ZAI_API_KEY` | Secret Manager secret `zai-api-key`, version `latest` |
+| `MASSIVE_API_KEY` | Secret Manager secret `massive-api-key`, version `latest` |
+| `FINNHUB_API_KEY` | Secret Manager secret `finnhub-api-key`, version `latest` |
 | `GITHUB_FIX_TOKEN` | Secret Manager secret `github-fix-token`, version `latest` |
 | `FEISHU_APP_SECRET` | Secret Manager secret `feishu-app-secret`, version `latest` |
 | `FEISHU_VERIFICATION_TOKEN` | Secret Manager secret `feishu-verification-token`, version `latest` |
@@ -210,11 +212,15 @@ size exceeds the 0.5 GiB monthly Artifact Registry free allowance by roughly
 | `feishu-verification-token` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `feishu-encrypt-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 | `feishu-bot-webhook` | Version 2, enabled | Automatic | Deployment automation identity only |
+| `finnhub-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
+| `massive-api-key` | Version 1, enabled | Automatic | Cloud Run runtime identity only |
 
-The seven application secrets grant `roles/secretmanager.secretAccessor`
+The nine application secrets grant `roles/secretmanager.secretAccessor`
 directly to `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`.
 The Feishu webhook grants the same role only to the deployment automation
 identity so verified production deployments can notify the administrator group.
+The two U.S. market-data secrets were created manually on 2026-09-18 and use
+the same secret-level runtime boundary as the other application credentials.
 Secret values must never be added to this document.
 
 ## Logging and Monitoring
@@ -256,7 +262,8 @@ account's monthly free allotment; expected low traffic should remain within the
 
 `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com`
 
-- Reads the seven application secrets through secret-level IAM grants.
+- Reads the nine application secrets through secret-level IAM grants, including
+  `finnhub-api-key` and `massive-api-key` for Feishu U.S. market-data requests.
 - Creates, reads, updates, and deletes objects in the private cache bucket.
 - Executes only `china-a-share-analysis-worker` with per-execution overrides.
 - Invokes only `china-a-share-research-sandbox` through service-scoped
@@ -401,8 +408,9 @@ The following services are not live resources for this project:
   to applicable free allowances.
 - Artifact Registry is approximately 0.5 GiB above its monthly free storage
   allowance, with a low single-digit-cent expected monthly charge.
-- Eight active secret versions are expected to remain within or close to the
-  Secret Manager free allowance at current access volume.
+- Ten active secret versions are expected to remain within or close to the
+  Secret Manager free allowance at current access volume. The two U.S.
+  market-data credentials add no continuous compute cost.
 - The Feishu deployment webhook adds one low-volume secret access and one
   outbound request after each real deployment, with no material expected cost.
 - The persistent cache has a 90-day deletion lifecycle to prevent unbounded
@@ -484,3 +492,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-17 | Deployed revision `china-a-share-lab-00251-t5f` through the main reconciliation trigger from `main@049b3f43bc3db4069e2c6c692f2d285f3a57be69`; verified 100% traffic, the synchronized `china-a-share-analysis-worker` image and Git SHA, and private sandbox revision `china-a-share-research-sandbox-00010-f97`. The release aligns final-response collection with the Codex SDK contract by accepting the latest agent message when a third-party model omits phase metadata, while preserving explicit final answers. A genuinely textless completed turn now produces recoverable numbered choices, or an attachment notice when an artifact exists, instead of exposing an internal empty-response failure. Production verification in the `测试1` Feishu group submitted the exact reported ambiguous PE-ranking prompt through the quick card and received three numbered valuation choices with a recommended PE(TTM) option. Existing conversation and named-session objects remained in the persistent Cloud Storage store. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00252-rms` through the main push trigger from `main@9f42c883d522a5632ee2d2c1f537719b5d442c3c`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, and private sandbox revision `china-a-share-research-sandbox-00011-ms9`. The release preserves successful research results when only Feishu attachment delivery fails and includes bounded Feishu API error details in diagnostics. Enabled the existing Feishu application's `im:resource` tenant permission after error `99991672`, then verified the file-upload API returned code `0` and a file key. No GCP resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00253-rfb` through the main push trigger from `main@bb88427436a5a6ac3eafb34cfe4737ff060f721d`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, private sandbox revision `china-a-share-research-sandbox-00012-xrh`, a successful public research-page shell response, and a non-disclosing 404 for an invalid visualization token. The release adds 30-day token-protected, login-free interactive research charts and workbook downloads. Viewer workbooks use the existing private `analysis-jobs/` namespace and its 365-day deletion lifecycle. No resource type, IAM boundary, lifecycle policy, fixed runtime cost, or material storage cost changed. |
+| 2026-09-18 | Granted the Cloud Run runtime identity secret-level `roles/secretmanager.secretAccessor` on `finnhub-api-key` and `massive-api-key`; verified both IAM policies, retained automatic replication and enabled version 1, and introduced no continuous compute cost. |
