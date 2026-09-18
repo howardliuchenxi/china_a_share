@@ -9,6 +9,7 @@ import logging
 import math
 from numbers import Real
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -29,6 +30,8 @@ CODEX_INTERRUPT_GRACE_SECONDS = 30
 SUPPORTED_ARTIFACT_SUFFIXES = {".csv", ".docx", ".pdf", ".xlsx"}
 MAX_VISUALIZATION_ROWS = 2_000
 MAX_VISUALIZATION_COLUMNS = 24
+MAX_ARTIFACT_FILENAME_STEM_LENGTH = 80
+INVALID_ARTIFACT_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 class CodexFeishuAgentRuntime:
@@ -88,7 +91,10 @@ class CodexFeishuAgentRuntime:
                 turn = thread.turn(_request_prompt(request))
                 final_response, duration_ms = _run_turn_with_progress(turn, progress)
 
-            artifact_path = _persist_artifact(artifact_dir)
+            artifact_path = _persist_artifact(
+                artifact_dir,
+                request.conversation_name,
+            )
             visualization = _build_research_visualization(artifact_path)
             answer = str(final_response or "").strip()
             if not answer:
@@ -342,7 +348,10 @@ def _request_prompt(request: FeishuAgentRequest) -> str:
     )
 
 
-def _persist_artifact(artifact_dir: Path) -> Optional[Path]:
+def _persist_artifact(
+    artifact_dir: Path,
+    conversation_name: str,
+) -> Optional[Path]:
     candidates = [
         path
         for path in artifact_dir.iterdir()
@@ -357,9 +366,18 @@ def _persist_artifact(artifact_dir: Path) -> Optional[Path]:
         raise RuntimeError("Codex produced more than one terminal artifact.")
     source = candidates[0]
     output_dir = Path(tempfile.mkdtemp(prefix="feishu-agent-output-"))
-    output_path = output_dir / source.name
+    output_path = output_dir / (
+        _safe_artifact_filename_stem(conversation_name) + source.suffix.casefold()
+    )
     shutil.copy2(source, output_path)
     return output_path
+
+
+def _safe_artifact_filename_stem(value: str) -> str:
+    """Return a portable filename stem while preserving the session name."""
+    sanitized = INVALID_ARTIFACT_FILENAME_PATTERN.sub("_", value).strip(" .")
+    sanitized = sanitized[:MAX_ARTIFACT_FILENAME_STEM_LENGTH].rstrip(" .")
+    return sanitized or "a_share_research"
 
 
 def _build_research_visualization(

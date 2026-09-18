@@ -49,6 +49,12 @@ class FeishuAgentRequest(BaseModel):
 
     prompt: str = Field(min_length=1, max_length=4_000)
     conversation_id: str = Field(min_length=1)
+    conversation_name: str = Field(
+        default="默认会话",
+        min_length=1,
+        max_length=80,
+        description="User-visible session name used for delivered artifact filenames.",
+    )
     source_message_id: str = Field(min_length=1)
     conversation: List[FeishuAgentConversationTurn] = Field(
         default_factory=list,

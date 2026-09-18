@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from china_a_share.codex_agent import (
     CodexFeishuAgentRuntime,
     _build_research_visualization,
+    _safe_artifact_filename_stem,
 )
 from china_a_share.core.contracts import QueryResult, QueryStatus
 from china_a_share.feishu_agent import (
@@ -27,6 +28,12 @@ class FakeSandbox:
 
 class FakeApprovalMode:
     deny_all = "deny-all"
+
+
+def test_artifact_filename_preserves_safe_session_name_and_replaces_separators():
+    assert _safe_artifact_filename_stem(" 银行/低估值:筛选? ") == (
+        "银行_低估值_筛选_"
+    )
 
 
 class FakeCodex:
@@ -132,6 +139,7 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
         FeishuAgentRequest(
             prompt="Rank every row in the latest complete dataset.",
             conversation_id="tenant:chat:session:user",
+            conversation_name="银行低估值研究",
             source_message_id="message-1",
             conversation=[
                 FeishuAgentConversationTurn(
@@ -148,6 +156,7 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     overrides = set(config["config_overrides"])
     assert outcome.answer == "通用分析已完成。"
     assert outcome.artifact_path is not None
+    assert outcome.artifact_path.name == "银行低估值研究.xlsx"
     assert outcome.artifact_path.read_bytes() == b"xlsx"
     assert "Load the dataset." in codex.prompt
     assert "Rank every row in the latest complete dataset." in codex.prompt

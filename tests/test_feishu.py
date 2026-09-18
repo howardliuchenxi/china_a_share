@@ -568,6 +568,8 @@ def test_agent_bot_supports_named_sessions_and_parallel_submissions():
     submitted_tasks = [task_store.get(task_id) for task_id in dispatcher.task_ids]
     assert all(task.status == AnalysisTaskStatus.QUEUED for task in submitted_tasks)
     assert submitted_tasks[0].request.conversation_id == submitted_tasks[1].request.conversation_id
+    assert submitted_tasks[0].request.conversation_name == "银行研究"
+    assert submitted_tasks[1].request.conversation_name == "银行研究"
     assert ":session:" in submitted_tasks[0].request.conversation_id
 
 
