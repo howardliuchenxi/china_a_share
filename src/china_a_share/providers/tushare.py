@@ -241,6 +241,19 @@ class TushareDataProvider:
         """Return whether the Tushare stock catalog contains the operation."""
         return self._catalog.contains(operation)
 
+    def describe_query_shapes(self, operation: str) -> Sequence[Dict[str, Any]]:
+        """Return audited Tushare request shapes available to autonomous agents."""
+        capability = get_operation_capability(operation)
+        if capability is None:
+            return ()
+        return tuple(
+            {
+                "shape_id": shape.shape_id,
+                "required_params": list(shape.required_params),
+            }
+            for shape in capability.query_shapes
+        )
+
     def validate_query(
         self,
         operation: str,

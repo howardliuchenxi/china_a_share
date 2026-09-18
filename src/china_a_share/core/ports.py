@@ -66,6 +66,10 @@ class MarketDataProvider(Protocol):
         """Return whether the provider exposes the requested read operation."""
         ...
 
+    def describe_query_shapes(self, operation: str) -> Sequence[Dict[str, Any]]:
+        """Return audited parameter shapes exposed to autonomous agents."""
+        ...
+
     def validate_query(
         self,
         operation: str,

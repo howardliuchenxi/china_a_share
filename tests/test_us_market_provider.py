@@ -320,7 +320,12 @@ def test_research_toolbox_exposes_provider_native_operations_without_local_shape
 
     operations = {item["name"]: item for item in result["operations"]}
     assert "us_stock_daily" in operations
-    assert operations["us_stock_daily"]["query_shapes"] == []
+    assert operations["us_stock_daily"]["query_shapes"] == [
+        {
+            "shape_id": "us_stock_daily_canonical",
+            "required_params": ["symbol", "start_date", "end_date"],
+        }
+    ]
 
 
 def test_cache_policy_keeps_historical_daily_data_longer_than_news():
@@ -358,6 +363,10 @@ class StubProvider:
 
     def supports(self, operation):
         return operation == self._operation
+
+    def describe_query_shapes(self, operation):
+        assert operation == self._operation
+        return ({"shape_id": "stub", "required_params": []},)
 
     def validate_query(self, operation, params, fields):
         assert operation == self._operation

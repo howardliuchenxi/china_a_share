@@ -107,6 +107,17 @@ US_OPERATION_FIELDS: Dict[str, Sequence[str]] = {
     ),
 }
 
+US_OPERATION_REQUIRED_PARAMS: Dict[str, Sequence[str]] = {
+    "us_stock_daily": ("symbol", "start_date", "end_date"),
+    "us_market_daily": ("date",),
+    "us_company_profile": ("symbol",),
+    "us_financial_metrics": ("symbol",),
+    "us_analyst_recommendations": ("symbol",),
+    "us_price_target": ("symbol",),
+    "us_company_news": ("symbol", "start_date", "end_date"),
+    "us_earnings_calendar": ("start_date", "end_date"),
+}
+
 
 class USMarketDataProvider:
     """Route U.S. equity capabilities to equivalent upstream data products."""
@@ -154,6 +165,17 @@ class USMarketDataProvider:
         """Return whether the operation exists and has a configured upstream."""
         return operation in US_OPERATION_GUIDANCE and self._operation_is_configured(
             operation
+        )
+
+    def describe_query_shapes(self, operation: str) -> Sequence[Dict[str, Any]]:
+        """Return the canonical validated parameter shape for one operation."""
+        if not self.supports(operation):
+            return ()
+        return (
+            {
+                "shape_id": f"{operation}_canonical",
+                "required_params": list(US_OPERATION_REQUIRED_PARAMS[operation]),
+            },
         )
 
     def validate_query(

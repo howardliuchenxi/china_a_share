@@ -15,7 +15,6 @@ from uuid import uuid4
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
-from china_a_share.capabilities import get_operation_capability
 from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     QueryResult,
@@ -169,6 +168,9 @@ class MarketDataProvider(Protocol):
 
     def supports(self, operation: str) -> bool:
         """Return whether one operation is allowlisted."""
+
+    def describe_query_shapes(self, operation: str) -> List[Dict[str, Any]]:
+        """Return audited parameter shapes exposed to the research model."""
 
     def validate_query(
         self,
@@ -616,20 +618,14 @@ class ResearchToolbox:
             operations = self._provider.search_operations(str(arguments["query"]))
             operation_results = []
             for operation in operations:
-                capability = get_operation_capability(operation.name)
+                query_shapes = self._provider.describe_query_shapes(operation.name)
+                if not query_shapes:
+                    continue
                 operation_results.append(
                     {
                         "name": operation.name,
                         "description": operation.description,
-                        "query_shapes": [
-                            {
-                                "shape_id": shape.shape_id,
-                                "required_params": list(shape.required_params),
-                            }
-                            for shape in capability.query_shapes
-                        ]
-                        if capability is not None
-                        else [],
+                        "query_shapes": list(query_shapes),
                     }
                 )
             return {

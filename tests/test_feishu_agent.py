@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 import pytest
 
 from china_a_share.bootstrap import create_feishu_agent_runtime
+from china_a_share.capabilities import get_operation_capability
 from china_a_share.config import Settings
 from china_a_share.core.contracts import AnalysisTaskStatus, QueryResult, QueryStatus
 from china_a_share.feishu_agent import (
@@ -67,6 +68,18 @@ class FakeProvider:
     def supports(self, operation):
         return operation == "daily"
 
+    def describe_query_shapes(self, operation):
+        capability = get_operation_capability(operation)
+        if capability is None:
+            return ()
+        return tuple(
+            {
+                "shape_id": shape.shape_id,
+                "required_params": list(shape.required_params),
+            }
+            for shape in capability.query_shapes
+        )
+
     def validate_query(self, operation, params, fields):
         assert operation == "daily"
         assert params == {"trade_date": "20260916"}
@@ -101,6 +114,9 @@ class RecentReturnProvider:
 
     def supports(self, operation):
         return operation in {"daily", "stock_basic", "trade_cal"}
+
+    def validate_query(self, operation, params, fields):
+        assert self.supports(operation)
 
     def query(
         self,

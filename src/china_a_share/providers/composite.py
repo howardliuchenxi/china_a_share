@@ -56,6 +56,10 @@ class CompositeMarketDataProvider:
         """Return whether exactly one connected provider owns the operation."""
         return operation in self._operation_owners
 
+    def describe_query_shapes(self, operation: str) -> Sequence[Dict[str, Any]]:
+        """Delegate agent-facing request metadata to the operation owner."""
+        return self._owner(operation).describe_query_shapes(operation)
+
     def validate_query(
         self,
         operation: str,
