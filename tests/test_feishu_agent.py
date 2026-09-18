@@ -20,6 +20,7 @@ from china_a_share.feishu_agent import (
 )
 from china_a_share.feishu import FeishuOpenApiClient
 from china_a_share.model_client import OpenAICompatibleChatModel
+from china_a_share.registry import TushareOperationCatalog
 from china_a_share.tasks import MemoryAnalysisTaskStore
 
 
@@ -50,6 +51,11 @@ class SequenceSession:
 class FakeOperation:
     name = "daily"
     description = "Daily A-share prices with trade_date and close fields."
+
+
+class UnauditedFakeOperation:
+    name = "bak_basic"
+    description = "Unaudited backup operation."
 
 
 class FakeProvider:
@@ -353,6 +359,116 @@ def test_agent_runtime_synthesizes_answer_after_tool_budget_is_exhausted():
     assert model.calls == MAX_AGENT_ROUNDS + 1
 
 
+def test_agent_runtime_returns_bounded_clarification_before_querying():
+    class ClarifyingModel:
+        model = "clarifying-model"
+
+        def complete(self, messages, tools):
+            assert messages[-1] == {
+                "role": "user",
+                "content": "你能查到今天市盈率前10的股票吗",
+            }
+            assert "request_clarification" in {
+                definition["function"]["name"] for definition in tools
+            }
+            return {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-clarify",
+                        "type": "function",
+                        "function": {
+                            "name": "request_clarification",
+                            "arguments": (
+                                '{"question":"请确认市盈率排名口径：",'
+                                '"options":["最近完成交易日，PE_TTM最低且大于0（推荐）",'
+                                '"最近完成交易日，PE_TTM最高","自定义口径"]}'
+                            ),
+                        },
+                    },
+                    {
+                        "id": "call-query",
+                        "type": "function",
+                        "function": {
+                            "name": "query_market_data",
+                            "arguments": (
+                                '{"operation":"daily","params":'
+                                '{"trade_date":"20260917"},'
+                                '"fields":["ts_code","close"]}'
+                            ),
+                        },
+                    },
+                ],
+            }
+
+    outcome = FeishuAgentRuntime(ClarifyingModel(), FakeProvider()).run(
+        FeishuAgentRequest(
+            prompt="你能查到今天市盈率前10的股票吗",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert outcome.answer == (
+        "请确认市盈率排名口径：\n"
+        "1. 最近完成交易日，PE_TTM最低且大于0（推荐）\n"
+        "2. 最近完成交易日，PE_TTM最高\n"
+        "3. 自定义口径\n"
+        "请回复序号，或直接补充你的完整口径。"
+    )
+
+
+def test_search_market_data_returns_all_audited_operations_with_query_shapes():
+    class DiscoveryProvider(FakeProvider):
+        def search_operations(self, prompt):
+            assert prompt == "市盈率估值"
+            return [UnauditedFakeOperation(), FakeOperation()]
+
+    toolbox = ResearchToolbox(DiscoveryProvider(), "request-1")
+
+    payload = toolbox.call(
+        "search_market_data",
+        {"query": "市盈率估值"},
+        lambda _stage, _message: None,
+    )
+
+    assert [operation["name"] for operation in payload["operations"]] == ["daily"]
+    assert payload["operations"][0]["query_shapes"] == [
+        {
+            "shape_id": "security",
+            "required_params": ["ts_code"],
+        },
+        {
+            "shape_id": "market_snapshot",
+            "required_params": ["trade_date"],
+        },
+        {
+            "shape_id": "bounded_range",
+            "required_params": ["start_date", "end_date"],
+        },
+    ]
+
+
+def test_search_market_data_exposes_daily_basic_from_the_production_catalog():
+    class CatalogProvider(FakeProvider):
+        def search_operations(self, prompt):
+            assert prompt == "全市场市盈率排名"
+            return TushareOperationCatalog().search(prompt)
+
+    payload = ResearchToolbox(CatalogProvider(), "request-1").call(
+        "search_market_data",
+        {"query": "全市场市盈率排名"},
+        lambda _stage, _message: None,
+    )
+
+    operation_names = [operation["name"] for operation in payload["operations"]]
+    assert "daily_basic" in operation_names
+    assert "bak_basic" not in operation_names
+    assert len(operation_names) > 12
+
+
 def test_generic_query_and_python_sandbox_replace_prompt_specific_ranking_tool():
     progress = []
     sandbox = RecordingPythonSandbox()
@@ -629,3 +745,26 @@ def test_live_feishu_agent_answers_reported_five_day_return_ranking():
     assert "复权收益" not in outcome.answer
     assert "并非复权" in outcome.answer or "复权" not in outcome.answer
     assert any(character.isdigit() for character in outcome.answer)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
+)
+def test_live_feishu_agent_clarifies_reported_ambiguous_pe_ranking():
+    runtime = create_feishu_agent_runtime(Settings.from_env())
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="你能查到今天市盈率前10的股票吗",
+            conversation_id="live:feishu:agent:ambiguous-pe-ranking",
+            source_message_id="live-ambiguous-pe-ranking",
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert "市盈率" in outcome.answer
+    assert "1." in outcome.answer
+    assert "推荐" in outcome.answer
+    assert "请回复序号" in outcome.answer

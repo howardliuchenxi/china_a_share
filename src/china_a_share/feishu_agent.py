@@ -13,7 +13,7 @@ from uuid import uuid4
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
-from china_a_share.capabilities import resolve_query_shape
+from china_a_share.capabilities import get_operation_capability, resolve_query_shape
 from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     QueryResult,
@@ -296,6 +296,31 @@ class ResearchToolbox:
             {
                 "type": "function",
                 "function": {
+                    "name": "request_clarification",
+                    "description": (
+                        "Ask the user to resolve material ambiguity before any data "
+                        "query. Provide two to four concrete choices and mark the "
+                        "safest default as recommended."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string"},
+                            "options": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 2,
+                                "maxItems": 4,
+                            },
+                        },
+                        "required": ["question", "options"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "search_market_data",
                     "description": (
                         "Find relevant read-only operations from the configured "
@@ -447,8 +472,20 @@ class ResearchToolbox:
             operations = self._provider.search_operations(str(arguments["query"]))
             return {
                 "operations": [
-                    {"name": operation.name, "description": operation.description}
-                    for operation in list(operations)[:12]
+                    {
+                        "name": operation.name,
+                        "description": operation.description,
+                        "query_shapes": [
+                            {
+                                "shape_id": shape.shape_id,
+                                "required_params": list(shape.required_params),
+                            }
+                            for shape in capability.query_shapes
+                        ],
+                    }
+                    for operation in operations
+                    if (capability := get_operation_capability(operation.name))
+                    is not None
                 ]
             }
         if name == "query_market_data":
@@ -665,6 +702,23 @@ class FeishuAgentRuntime:
                     answer=answer,
                     artifact_path=toolbox.artifact_path,
                 )
+            clarification_calls = [
+                tool_call
+                for tool_call in tool_calls
+                if (tool_call.get("function") or {}).get("name")
+                == "request_clarification"
+            ]
+            if clarification_calls:
+                function = clarification_calls[0].get("function") or {}
+                try:
+                    arguments = json.loads(str(function.get("arguments") or "{}"))
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        "Research model returned invalid clarification arguments."
+                    ) from exc
+                return FeishuAgentOutcome(
+                    answer=_format_clarification(arguments),
+                )
             messages.append(message)
             for tool_call in tool_calls:
                 function = tool_call.get("function") or {}
@@ -846,12 +900,39 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
     }
 
 
+def _format_clarification(arguments: Any) -> str:
+    """Render one bounded clarification that can be answered by number or text."""
+    if not isinstance(arguments, dict):
+        raise RuntimeError("Research clarification arguments must be an object.")
+    question = str(arguments.get("question") or "").strip()
+    raw_options = arguments.get("options")
+    if not question or not isinstance(raw_options, list):
+        raise RuntimeError("Research clarification requires a question and options.")
+    options = [str(option).strip() for option in raw_options if str(option).strip()]
+    if not 2 <= len(options) <= 4 or len(options) != len(set(options)):
+        raise RuntimeError(
+            "Research clarification requires two to four unique options."
+        )
+    lines = [question]
+    lines.extend(f"{index}. {option}" for index, option in enumerate(options, start=1))
+    lines.append("请回复序号，或直接补充你的完整口径。")
+    return "\n".join(lines)
+
+
 def _agent_system_prompt() -> str:
     """Return stable tool-use and evidence rules for the Feishu research agent."""
     return (
         "You are an A-share research agent. Answer in concise Chinese. Use tools for "
         "every market-data claim and never invent prices, rankings, dates, companies, "
-        "or financial metrics. Search the operation catalog before using the generic "
+        "or financial metrics. Behave like an interactive research assistant: when "
+        "a material choice such as ranking direction, metric definition, as-of basis, "
+        "security universe, or exclusion rule is ambiguous, do not guess and do not "
+        "query data. Call request_clarification with two to four concrete choices, "
+        "mark the safest default with （推荐）, and ask every material clarification "
+        "in one turn. When conversation history shows that the user is answering a "
+        "clarification with a number or short phrase, resolve it from the preceding "
+        "exchange instead of repeating the question. Search the operation catalog "
+        "before using the generic "
         "query_market_data tool. Use only audited query shapes accepted by that tool. "
         "Use only returned dataset identifiers and deterministic transformations. "
         "Prefer transform_dataset, rank_dataset, and join_datasets for ordinary "
