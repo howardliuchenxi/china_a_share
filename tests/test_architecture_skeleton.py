@@ -190,6 +190,18 @@ def test_stock_basic_capability_audits_the_listed_security_universe():
     assert shape.completeness_policy == "paginate_until_short_page"
 
 
+def test_daily_full_market_range_uses_exact_trade_date_fanout():
+    shape = resolve_query_shape(
+        "daily",
+        {"start_date": "20260701", "end_date": "20260731"},
+    )
+
+    assert shape is not None
+    assert shape.shape_id == "bounded_range"
+    assert shape.execution_strategy == "exact_trade_date_fanout"
+    assert shape.completeness_policy == "all_open_dates_complete"
+
+
 @pytest.mark.parametrize(
     ("params", "expected_shape"),
     [
@@ -372,13 +384,62 @@ def test_tushare_provider_paginates_capped_daily_results():
 
     frame = provider._fetch_complete(
         "daily",
-        {"start_date": "20260701", "end_date": "20260723"},
+        {"trade_date": "20260723"},
         ["ts_code", "close"],
     )
 
     assert len(frame) == 6002
     assert calls[1]["limit"] == 6000
     assert calls[1]["offset"] == 6000
+
+
+def test_tushare_provider_fans_out_full_market_daily_range_by_open_date():
+    provider = TushareDataProvider("test-token", FakeCache())
+    calls = []
+
+    class FakeTransport:
+        def query(self, operation, params, fields):
+            calls.append((operation, dict(params), list(fields)))
+            if operation == "trade_cal":
+                return pd.DataFrame(
+                    [
+                        {"cal_date": "20260701", "is_open": 1},
+                        {"cal_date": "20260702", "is_open": 1},
+                    ]
+                )
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": params["trade_date"],
+                        "pct_chg": 1.0,
+                    }
+                ]
+            )
+
+    provider._transport = FakeTransport()
+
+    frame = provider._fetch_complete(
+        "daily",
+        {"start_date": "20260701", "end_date": "20260702"},
+        ["ts_code", "trade_date", "pct_chg"],
+    )
+
+    assert list(frame["trade_date"]) == ["20260701", "20260702"]
+    assert calls[0] == (
+        "trade_cal",
+        {
+            "exchange": "SSE",
+            "start_date": "20260701",
+            "end_date": "20260702",
+            "is_open": "1",
+        },
+        ["cal_date", "is_open"],
+    )
+    assert [call[1] for call in calls[1:]] == [
+        {"trade_date": "20260701"},
+        {"trade_date": "20260702"},
+    ]
 
 
 def test_tushare_provider_rejects_a_repeated_full_page():

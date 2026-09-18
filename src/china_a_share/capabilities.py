@@ -185,8 +185,8 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
             ProviderQueryShape(
                 shape_id="bounded_range",
                 required_params=("start_date", "end_date"),
-                execution_strategy="provider_query",
-                completeness_policy="paginate_until_short_page",
+                execution_strategy="exact_trade_date_fanout",
+                completeness_policy="all_open_dates_complete",
             ),
         ),
         page_size=6_000,

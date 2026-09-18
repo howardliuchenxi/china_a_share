@@ -14,7 +14,6 @@ from pathlib import Path
 import re
 from threading import Lock
 from typing import Any, Dict, Optional, Protocol, Union
-from uuid import uuid4
 
 import requests
 from Crypto.Cipher import AES
@@ -56,7 +55,13 @@ STATUS_COMMAND_PATTERN = re.compile(
 )
 RETRY_COMMAND_PATTERN = re.compile(r"^(?:重试|retry)(?:\s|$)", re.IGNORECASE)
 NEW_SESSION_COMMAND_PATTERN = re.compile(
-    r"^(?:新建会话|新对话|new\s+session)(?:\s+(?P<name>.+))?$",
+    r"^(?:新建会话|新建对话|新对话|new\s+session)(?:\s+(?P<name>.+))?$",
+    re.IGNORECASE,
+)
+NEW_SESSION_AND_PROMPT_PATTERN = re.compile(
+    r"^(?:新建会话|新建对话|新对话)"
+    r"(?:\s+(?P<name>[^，,；;：:\n]{1,80}))?"
+    r"\s*[，,；;：:]\s*(?:并\s*)?(?P<prompt>.+)$",
     re.IGNORECASE,
 )
 LIST_SESSIONS_COMMAND_PATTERN = re.compile(
@@ -738,7 +743,14 @@ class FeishuResearchBot:
         if not self._store.claim_event(event.event_id):
             return
         try:
-            if self._agent_coordinator is not None and (
+            combined_session = (
+                NEW_SESSION_AND_PROMPT_PATTERN.match(event.prompt)
+                if self._agent_coordinator is not None
+                else None
+            )
+            if combined_session is not None:
+                reply = self._create_session_and_submit(event, combined_session)
+            elif self._agent_coordinator is not None and (
                 NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
                 or LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt)
                 or SWITCH_SESSION_COMMAND_PATTERN.match(event.prompt)
@@ -956,16 +968,37 @@ class FeishuResearchBot:
         state = self._store.get_session_state(conversation_scope_id)
         return f"{conversation_scope_id}:session:{state.active_session_id}"
 
+    def _create_session_and_submit(
+        self,
+        event: FeishuMessageEvent,
+        command: re.Match[str],
+    ) -> Optional[str]:
+        """Create one backend session and submit the command's research prompt."""
+        research_prompt = command.group("prompt").strip()
+        explicit_name = (command.group("name") or "").strip()
+        session_name = explicit_name or self._session_name_from_prompt(
+            research_prompt
+        )
+        self._create_agent_session(event.conversation_id, event.event_id, session_name)
+        research_event = FeishuMessageEvent(
+            event_id=event.event_id,
+            message_id=event.message_id,
+            conversation_id=event.conversation_id,
+            prompt=research_prompt,
+        )
+        return self._submit_agent_reply(research_event)
+
     def _session_command_reply(self, event: FeishuMessageEvent) -> str:
         """Create, list, or switch named sessions without invoking the model."""
         state = self._store.get_session_state(event.conversation_id)
         new_match = NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
         if new_match:
             name = (new_match.group("name") or "未命名会话").strip()
-            session = FeishuAgentSession(session_id=uuid4().hex[:8], name=name)
-            state.sessions.append(session)
-            state.active_session_id = session.session_id
-            self._store.put_session_state(event.conversation_id, state)
+            session = self._create_agent_session(
+                event.conversation_id,
+                event.event_id,
+                name,
+            )
             return f"已新建并切换到会话：{session.name}（{session.session_id}）"
         if LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt):
             lines = ["当前群聊会话："]
@@ -985,6 +1018,41 @@ class FeishuResearchBot:
         state.active_session_id = matches[0].session_id
         self._store.put_session_state(event.conversation_id, state)
         return f"已切换到会话：{matches[0].name}（{matches[0].session_id}）"
+
+    def _create_agent_session(
+        self,
+        conversation_scope_id: str,
+        event_id: str,
+        name: str,
+    ) -> FeishuAgentSession:
+        """Persist one idempotent named session and make it active."""
+        state = self._store.get_session_state(conversation_scope_id)
+        session_id = self._session_id_for_event(event_id)
+        existing = next(
+            (
+                session
+                for session in state.sessions
+                if session.session_id == session_id
+            ),
+            None,
+        )
+        if existing is None:
+            existing = FeishuAgentSession(session_id=session_id, name=name)
+            state.sessions.append(existing)
+        state.active_session_id = existing.session_id
+        self._store.put_session_state(conversation_scope_id, state)
+        return existing
+
+    @staticmethod
+    def _session_name_from_prompt(prompt: str) -> str:
+        """Derive a concise display alias while keeping the opaque ID authoritative."""
+        normalized = re.sub(r"\s+", " ", prompt).strip(" ，,。；;：:")
+        return normalized[:80] or "未命名会话"
+
+    @staticmethod
+    def _session_id_for_event(event_id: str) -> str:
+        """Derive an opaque session identifier that is stable across event retries."""
+        return hashlib.sha256(f"feishu-session:{event_id}".encode()).hexdigest()[:8]
 
     @staticmethod
     def _task_id_for_event(event_id: str) -> str:

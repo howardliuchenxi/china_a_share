@@ -1,6 +1,7 @@
 """Tushare market-data provider and publication-time cache policy."""
 
 from datetime import date, datetime, time, timedelta
+import logging
 from typing import Any, Dict, Optional, Sequence
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,7 @@ TRADE_CALENDAR_CACHE_TTL = timedelta(days=30)
 HISTORICAL_CACHE_TTL = timedelta(days=90)
 DISCLOSURE_CACHE_TTL = timedelta(days=90)
 MAX_PAGINATION_PAGES = 20
+MAX_EXACT_TRADE_DATE_FANOUT = 120
 PAGINATED_OPERATION_LIMITS = {
     "adj_factor": 6_000,
     "daily": 6_000,
@@ -199,6 +201,7 @@ PUBLICATION_TIMES = {
     "pledge_stat": time(21, 10),
     "stk_mins": time(21, 10),
 }
+logger = logging.getLogger(__name__)
 
 
 class TushareDataProvider:
@@ -250,7 +253,10 @@ class TushareDataProvider:
                 "completeness": "unknown",
                 "completeness_evidence": [],
             }
-        if shape.execution_strategy != "provider_query":
+        if shape.execution_strategy not in {
+            "provider_query",
+            "exact_trade_date_fanout",
+        }:
             return {
                 "completeness": "unknown",
                 "completeness_evidence": [
@@ -298,6 +304,15 @@ class TushareDataProvider:
         fields: Sequence[str],
     ) -> pd.DataFrame:
         """Fetch every provider page for operations with a documented row cap."""
+        shape = (
+            resolve_query_shape(operation, params)
+            if operation == "daily"
+            and params.get("start_date")
+            and params.get("end_date")
+            else None
+        )
+        if shape is not None and shape.execution_strategy == "exact_trade_date_fanout":
+            return self._fetch_exact_trade_date_range(operation, params, fields)
         first_page = self._transport.query(operation, params, fields)
         capability = get_operation_capability(operation)
         page_limit = (
@@ -328,6 +343,67 @@ class TushareDataProvider:
             f"{operation} exceeded the safe pagination limit of "
             f"{MAX_PAGINATION_PAGES * page_limit} rows."
         )
+
+    def _fetch_exact_trade_date_range(
+        self,
+        operation: str,
+        params: Dict[str, Any],
+        fields: Sequence[str],
+    ) -> pd.DataFrame:
+        """Fetch a complete full-market range through bounded daily snapshots."""
+        calendar = self._transport.query(
+            "trade_cal",
+            {
+                "exchange": "SSE",
+                "start_date": params["start_date"],
+                "end_date": params["end_date"],
+                "is_open": "1",
+            },
+            ["cal_date", "is_open"],
+        )
+        if "cal_date" not in calendar.columns:
+            raise ValueError("trade_cal response omitted cal_date.")
+        trade_dates = sorted(
+            {
+                str(value)
+                for value in calendar["cal_date"].dropna().tolist()
+                if str(value)
+            }
+        )
+        if len(trade_dates) > MAX_EXACT_TRADE_DATE_FANOUT:
+            raise ValueError(
+                f"{operation} range contains {len(trade_dates)} open dates; "
+                f"the safe limit is {MAX_EXACT_TRADE_DATE_FANOUT}."
+            )
+        logger.info(
+            "tushare_exact_trade_date_fanout operation=%s start_date=%s "
+            "end_date=%s trade_dates=%s",
+            operation,
+            params["start_date"],
+            params["end_date"],
+            len(trade_dates),
+        )
+        pages = []
+        for trade_date in trade_dates:
+            snapshot_params = {
+                key: value
+                for key, value in params.items()
+                if key not in {"start_date", "end_date", "limit", "offset"}
+            }
+            snapshot_params["trade_date"] = trade_date
+            pages.append(self._fetch_complete(operation, snapshot_params, fields))
+        if not pages:
+            return pd.DataFrame(columns=list(fields))
+        frame = pd.concat(pages, ignore_index=True)
+        capability = get_operation_capability(operation)
+        unique_key = [
+            field
+            for field in (capability.unique_key if capability is not None else ())
+            if field in frame.columns
+        ]
+        if unique_key:
+            frame = frame.drop_duplicates(subset=unique_key, keep="last")
+        return frame.reset_index(drop=True)
 
 
 class TushareCacheExpirationPolicy:

@@ -2,6 +2,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 
 import pytest
 from Crypto.Cipher import AES
@@ -445,6 +446,222 @@ def test_agent_bot_supports_named_sessions_and_parallel_submissions():
     assert all(task.status == AnalysisTaskStatus.QUEUED for task in submitted_tasks)
     assert submitted_tasks[0].request.conversation_id == submitted_tasks[1].request.conversation_id
     assert ":session:" in submitted_tasks[0].request.conversation_id
+
+
+def test_agent_bot_creates_backend_session_and_submits_combined_prompt():
+    task_store = MemoryAnalysisTaskStore()
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.task_ids = []
+
+        def dispatch(self, task_id):
+            self.task_ids.append(task_id)
+
+    dispatcher = RecordingDispatcher()
+    coordinator = FeishuAgentCoordinator(task_store, dispatcher)
+    sender = FakeSender()
+    conversation_store = MemoryConversationStore()
+    bot = FeishuResearchBot(
+        coordinator,
+        sender,
+        conversation_store,
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        agent_coordinator=coordinator,
+    )
+    event = bot.parse_event(
+        message_payload(
+            "event-combined",
+            "新建对话，查出最近30个交易日累计涨幅最大的个股",
+        )
+    )
+    assert event is not None
+
+    bot.process(event)
+
+    assert sender.replies == []
+    assert len(dispatcher.task_ids) == 1
+    task = task_store.get(dispatcher.task_ids[0])
+    assert task.request.prompt == "查出最近30个交易日累计涨幅最大的个股"
+    state = conversation_store.get_session_state(event.conversation_id)
+    assert state.active_session_id == bot._session_id_for_event("event-combined")
+    assert state.sessions[-1].name == "查出最近30个交易日累计涨幅最大的个股"
+    assert task.request.conversation_id.endswith(
+        f":session:{state.active_session_id}"
+    )
+
+
+def test_agent_bot_uses_explicit_name_for_combined_session_prompt():
+    task_store = MemoryAnalysisTaskStore()
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.task_ids = []
+
+        def dispatch(self, task_id):
+            self.task_ids.append(task_id)
+
+    dispatcher = RecordingDispatcher()
+    coordinator = FeishuAgentCoordinator(task_store, dispatcher)
+    conversation_store = MemoryConversationStore()
+    bot = FeishuResearchBot(
+        coordinator,
+        FakeSender(),
+        conversation_store,
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        agent_coordinator=coordinator,
+    )
+    event = bot.parse_event(
+        message_payload(
+            "event-named-combined",
+            "新建会话 30日涨幅研究，并查询最近30个交易日涨幅最大的股票",
+        )
+    )
+    assert event is not None
+
+    bot.process(event)
+
+    task = task_store.get(dispatcher.task_ids[0])
+    state = conversation_store.get_session_state(event.conversation_id)
+    assert state.sessions[-1].name == "30日涨幅研究"
+    assert task.request.prompt == "查询最近30个交易日涨幅最大的股票"
+
+
+def test_session_creation_is_idempotent_for_retried_event():
+    bot, _, _, store = build_bot()
+    event = bot.parse_event(message_payload("event-session", "新建对话 银行研究"))
+    assert event is not None
+
+    first_reply = bot._session_command_reply(event)
+    second_reply = bot._session_command_reply(event)
+
+    state = store.get_session_state(event.conversation_id)
+    matching_sessions = [
+        session
+        for session in state.sessions
+        if session.session_id == bot._session_id_for_event("event-session")
+    ]
+    assert first_reply == second_reply
+    assert len(matching_sessions) == 1
+
+
+def test_backend_loads_context_only_from_the_active_session():
+    task_store = MemoryAnalysisTaskStore()
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.task_ids = []
+
+        def dispatch(self, task_id):
+            self.task_ids.append(task_id)
+
+    dispatcher = RecordingDispatcher()
+    coordinator = FeishuAgentCoordinator(task_store, dispatcher)
+    conversation_store = MemoryConversationStore()
+    bot = FeishuResearchBot(
+        coordinator,
+        FakeSender(),
+        conversation_store,
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        agent_coordinator=coordinator,
+    )
+    first_event = bot.parse_event(
+        message_payload("event-first", "新建会话 银行研究，查询银行股估值")
+    )
+    second_event = bot.parse_event(
+        message_payload("event-second", "新建会话 半导体研究，查询芯片股估值")
+    )
+    assert first_event is not None
+    assert second_event is not None
+
+    bot.process(first_event)
+    first_task = task_store.get(dispatcher.task_ids[-1])
+    first_task.status = AnalysisTaskStatus.SUCCEEDED
+    first_task.answer = "银行研究结果"
+    task_store.put(first_task)
+    bot.process(second_event)
+    second_task = task_store.get(dispatcher.task_ids[-1])
+    assert second_task.request.conversation == []
+
+    switch_event = bot.parse_event(
+        message_payload("event-switch", "切换会话 银行研究")
+    )
+    follow_up = bot.parse_event(
+        message_payload("event-follow-up", "继续比较股息率")
+    )
+    assert switch_event is not None
+    assert follow_up is not None
+    bot.process(switch_event)
+    bot.process(follow_up)
+
+    follow_up_task = task_store.get(dispatcher.task_ids[-1])
+    assert len(follow_up_task.request.conversation) == 1
+    assert follow_up_task.request.conversation[0].prompt == "查询银行股估值"
+    assert follow_up_task.request.conversation[0].answer == "银行研究结果"
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
+)
+def test_live_combined_session_command_answers_reported_thirty_day_ranking():
+    task_store = MemoryAnalysisTaskStore()
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.task_ids = []
+
+        def dispatch(self, task_id):
+            self.task_ids.append(task_id)
+
+    class RecordingProgressSink:
+        def __init__(self):
+            self.messages = []
+
+        def reply(self, message_id, text):
+            self.messages.append((message_id, text))
+            return "progress-message"
+
+        def update(self, message_id, text):
+            self.messages.append((message_id, text))
+
+        def reply_file(self, message_id, path):
+            self.messages.append((message_id, path.name))
+
+    dispatcher = RecordingDispatcher()
+    coordinator = FeishuAgentCoordinator(task_store, dispatcher)
+    conversation_store = MemoryConversationStore()
+    bot = FeishuResearchBot(
+        coordinator,
+        FakeSender(),
+        conversation_store,
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        agent_coordinator=coordinator,
+    )
+    event = bot.parse_event(
+        message_payload(
+            "live-event-combined",
+            "新建对话，查出最近30个交易日累计涨幅最大的个股",
+        )
+    )
+    assert event is not None
+
+    bot.process(event)
+    completed = coordinator.run(
+        dispatcher.task_ids[0],
+        bootstrap.create_feishu_agent_runtime(Settings.from_env()),
+        RecordingProgressSink(),
+    )
+
+    assert completed.status == AnalysisTaskStatus.SUCCEEDED
+    assert completed.request.prompt == "查出最近30个交易日累计涨幅最大的个股"
+    assert "额度已用尽" not in (completed.answer or "")
+    assert any(character.isdigit() for character in (completed.answer or ""))
 
 
 def test_agent_bot_routes_mentioned_status_command_without_new_submission():

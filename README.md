@@ -216,9 +216,13 @@ uploaded back to the originating Feishu message.
 Users can send `查看进度` (optionally followed by a task identifier) to inspect
 queued, running, succeeded, or failed state, and `重试` to resubmit a failed
 turn. Named sessions within the same group or private chat are managed with
-`新建会话 <名称>`, `会话列表`, and `切换会话 <名称或编号>`. Tasks in one named
-session may run concurrently. Completed turns are isolated by tenant, chat,
-thread, user, and named session, and up to twelve completed exchanges are
+`新建会话 <名称>`, `新建对话 <名称>`, `会话列表`, and
+`切换会话 <名称或编号>`. A session can also be created and used immediately with
+`新建对话，<研究问题>` or `新建会话 <名称>，<研究问题>`. The backend resolves the
+display name to a stable opaque session identifier, loads only that session's
+bounded context, and persists the new turn under the same identifier. Tasks in
+one named session may run concurrently. Completed turns are isolated by tenant,
+chat, thread, user, and named session, and up to twelve completed exchanges are
 retained as follow-up context. The legacy validated analysis workflow remains
 available in code as a rollback path but is not the default Feishu runtime.
 
