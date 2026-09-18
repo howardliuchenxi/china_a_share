@@ -232,7 +232,7 @@ def card_action_payload(
             "token": "verification-token",
         },
         "event": {
-            "operator": {"operator_id": {"open_id": "user-1"}},
+            "operator": {"open_id": "user-1"},
             "context": {
                 "open_message_id": "card-message-1",
                 "open_chat_id": "chat-1",

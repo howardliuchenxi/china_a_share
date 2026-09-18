@@ -770,9 +770,7 @@ class FeishuResearchBot:
         if header.get("event_type") != "card.action.trigger":
             return None
         event = payload.get("event") or {}
-        operator_id = ((event.get("operator") or {}).get("operator_id") or {}).get(
-            "open_id", ""
-        )
+        operator_id = str((event.get("operator") or {}).get("open_id") or "").strip()
         if self._allowed_open_ids and operator_id not in self._allowed_open_ids:
             raise FeishuEventError("This Feishu user is not allowed to run research.")
         context = event.get("context") or {}
