@@ -35,6 +35,8 @@ class Settings:
     feishu_verification_token: str = ""
     feishu_encrypt_key: str = ""
     feishu_allowed_open_ids: str = ""
+    massive_api_key: str = ""
+    finnhub_api_key: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -73,6 +75,8 @@ class Settings:
         ).strip()
         feishu_encrypt_key = os.getenv("FEISHU_ENCRYPT_KEY", "").strip()
         feishu_allowed_open_ids = os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").strip()
+        massive_api_key = os.getenv("MASSIVE_API_KEY", "").strip()
+        finnhub_api_key = os.getenv("FINNHUB_API_KEY", "").strip()
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
@@ -92,4 +96,6 @@ class Settings:
             feishu_verification_token=feishu_verification_token,
             feishu_encrypt_key=feishu_encrypt_key,
             feishu_allowed_open_ids=feishu_allowed_open_ids,
+            massive_api_key=massive_api_key,
+            finnhub_api_key=finnhub_api_key,
         )

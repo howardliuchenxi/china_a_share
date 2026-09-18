@@ -73,6 +73,12 @@ from china_a_share.discovery.backtester import FactorBacktester
 from china_a_share.discovery.evolution_loop import EvolutionLoop
 
 from china_a_share.core.ports import AnalysisTaskStore
+from china_a_share.core.ports import MarketDataProvider
+from china_a_share.providers.composite import CompositeMarketDataProvider
+from china_a_share.providers.us_market import (
+    USMarketCacheExpirationPolicy,
+    USMarketDataProvider,
+)
 
 def create_evolution_loop(settings: Settings, store: AnalysisTaskStore) -> EvolutionLoop:
     """Assemble the configured discovery engine components."""
@@ -114,7 +120,7 @@ def create_feishu_agent_runtime(settings: Settings) -> FeishuAgentRuntime:
     """Assemble the independent Feishu agent around read-only provider tools."""
     return FeishuAgentRuntime(
         settings.deepseek_api_key,
-        _create_data_provider(settings),
+        _create_feishu_data_provider(settings),
     )
 
 
@@ -229,3 +235,24 @@ def _create_data_provider(settings: Settings) -> TushareDataProvider:
         response_cache=response_cache,
     )
     return provider
+
+
+def _create_feishu_data_provider(settings: Settings) -> MarketDataProvider:
+    """Add optional U.S. capabilities without changing the A-share core workflow."""
+    tushare_provider = _create_data_provider(settings)
+    if not settings.massive_api_key and not settings.finnhub_api_key:
+        return tushare_provider
+    us_response_cache = LayeredDataResponseCache(
+        memory_store=MemoryDataCacheStore(
+            max_entries=DEFAULT_L1_MAX_ENTRIES,
+            max_bytes=DEFAULT_L1_MAX_BYTES,
+        ),
+        persistent_store=CloudStorageDataCacheStore(settings.tushare_cache_bucket),
+        expiration_policy=USMarketCacheExpirationPolicy(),
+    )
+    us_provider = USMarketDataProvider(
+        settings.massive_api_key,
+        settings.finnhub_api_key,
+        us_response_cache,
+    )
+    return CompositeMarketDataProvider((tushare_provider, us_provider))

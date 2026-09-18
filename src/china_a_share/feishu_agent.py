@@ -14,7 +14,6 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 import requests
 
-from china_a_share.capabilities import resolve_query_shape
 from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     QueryResult,
@@ -114,6 +113,14 @@ class MarketDataProvider(Protocol):
 
     def supports(self, operation: str) -> bool:
         """Return whether one operation is allowlisted."""
+
+    def validate_query(
+        self,
+        operation: str,
+        params: Dict[str, Any],
+        fields: List[str],
+    ) -> None:
+        """Validate one provider-native request before network access."""
 
     def query(
         self,
@@ -256,7 +263,7 @@ class ResearchToolbox:
                 "type": "function",
                 "function": {
                     "name": "search_market_data",
-                    "description": "Find relevant allowlisted Tushare operations before querying.",
+                    "description": "Find relevant allowlisted market-data operations before querying.",
                     "parameters": {
                         "type": "object",
                         "properties": {"query": {"type": "string"}},
@@ -269,7 +276,7 @@ class ResearchToolbox:
                 "type": "function",
                 "function": {
                     "name": "query_market_data",
-                    "description": "Execute one read-only Tushare operation and retain the complete dataset.",
+                    "description": "Execute one validated read-only market-data operation and retain the complete dataset.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -375,13 +382,10 @@ class ResearchToolbox:
             if not self._provider.supports(operation):
                 raise ValueError(f"Unsupported market-data operation: {operation}")
             params = dict(arguments["params"])
-            if resolve_query_shape(operation, params) is None:
-                raise ValueError(
-                    f"Operation lacks an audited Feishu agent query shape: {operation}"
-                )
+            fields = [str(field) for field in arguments["fields"]]
+            self._provider.validate_query(operation, params, fields)
             progress("querying", f"正在查询市场数据：{operation}…")
             dataset_id = f"dataset_{len(self._datasets) + 1}"
-            fields = [str(field) for field in arguments["fields"]]
             frame = self._provider.query(
                 operation,
                 params,
@@ -390,7 +394,12 @@ class ResearchToolbox:
                 request_id=self._request_id,
                 query_id=dataset_id,
             )
-            result = _frame_to_result(dataset_id, self._provider.name, operation, frame)
+            result = _frame_to_result(
+                dataset_id,
+                str(frame.attrs.get("provider") or self._provider.name),
+                operation,
+                frame,
+            )
             self._datasets[dataset_id] = result
             return _result_payload(result)
         if name == "rank_dataset":
@@ -690,9 +699,12 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
 def _agent_system_prompt() -> str:
     """Return stable tool-use and evidence rules for the Feishu research agent."""
     return (
-        "You are an A-share research agent. Answer in concise Chinese. Use tools for "
+        "You are a public-equity research agent covering A-shares and U.S. stocks. "
+        "Answer in concise Chinese. Use tools for "
         "every market-data claim and never invent prices, rankings, dates, companies, "
         "or financial metrics. Search the operation catalog before the first query. "
+        "Respect the market explicitly named by the user or established by conversation "
+        "context; ask for clarification when the market is genuinely ambiguous. "
         "Use only returned dataset identifiers and deterministic transformations. "
         "When the user requests Excel, or a result contains more than ten rows, call "
         "export_excel after producing the final retained dataset. Explain proxy metrics "
