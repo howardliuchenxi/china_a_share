@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00244-hss` |
+| Latest ready revision | `china-a-share-lab-00245-fln` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `9116f0cebfcc6b4d28ad39e2613ab61a6325fea9` |
+| Deployed Git commit | `adeb224fb8607a807785772e81380442ff8277a0` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -102,9 +102,9 @@ protected from anonymous consumption.
 | Service | `china-a-share-research-sandbox` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app> |
-| Latest ready revision | `china-a-share-research-sandbox-00001-62t` |
+| Latest ready revision | `china-a-share-research-sandbox-00004-kvm` |
 | Purpose | Execute restricted pandas and NumPy calculations for the Feishu research agent |
-| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:dfbecc6c6281957ab4e3424a5958a77b9f39f617` |
+| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:adeb224fb8607a807785772e81380442ff8277a0` |
 | Command | `python -m uvicorn china_a_share.sandbox_server:app --host 0.0.0.0 --port 8080` |
 | Traffic | 100% to the latest revision |
 | CPU and memory | 1 vCPU, 2 GiB |
@@ -475,3 +475,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-17 | Deployed revision `china-a-share-lab-00242-sjk` immediately through the main push trigger from `main@dfbecc6c6281957ab4e3424a5958a77b9f39f617`; verified 100% traffic, public health, and the synchronized Worker image and Git SHA. Created private service `china-a-share-research-sandbox` at revision `00001-62t` with 1 vCPU, 2 GiB, zero minimum and one maximum instance, concurrency 1, a 45-second timeout, no application environment or secret bindings, and the dedicated unprivileged `china-a-share-sandbox` runtime identity. Granted the application runtime identity service-scoped `roles/run.invoker` and the deployer service-account-level `roles/iam.serviceAccountUser`. The Feishu agent now uses generic OpenAI-compatible model configuration, provider-neutral data tools, bounded secretless DataFrame execution, deterministic validation, and tool-budget synthesis without prompt-specific ranking logic. Verified the reported five-day-return prompt with the live configured model, synthetic market data, and the private sandbox; the sandbox rejected an import attempt and accepted the corrected restricted calculation. Expected incremental GCP cost remains usage-based with no idle instance charge. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00243-d99` immediately through the main push trigger from `main@70167a158a141d20ef0aa936640b8ed8a1751117`; verified 100% traffic, public health, and the synchronized Worker image and Git SHA. The release replaces hidden Feishu thread progress with one visible source-message reply that is edited in place through completion, while retaining a separate file reply only when an artifact is generated. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-17 | Deployed revision `china-a-share-lab-00244-hss` immediately through the main push trigger from `main@9116f0cebfcc6b4d28ad39e2613ab61a6325fea9`; verified 100% traffic, public health, the synchronized Worker image and Git SHA, and the exact reported combined Feishu session-and-research prompt against the configured model, Tushare, and private sandbox. The release resolves named sessions to stable backend identifiers, supports create-and-query commands in one message, preserves context isolation across sessions, and executes complete full-market daily ranges through bounded exact-trading-date fanout within one agent tool call. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
+| 2026-09-17 | Deployed revision `china-a-share-lab-00245-fln` immediately through the main push trigger from `main@adeb224fb8607a807785772e81380442ff8277a0`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, and private sandbox revision `china-a-share-research-sandbox-00004-kvm`. The release adds a Feishu quick-menu card for mention-only messages, interactive research submission, and shortcuts for sessions and task status. Configured the existing Feishu callback endpoint for `card.action.trigger` and published application version `1.0.2` with the existing owner-only availability and external interaction restrictions. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
