@@ -67,19 +67,13 @@ class StrategyStore:
         if blob.exists():
             blob.delete()
 
-    def check_and_mark_executed(self, strategy_id: str, stock_code: str, signal_date: str) -> bool:
-        """
-        Atomically check and mark execution to prevent duplicate notifications.
-        Returns True if this is the first execution, False if already executed.
-        """
+    def is_executed(self, strategy_id: str, stock_code: str, signal_date: str) -> bool:
         record_id = f"{strategy_id}_{stock_code}_{signal_date}"
         blob = self._bucket.blob(self._object_name(self._prefix_history, record_id))
-        
-        # In GCS, we can use if_generation_match=0 to ensure we only write if it doesn't exist
-        try:
-            record = {"executed_at": datetime.now(timezone.utc).isoformat()}
-            blob.upload_from_string(json.dumps(record), if_generation_match=0)
-            return True
-        except Exception as e:
-            # PreconditionFailed indicates the file already exists
-            return False
+        return blob.exists()
+
+    def mark_executed(self, strategy_id: str, stock_code: str, signal_date: str) -> None:
+        record_id = f"{strategy_id}_{stock_code}_{signal_date}"
+        blob = self._bucket.blob(self._object_name(self._prefix_history, record_id))
+        record = {"executed_at": datetime.now(timezone.utc).isoformat()}
+        blob.upload_from_string(json.dumps(record))

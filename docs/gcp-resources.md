@@ -281,6 +281,10 @@ GitHub authorization.
 
 | Setting | Value |
 | --- | --- |
+### Cloud Scheduler
+
+| Setting | Value |
+| --- | --- |
 | Job | `china-a-share-reconcile-main` |
 | Region | `asia-east2` |
 | Schedule | Every 10 minutes (`*/10 * * * *`, UTC) |
@@ -288,6 +292,16 @@ GitHub authorization.
 | Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` |
 | State | Enabled; real deployment and scheduled no-op reconciliation verified |
 | Retry count | 1 |
+| Expected cost impact | Within the monthly free allowance for three Scheduler jobs |
+
+| Setting | Value |
+| --- | --- |
+| Job | `china-a-share-strategy-daily-scan` |
+| Region | `asia-east2` |
+| Schedule | `30 16 * * 1-5` (Asia/Shanghai) |
+| Target | POST to `/api/analysis/tasks/strategy:daily-scan` |
+| Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` |
+| State | ENABLED |
 | Expected cost impact | Within the monthly free allowance for three Scheduler jobs |
 
 Google-managed Cloud Run, Cloud Build, Artifact Registry, Container Registry,

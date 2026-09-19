@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 from datetime import datetime, timezone
 from china_a_share.strategy.models import (
-    StrategyConfig, RuleCondition, Operator, StrategyDirection, DataAdjustment, StrategyScanResult
+    StrategyConfig, RuleCondition, Operator, StrategyDirection, DataAdjustment, StrategyScanResult, StrategyExecutionRecord
 )
 from china_a_share.strategy.data_loader import QFQDataLoader
 from china_a_share.strategy.engine import RuleEngine
@@ -31,12 +31,10 @@ class MockStrategyStore:
     def __init__(self):
         self.executed = set()
         self.strategies = []
-    def check_and_mark_executed(self, sid, code, date):
-        key = f"{sid}_{code}_{date}"
-        if key in self.executed:
-            return False
-        self.executed.add(key)
-        return True
+    def is_executed(self, sid, code, date):
+        return f"{sid}_{code}_{date}" in self.executed
+    def mark_executed(self, sid, code, date):
+        self.executed.add(f"{sid}_{code}_{date}")
     def list_strategies(self):
         return self.strategies
 
@@ -149,3 +147,63 @@ def test_send_card_at_all_fallback():
     # Should catch the error, strip the <at id="all"></at>, and retry
     assert len(sender.cards) == 1
     assert "<at id=\"all\"></at>" not in sender.cards[0][1]["elements"][0]["content"]
+
+def test_at_least_once_delivery_and_retry():
+    store = MockStrategyStore()
+    class DummyLoader:
+        def get_adjusted_history(self, start, end):
+            import pandas as pd
+            return pd.DataFrame({'trade_date': ['20230101']})
+    loader = DummyLoader()
+    engine = None
+    
+    class FlakySender:
+        def __init__(self):
+            self.cards = []
+            self.fail = True
+        def send_interactive_card(self, target, card):
+            if self.fail:
+                raise RuntimeError("Temporary Network Error")
+            self.cards.append((target, card))
+            
+    sender = FlakySender()
+    # Dummy engine that just returns the same hit every time
+    class DummyEngine:
+        def evaluate(self, s, df, t):
+            hit = StrategyExecutionRecord(
+                strategy_id=s.id, stock_code="0001", stock_name="A", 
+                signal_date="20230101", direction=StrategyDirection.BUY, 
+                hit_reason="test", price=10.0
+            )
+            return StrategyScanResult(
+                strategy_id=s.id, strategy_name="test", direction=StrategyDirection.BUY, 
+                signal_date="20230101", scanned_count=1, hits=[hit]
+            )
+    scanner = StrategyScanner(store, loader, DummyEngine(), sender)
+    
+    strat = StrategyConfig(id="s1", name="test", creator_id="u1", direction=StrategyDirection.BUY, notify_target="group1", conditions=[RuleCondition(metric="drawdown", operator=Operator.GT, parameters={"window": 1, "threshold": 0.1})])
+    store.strategies = [strat]
+    
+    # 1. First run - fails during send
+    import pytest
+    with pytest.raises(RuntimeError, match="One or more strategies failed"):
+        scanner.run_daily_scan("20230101")
+        
+    # Check that it's NOT marked executed
+    assert len(store.executed) == 0
+    assert len(sender.cards) == 0
+    
+    # 2. Second run (Scheduler Retry) - succeeds
+    sender.fail = False
+    scanner.run_daily_scan("20230101")
+    
+    # Check that it WAS sent, and IS marked executed
+    assert len(sender.cards) == 1
+    assert "命中数量**：1" in sender.cards[0][1]["elements"][0]["content"]
+    assert len(store.executed) == 1
+    
+    # 3. Third run - already marked, sends empty card
+    sender.cards.clear()
+    scanner.run_daily_scan("20230101")
+    assert len(sender.cards) == 1
+    assert "本次扫描无新增可通知信号" in sender.cards[0][1]["elements"][1]["content"]

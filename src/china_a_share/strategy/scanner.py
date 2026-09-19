@@ -94,13 +94,19 @@ class StrategyScanner:
         # Deduplicate hits
         new_hits = []
         for hit in result.hits:
-            if self.store.check_and_mark_executed(strategy.id, hit.stock_code, result.signal_date):
+            if not self.store.is_executed(strategy.id, hit.stock_code, result.signal_date):
                 new_hits.append(hit)
                 
         # Update result with only new hits
         result.hits = new_hits
         
+        # Throws exception if send fails, preventing the hits from being marked as executed.
+        # This guarantees at-least-once delivery semantics for Cloud Scheduler retries.
         self._send_feishu_card(result, strategy.notify_target, is_preview=False, raw_hit_count=raw_hit_count)
+        
+        # Mark as executed ONLY after successful card transmission
+        for hit in new_hits:
+            self.store.mark_executed(strategy.id, hit.stock_code, result.signal_date)
         
     def _send_error_card(self, strategy_name: str, target_id: str, error_msg: str) -> None:
         card = {
