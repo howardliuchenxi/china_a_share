@@ -52,9 +52,9 @@ test("research result page prioritizes the searchable table without a generic ch
         answer: "研究完成。",
         visualization: {
           title: "估值筛选结果",
-          columns: ["代码", "名称", "动态市盈率(ttm)"],
+          columns: ["代码", "名称", "收盘日", "动态市盈率(ttm)"],
           numeric_columns: ["动态市盈率(ttm)"],
-          rows: [{ "代码": "600000.SH", "名称": "浦发银行", "动态市盈率(ttm)": 6.2 }],
+          rows: [{ "代码": "600000.SH", "名称": "浦发银行", "收盘日": 20221215, "动态市盈率(ttm)": 6.2 }],
           source_row_count: 1,
           truncated: false,
           suggested_x: "代码",
@@ -70,6 +70,8 @@ test("research result page prioritizes the searchable table without a generic ch
 
   await expect(page.getByRole("heading", { name: "结果明细" })).toBeVisible();
   await expect(page.getByRole("table")).toContainText("浦发银行");
+  await expect(page.getByRole("table")).toContainText("2022-12-15");
+  await expect(page.getByRole("table")).not.toContainText("20,221,215");
   await expect(page.getByRole("heading", { name: "交互图表" })).toHaveCount(0);
   await expect(page.getByRole("img")).toHaveCount(0);
 });

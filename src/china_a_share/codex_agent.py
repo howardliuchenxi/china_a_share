@@ -526,7 +526,7 @@ def _build_research_visualization(
                 continue
             rows.append(
                 {
-                    column: _json_safe_cell(value)
+                    column: _json_safe_cell(column, value)
                     for column, value in zip(headers, values)
                 }
             )
@@ -562,8 +562,11 @@ def _build_research_visualization(
         return None
 
 
-def _json_safe_cell(value: Any) -> Any:
+def _json_safe_cell(column: str, value: Any) -> Any:
     """Normalize workbook scalars into bounded JSON-compatible values."""
+    compact_date = _compact_calendar_date(value) if _is_date_column(column) else None
+    if compact_date is not None:
+        return compact_date
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
@@ -574,6 +577,38 @@ def _json_safe_cell(value: Any) -> Any:
         number = float(value)
         return number if math.isfinite(number) else None
     return str(value)
+
+
+def _is_date_column(column: str) -> bool:
+    """Return whether a result header denotes a calendar-date value."""
+    normalized = column.strip().casefold().replace(" ", "_")
+    return normalized.endswith(
+        ("date", "日期", "时间", "报告期", "收盘日", "交易日")
+    )
+
+
+def _compact_calendar_date(value: Any) -> Optional[str]:
+    """Convert a valid YYYYMMDD scalar to the viewer's ISO date format."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, float) and value.is_integer():
+        text = str(int(value))
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        return None
+    if len(text) != 8 or not text.isdigit():
+        return None
+    try:
+        return datetime.strptime(text, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return None
 
 
 def _is_numeric(value: Any) -> bool:
