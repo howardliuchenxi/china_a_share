@@ -568,6 +568,7 @@ class FeishuMessageEvent:
     message_id: str
     conversation_id: str
     prompt: str
+    mentions_bot: bool = False
 
 
 from typing import TYPE_CHECKING
@@ -689,9 +690,15 @@ class FeishuResearchBot:
             text = json.loads(message.get("content", "{}"))["text"]
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise FeishuEventError("Feishu text message content is invalid.") from exc
+        
+        # Check if the message contains an @mention
+        mentions_bot = bool(MENTION_PATTERN.search(text))
         prompt = MENTION_PATTERN.sub("", text).strip()
-        if not prompt:
+        
+        # We previously rejected empty prompts, but we now allow them if they are explicit pings
+        if not prompt and not mentions_bot:
             return None
+            
         chat_id = str(message.get("chat_id", "")).strip()
         message_id = str(message.get("message_id", "")).strip()
         event_id = str(header.get("event_id", "")).strip()
@@ -701,7 +708,7 @@ class FeishuResearchBot:
         conversation_id = ":".join(
             [str(header.get("tenant_key", "")), chat_id, thread_id, sender_id]
         )
-        return FeishuMessageEvent(event_id, message_id, conversation_id, prompt)
+        return FeishuMessageEvent(event_id, message_id, conversation_id, prompt, mentions_bot)
 
     def verify_challenge(self, payload: Dict[str, Any]) -> str:
         """Validate and return one Feishu endpoint-verification challenge."""
@@ -730,8 +737,11 @@ class FeishuResearchBot:
             return
         try:
             # Handle strategy menu triggered ONLY by an empty ping (direct @ without text)
-            if self._strategy_store and self._strategy_scanner and not event.prompt.strip():
+            if self._strategy_store and self._strategy_scanner and event.mentions_bot and not event.prompt.strip():
                 reply = self._strategy_menu_reply(event)
+            elif not event.prompt.strip():
+                # If prompt is empty but they didn't mention bot, just ignore
+                return
             elif self._agent_coordinator is not None and (
                 NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
                 or LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt)

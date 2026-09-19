@@ -128,7 +128,7 @@ class StrategyScanner:
         elements = [
             {
                 "tag": "markdown",
-                "content": f"**扫描日期**：{result.signal_date} | **扫描范围**：{result.scanned_count} 只股票\n**命中数量**：{len(result.hits)}"
+                "content": f"<at id=\"all\"></at>\n**扫描日期**：{result.signal_date} | **扫描范围**：{result.scanned_count} 只股票\n**命中数量**：{len(result.hits)}"
             }
         ]
         
@@ -164,4 +164,11 @@ class StrategyScanner:
         try:
             self.sender.send_interactive_card(target_id, card)
         except Exception as e:
-            logger.error(f"Failed to send strategy card to {target_id}: {e}")
+            err_str = str(e).lower()
+            if "permission" in err_str or "230006" in err_str or "lack" in err_str:
+                logger.warning(f"Bot lacks @all permissions for {target_id}, resending without @all. Error: {e}")
+                card["elements"][0]["content"] = card["elements"][0]["content"].replace("<at id=\"all\"></at>\n", "")
+                self.sender.send_interactive_card(target_id, card)
+            else:
+                logger.error(f"Failed to send strategy card to {target_id}: {e}")
+                raise e

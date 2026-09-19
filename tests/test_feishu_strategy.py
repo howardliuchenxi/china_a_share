@@ -1,6 +1,7 @@
 from china_a_share.strategy.feishu_interaction import _handle_create_draft, _handle_view_drafts
 from china_a_share.strategy.models import StrategyDraft
 import uuid
+import pytest
 
 class MockStrategyStore:
     def __init__(self):
@@ -31,3 +32,37 @@ def test_view_drafts_isolation():
     content = str(result)
     assert "**草稿ID**: 1" in content
     assert "**草稿ID**: 2" not in content
+
+def test_strategy_menu_trigger_condition(monkeypatch):
+    import os
+    monkeypatch.setenv("FEISHU_APP_ID", "test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "test")
+    monkeypatch.setenv("FEISHU_VERIFICATION_TOKEN", "test")
+    monkeypatch.setenv("FEISHU_ENCRYPT_KEY", "test")
+    
+    from china_a_share.feishu import FeishuMessageEvent
+    from china_a_share.bootstrap import create_feishu_research_bot
+    from china_a_share.config import Settings
+    
+    bot = create_feishu_research_bot(Settings.from_env())
+    
+    # Text with mention and no text inside should be preserved
+    payload = {
+        "header": {"token": "test", "event_id": "1", "event_type": "im.message.receive_v1"},
+        "event": {
+            "sender": {"sender_id": {"open_id": "user1"}},
+            "message": {"message_type": "text", "content": '{"text": "<at user_id=\\"ou_123\\">bot</at> "}', "chat_id": "c1", "message_id": "m1"}
+        }
+    }
+    
+    ev = bot.parse_event(payload)
+    assert ev is not None
+    assert ev.mentions_bot is True
+    assert ev.prompt == ""
+    
+    # Text without mention but text inside should be preserved
+    payload["event"]["message"]["content"] = '{"text": "执行回测"}'
+    ev2 = bot.parse_event(payload)
+    assert ev2 is not None
+    assert ev2.mentions_bot is False
+    assert ev2.prompt == "执行回测"

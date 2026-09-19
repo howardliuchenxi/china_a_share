@@ -120,3 +120,32 @@ def test_scanner_deduplication_and_isolation():
     assert len(sender.cards) == 1
     assert "[预览]" in sender.cards[0][1]["header"]["title"]["content"]
     assert "命中数量**：1" in sender.cards[0][1]["elements"][0]["content"]
+
+def test_send_card_at_all_fallback():
+    # Setup scanner
+    store = MockStrategyStore()
+    loader = None
+    engine = None
+    
+    class ThrowingSender:
+        def __init__(self):
+            self.cards = []
+            self.first_throw = True
+        def send_interactive_card(self, target, card):
+            if self.first_throw:
+                self.first_throw = False
+                raise RuntimeError("230006: bot lack @all permission")
+            self.cards.append((target, card))
+            
+    sender = ThrowingSender()
+    scanner = StrategyScanner(store, loader, engine, sender)
+    
+    res = StrategyScanResult(
+        strategy_id="s1", strategy_name="test", direction=StrategyDirection.BUY, 
+        signal_date="20230101", scanned_count=1, hits=[]
+    )
+    scanner._send_feishu_card(res, "target1", False, 0)
+    
+    # Should catch the error, strip the <at id="all"></at>, and retry
+    assert len(sender.cards) == 1
+    assert "<at id=\"all\"></at>" not in sender.cards[0][1]["elements"][0]["content"]

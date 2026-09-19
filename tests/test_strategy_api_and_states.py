@@ -42,21 +42,39 @@ def test_draft_state_machine_and_isolation():
     assert "成功删除" in res["elements"][0]["content"]
     assert "d2" not in store.drafts
 
-def test_daily_scan_auth_and_failure_propagation():
-    # Setup mock bot that will raise an error when scanner runs
-    class MockScanner:
-        def run_daily_scan(self, date):
-            raise RuntimeError("Intentional test failure")
-            
-    class MockBot:
-        _strategy_scanner = MockScanner()
-        
+
+def test_daily_scan_auth_and_failure_propagation(monkeypatch):
+    import os
+    monkeypatch.setenv("FEISHU_APP_ID", "test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "test")
+    monkeypatch.setenv("FEISHU_VERIFICATION_TOKEN", "test")
+    monkeypatch.setenv("FEISHU_ENCRYPT_KEY", "test")
+    
     app = create_app()
-    # Intercept bot creation manually or just test the logic directly:
-    # Actually, we can just test the 401 response for no token
     client = TestClient(app)
+    
+    # 1. 401 Missing Auth
     resp = client.post("/api/analysis/tasks/strategy:daily-scan")
     assert resp.status_code == 401
+    
+    # 2. 500 Failure Propagation
+    # We must patch the scanner inside the app's feishu bot
+    from china_a_share.bootstrap import create_feishu_research_bot
+    from china_a_share.config import Settings
+    bot = create_feishu_research_bot(Settings.from_env())
+    app = create_app(feishu_research_bot=bot)
+    client = TestClient(app)
+    
+    class MockFailingScanner:
+        def run_daily_scan(self, target_date):
+            raise RuntimeError("Expected scan failure")
+            
+    bot._strategy_scanner = MockFailingScanner()
+    
+    resp = client.post("/api/analysis/tasks/strategy:daily-scan", headers={"Authorization": "Bearer admin"})
+    assert resp.status_code == 500
+    assert "Scan failed" in resp.json()["detail"]
+
 
 def test_interactive_card_signature_validation(monkeypatch):
     import os
