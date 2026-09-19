@@ -1,7 +1,7 @@
 {
   "models": [
     {
-      "slug": "deepseek-v4-pro",
+      "slug": "deepseek-flash",
       "prefer_websockets": false,
       "support_verbosity": true,
       "default_verbosity": "low",
@@ -28,8 +28,8 @@
       "comp_hash": "3000",
       "reasoning_summary_format": "experimental",
       "default_reasoning_summary": "none",
-      "display_name": "DeepSeek-V4-Pro",
-      "description": "Most capable frontier agentic model available through DeepSeek.",
+      "display_name": "DeepSeek-V4.1-Flash",
+      "description": "Cost-efficient agentic model available through DeepSeek.",
       "base_instructions": "You are Codex, an agentic assistant. Follow developer and user instructions, use available tools when they improve correctness, and continue until the requested outcome is complete.",
       "default_reasoning_level": "high",
       "supported_reasoning_levels": [

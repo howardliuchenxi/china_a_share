@@ -27,7 +27,7 @@ from china_a_share.observability import ANALYSIS_REQUEST_ID, log_event
 
 DEEPSEEK_PLANNER_NAME = "deepseek"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEEPSEEK_MODEL = "deepseek-flash"
 DEEPSEEK_TIMEOUT_SECONDS = 180
 DEEPSEEK_MAX_OUTPUT_TOKENS = 12_000
 DEEPSEEK_MAX_ATTEMPTS = 20

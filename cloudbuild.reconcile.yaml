@@ -422,7 +422,7 @@ substitutions:
   _SANDBOX_SERVICE: china-a-share-research-sandbox
   _SANDBOX_SERVICE_ACCOUNT: china-a-share-sandbox@china-a-share-lab.iam.gserviceaccount.com
   _LLM_BASE_URL: https://api.deepseek.com
-  _LLM_MODEL: deepseek-v4-pro
+  _LLM_MODEL: deepseek-flash
   _IMAGE_REPOSITORY: asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy
   _CACHE_BUCKET: china-a-share-lab-cache-asia-east2
   _SERVICE_URL: https://china-a-share-lab-1079739428171.asia-east2.run.app

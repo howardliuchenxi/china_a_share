@@ -122,7 +122,7 @@ def test_deepseek_skeleton_exposes_stable_name():
     planner = DeepSeekQueryPlanner("test-key")
 
     assert planner.name == "deepseek"
-    assert DEEPSEEK_MODEL == "deepseek-v4-pro"
+    assert DEEPSEEK_MODEL == "deepseek-flash"
 
 
 def test_bootstrap_uses_deepseek_as_primary_planner(monkeypatch):

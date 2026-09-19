@@ -77,7 +77,7 @@ idle service to zero.
 | `GITHUB_FIX_REPO` | Plain GitHub owner/repository used for UI feedback dispatch |
 | `FEISHU_APP_ID` | Public Feishu custom-application identifier |
 | `LLM_BASE_URL` | Plain OpenAI-compatible API base URL `https://api.deepseek.com` |
-| `LLM_MODEL` | Plain provider-native model identifier `deepseek-v4-pro` |
+| `LLM_MODEL` | Plain provider-native model identifier `deepseek-flash` |
 | `RESEARCH_SANDBOX_URL` | Plain private service URL `https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app` |
 | `PUBLIC_APP_URL` | Plain stable public origin `https://china-a-share-lab-1079739428171.asia-east2.run.app` used for token-protected research viewer links |
 
