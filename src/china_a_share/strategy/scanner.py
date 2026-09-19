@@ -52,12 +52,19 @@ class StrategyScanner:
              logger.warning(f"Target date {target_date} is not in the fetched trading days. Skipping scan.")
              return
 
+        has_failures = False
         for strategy in strategies:
             try:
                 result = self.engine.evaluate(strategy, df, target_date)
                 self._dispatch_formal_notification(result, strategy)
             except Exception as e:
                 logger.error(f"Scan failed for strategy {strategy.name}: {e}")
+                has_failures = True
+                
+        if has_failures:
+            # Raise an explicit exception so the API handler fails with 500,
+            # signaling to Cloud Scheduler that a retry is needed.
+            raise RuntimeError("One or more strategies failed during the daily scan.")
 
     def run_manual_preview(self, strategy: StrategyConfig, target_date: str) -> Optional[StrategyScanResult]:
         """
@@ -82,6 +89,8 @@ class StrategyScanner:
         """
         Send notification. Ensure each strategy gets exactly one card, and deduplicate hits.
         """
+        raw_hit_count = len(result.hits)
+        
         # Deduplicate hits
         new_hits = []
         for hit in result.hits:
@@ -91,7 +100,7 @@ class StrategyScanner:
         # Update result with only new hits
         result.hits = new_hits
         
-        self._send_feishu_card(result, strategy.notify_target, is_preview=False)
+        self._send_feishu_card(result, strategy.notify_target, is_preview=False, raw_hit_count=raw_hit_count)
         
     def _send_error_card(self, strategy_name: str, target_id: str, error_msg: str) -> None:
         card = {
@@ -109,7 +118,10 @@ class StrategyScanner:
         except Exception as e:
              logger.error(f"Failed to send error card: {e}")
 
-    def _send_feishu_card(self, result: StrategyScanResult, target_id: str, is_preview: bool) -> None:
+    def _send_feishu_card(self, result: StrategyScanResult, target_id: str, is_preview: bool, raw_hit_count: int = -1) -> None:
+        if raw_hit_count == -1:
+            raw_hit_count = len(result.hits)
+            
         title_prefix = "[预览] " if is_preview else ""
         header_color = "green" if result.direction == "buy" else "red"
         
@@ -120,8 +132,10 @@ class StrategyScanner:
             }
         ]
         
-        if not result.hits:
+        if raw_hit_count == 0:
              elements.append({"tag": "markdown", "content": "> 本次扫描未命中任何标的。"})
+        elif len(result.hits) == 0:
+             elements.append({"tag": "markdown", "content": "> 本次扫描无新增可通知信号。"})
         else:
             for hit in result.hits[:10]: # Limit max displayed to prevent card overflow
                 elements.append({"tag": "hr"})

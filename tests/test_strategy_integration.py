@@ -112,7 +112,7 @@ def test_scanner_deduplication_and_isolation():
     sender.cards.clear()
     scanner.run_daily_scan(target_date)
     assert len(sender.cards) == 1
-    assert "本次扫描未命中任何标的" in sender.cards[0][1]["elements"][1]["content"]
+    assert "本次扫描无新增可通知信号" in sender.cards[0][1]["elements"][1]["content"]
     
     # 3. Run Manual Preview (should ignore deduplication, send hit card with [预览])
     sender.cards.clear()

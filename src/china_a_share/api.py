@@ -730,7 +730,6 @@ def create_app(
     @application.post(f"{ANALYSIS_TASK_API_ROUTE}/strategy:daily-scan")
     def trigger_daily_scan(
         http_request: Request,
-        background_tasks: BackgroundTasks,
         authorization: str = Header(default=""),
     ) -> dict:
         """Trigger the strategy scanner (called via Cloud Scheduler)."""
@@ -751,18 +750,37 @@ def create_app(
         from datetime import datetime, timezone
         target_date = datetime.now(timezone.utc).strftime("%Y%m%d")
         
-        background_tasks.add_task(bot._strategy_scanner.run_daily_scan, target_date)
-        return {"status": "accepted", "target_date": target_date}
+        try:
+            bot._strategy_scanner.run_daily_scan(target_date)
+        except Exception as exc:
+            log_event(logger, logging.ERROR, "strategy_daily_scan_failed", exc_info=True)
+            raise HTTPException(status_code=500, detail="Scan failed or partially failed") from exc
+            
+        return {"status": "success", "target_date": target_date}
 
     @application.post(f"{FEISHU_EVENTS_API_ROUTE}/interactive")
     async def receive_feishu_interactive_card(
         request: Request,
+        x_lark_request_timestamp: str = Header(default=""),
+        x_lark_request_nonce: str = Header(default=""),
+        x_lark_signature: str = Header(default=""),
     ) -> dict:
         """Handle Feishu interactive card actions."""
         try:
             bot = get_feishu_research_bot()
-            payload = await request.json()
+            body = await request.body()
+            bot.verify_signature(
+                body,
+                x_lark_request_timestamp,
+                x_lark_request_nonce,
+                x_lark_signature,
+            )
+            payload = json.loads(body)
             return bot.process_interactive_card(payload)
+        except FeishuEventError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+        except ConfigurationError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
         except Exception as exc:
             log_event(logger, logging.ERROR, "feishu_interactive_card_failed", exc_info=True)
             return {"content": "Failed to process action."}

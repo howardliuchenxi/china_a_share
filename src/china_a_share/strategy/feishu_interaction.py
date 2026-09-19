@@ -28,11 +28,98 @@ def handle_strategy_interactive_card(
         return _handle_create_draft(user_id, store)
     elif action_name == "view_drafts":
         return _handle_view_drafts(user_id, store)
+    elif action_name == "view_progress":
+        draft_id = action.get("value", {}).get("draft_id")
+        return _handle_view_progress(user_id, draft_id, store)
+    elif action_name == "cancel_draft":
+        draft_id = action.get("value", {}).get("draft_id")
+        return _handle_cancel_draft(user_id, draft_id, store)
+    elif action_name == "save_draft":
+        draft_id = action.get("value", {}).get("draft_id")
+        return _handle_save_draft(user_id, draft_id, store)
     elif action_name == "run_preview":
         strategy_id = action.get("value", {}).get("strategy_id")
         return _handle_run_preview(user_id, strategy_id, store, scanner)
         
     return None
+
+def _handle_view_progress(user_id: str, draft_id: str, store: StrategyStore) -> dict:
+    draft = store.get_draft(draft_id)
+    if not draft or draft.creator_id != user_id:
+        return {"content": "草稿不存在或权限被拒绝。"}
+        
+    content = f"**草稿ID**: {draft.id}\n**当前进度**: {draft.step}\n"
+    content += f"- 名称: {draft.name or '未填写'}\n"
+    content += f"- 方向: {draft.direction.value if draft.direction else '未填写'}\n"
+    content += f"- 通知目标: {draft.notify_target or '未填写'}\n"
+    content += f"- 规则数量: {len(draft.conditions)}\n\n"
+    content += "下一步您可以选择完善信息或确认保存。"
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "草稿进度"}, "template": "blue"},
+        "elements": [
+            {"tag": "markdown", "content": content},
+            {"tag": "action", "actions": [
+                {"tag": "button", "text": {"tag": "plain_text", "content": "确认保存"}, "type": "primary", "value": {"action": "save_draft", "draft_id": draft_id}},
+                {"tag": "button", "text": {"tag": "plain_text", "content": "取消/删除"}, "type": "danger", "value": {"action": "cancel_draft", "draft_id": draft_id}}
+            ]}
+        ]
+    }
+
+def _handle_cancel_draft(user_id: str, draft_id: str, store: StrategyStore) -> dict:
+    draft = store.get_draft(draft_id)
+    if not draft or draft.creator_id != user_id:
+        return {"content": "草稿不存在或权限被拒绝。"}
+    store.delete_draft(draft_id)
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "草稿已取消"}, "template": "grey"},
+        "elements": [{"tag": "markdown", "content": f"草稿 {draft_id} 已成功删除。"}]
+    }
+
+def _handle_save_draft(user_id: str, draft_id: str, store: StrategyStore) -> dict:
+    draft = store.get_draft(draft_id)
+    if not draft or draft.creator_id != user_id:
+        return {"content": "草稿不存在或权限被拒绝。"}
+        
+    from china_a_share.strategy.models import StrategyConfig, StrategyDirection, RuleCondition, Operator
+    
+    # In a full interactive setup, these would be collected dynamically. 
+    # For now, if missing, we populate with the requested preset defaults so it can be saved and run.
+    name = draft.name or "回撤后首次转多"
+    direction = draft.direction or StrategyDirection.BUY
+    target = draft.notify_target or user_id
+    conditions = draft.conditions
+    
+    if not conditions:
+        conditions = [
+            RuleCondition(metric="drawdown", operator=Operator.GT, parameters={"window": 60, "threshold": 0.30}),
+            RuleCondition(metric="cumulative_return", operator=Operator.BETWEEN, parameters={"window": 10, "min": -0.10, "max": 0.10}),
+            RuleCondition(metric="ma_cross", operator=Operator.MA_CROSS_UP_FIRST, parameters={"fast": 5, "slow": 10})
+        ]
+        
+    strategy = StrategyConfig(
+        id=draft.id,
+        name=name,
+        creator_id=user_id,
+        direction=direction,
+        notify_target=target,
+        conditions=conditions
+    )
+    store.put_strategy(strategy)
+    store.delete_draft(draft_id)
+    
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "策略已保存"}, "template": "green"},
+        "elements": [
+            {"tag": "markdown", "content": f"策略 **{strategy.name}** 已保存。每日扫描将自动执行。"},
+            {"tag": "action", "actions": [
+                {"tag": "button", "text": {"tag": "plain_text", "content": "立即预览运行"}, "type": "primary", "value": {"action": "run_preview", "strategy_id": strategy.id}}
+            ]}
+        ]
+    }
 
 def _handle_create_draft(user_id: str, store: StrategyStore) -> dict:
     from uuid import uuid4

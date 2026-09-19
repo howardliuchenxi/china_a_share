@@ -22,7 +22,7 @@ class QFQDataLoader:
             "daily",
             {"start_date": start_date, "end_date": end_date},
             ["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount"],
-            api_route="strategy",
+            api_route="/api/analysis/tasks/strategy:daily-scan",
             request_id="internal_strategy_qfq",
             query_id="qfq_daily"
         )
@@ -30,7 +30,7 @@ class QFQDataLoader:
             "adj_factor",
             {"start_date": start_date, "end_date": end_date},
             ["ts_code", "trade_date", "adj_factor"],
-            api_route="strategy",
+            api_route="/api/analysis/tasks/strategy:daily-scan",
             request_id="internal_strategy_qfq",
             query_id="qfq_adj"
         )

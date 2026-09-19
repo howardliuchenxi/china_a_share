@@ -729,10 +729,8 @@ class FeishuResearchBot:
         if not self._store.claim_event(event.event_id):
             return
         try:
-            # Handle strategy menu triggered by specific keywords or empty ping
-            if self._strategy_store and self._strategy_scanner and (
-                not event.prompt.strip() or "策略" in event.prompt or "回测" in event.prompt
-            ):
+            # Handle strategy menu triggered ONLY by an empty ping (direct @ without text)
+            if self._strategy_store and self._strategy_scanner and not event.prompt.strip():
                 reply = self._strategy_menu_reply(event)
             elif self._agent_coordinator is not None and (
                 NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
