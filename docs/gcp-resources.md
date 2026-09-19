@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00253-rfb` |
+| Latest ready revision | `china-a-share-lab-00256-m2m` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `bb88427436a5a6ac3eafb34cfe4737ff060f721d` |
+| Deployed Git commit | `074d9cafe0e2d2852557c6d054ebedc66a6ef897` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -105,9 +105,9 @@ protected from anonymous consumption.
 | Service | `china-a-share-research-sandbox` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app> |
-| Latest ready revision | `china-a-share-research-sandbox-00012-xrh` |
+| Latest ready revision | `china-a-share-research-sandbox-00015-9mf` |
 | Purpose | Execute restricted pandas and NumPy calculations for the Feishu research agent |
-| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:bb88427436a5a6ac3eafb34cfe4737ff060f721d` |
+| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:074d9cafe0e2d2852557c6d054ebedc66a6ef897` |
 | Command | `python -m uvicorn china_a_share.sandbox_server:app --host 0.0.0.0 --port 8080` |
 | Traffic | 100% to the latest revision |
 | CPU and memory | 1 vCPU, 2 GiB |
@@ -494,3 +494,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-17 | Deployed revision `china-a-share-lab-00253-rfb` through the main push trigger from `main@bb88427436a5a6ac3eafb34cfe4737ff060f721d`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, private sandbox revision `china-a-share-research-sandbox-00012-xrh`, a successful public research-page shell response, and a non-disclosing 404 for an invalid visualization token. The release adds 30-day token-protected, login-free interactive research charts and workbook downloads. Viewer workbooks use the existing private `analysis-jobs/` namespace and its 365-day deletion lifecycle. No resource type, IAM boundary, lifecycle policy, fixed runtime cost, or material storage cost changed. |
 | 2026-09-18 | Granted the Cloud Run runtime identity secret-level `roles/secretmanager.secretAccessor` on `finnhub-api-key` and `massive-api-key`; verified both IAM policies, retained automatic replication and enabled version 1, and introduced no continuous compute cost. |
 | 2026-09-18 | Deployed revision `china-a-share-lab-00254-xn8` through the main push trigger from `main@cff707607d03917895b3f4b9b2512652e34d7ef8`; verified 100% traffic, public health, synchronized Worker image and Git SHA, and both U.S. market-data secret bindings on the service and Worker. Live provider checks returned one recent AAPL daily row from Massive, one AAPL company-profile row from Finnhub, and 12,562 rows from a Massive full-market daily snapshot. No new continuous compute resource or broad project-level IAM role was added. |
+| 2026-09-19 | Deployed revision `china-a-share-lab-00256-m2m` immediately through the main push trigger from `main@074d9cafe0e2d2852557c6d054ebedc66a6ef897`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image and Git SHA, and private sandbox revision `china-a-share-research-sandbox-00015-9mf`. The release removes the misleading generic chart from research result pages while retaining the searchable result table and workbook download. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
