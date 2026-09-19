@@ -27,7 +27,8 @@ from china_a_share.observability import ANALYSIS_REQUEST_ID, log_event
 
 DEEPSEEK_PLANNER_NAME = "deepseek"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEEPSEEK_MODEL = "deepseek-flash"
+DEEPSEEK_FALLBACK_MODEL = "deepseek-v4-pro"
 DEEPSEEK_TIMEOUT_SECONDS = 180
 DEEPSEEK_MAX_OUTPUT_TOKENS = 12_000
 DEEPSEEK_MAX_ATTEMPTS = 20
@@ -42,6 +43,13 @@ RETAIL_PROXY_DISCLOSURE = (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _planner_model_for_attempt(attempt: int) -> str:
+    """Use Pro only for the final recovery attempts after Flash struggles."""
+    if attempt >= DEEPSEEK_MAX_ATTEMPTS - 2:
+        return DEEPSEEK_FALLBACK_MODEL
+    return DEEPSEEK_MODEL
 
 
 def build_query_plan_system_prompt(
@@ -313,6 +321,7 @@ class DeepSeekQueryPlanner:
         valid_candidates: list[QueryPlan] = []
         candidate_fingerprints: dict[str, int] = {}
         for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
+            model = _planner_model_for_attempt(attempt)
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.prompt},
@@ -340,7 +349,7 @@ class DeepSeekQueryPlanner:
             elif candidate_guidance:
                 messages.append({"role": "system", "content": candidate_guidance})
             request_payload = {
-                "model": DEEPSEEK_MODEL,
+                "model": model,
                 "messages": messages,
                 "thinking": {"type": "disabled"},
                 "response_format": {"type": "json_object"},
@@ -354,7 +363,7 @@ class DeepSeekQueryPlanner:
                 "planner_model_attempt",
                 request_id=ANALYSIS_REQUEST_ID.get(),
                 provider="deepseek",
-                model=DEEPSEEK_MODEL,
+                model=model,
                 attempt=attempt + 1,
             )
             try:
@@ -367,7 +376,7 @@ class DeepSeekQueryPlanner:
                     "planner_response_rejected",
                     request_id=ANALYSIS_REQUEST_ID.get(),
                     provider="deepseek",
-                    model=DEEPSEEK_MODEL,
+                    model=model,
                     attempt=attempt + 1,
                     reason=str(exc),
                     validation_errors=(
@@ -390,7 +399,7 @@ class DeepSeekQueryPlanner:
                 "planner_intent_normalized",
                 request_id=ANALYSIS_REQUEST_ID.get(),
                 provider="deepseek",
-                model=DEEPSEEK_MODEL,
+                model=model,
                 attempt=attempt + 1,
                 intent=(plan.intent.model_dump(mode="json") if plan.intent else None),
             )
@@ -423,7 +432,7 @@ class DeepSeekQueryPlanner:
                         "planner_plan_validated",
                         request_id=ANALYSIS_REQUEST_ID.get(),
                         provider="deepseek",
-                        model=DEEPSEEK_MODEL,
+                        model=model,
                         attempt=attempt + 1,
                         pipeline=(
                             validated_plan.result_pipeline.model_dump(mode="json")
@@ -453,7 +462,7 @@ class DeepSeekQueryPlanner:
                             "planner_candidate_selected",
                             request_id=ANALYSIS_REQUEST_ID.get(),
                             provider="deepseek",
-                            model=DEEPSEEK_MODEL,
+                            model=model,
                             candidate_count=len(valid_candidates),
                             distinct_candidate_count=len(candidate_fingerprints),
                             score=self._candidate_score(selected),
@@ -477,7 +486,7 @@ class DeepSeekQueryPlanner:
                         "planner_plan_rejected",
                         request_id=ANALYSIS_REQUEST_ID.get(),
                         provider="deepseek",
-                        model=DEEPSEEK_MODEL,
+                        model=model,
                         attempt=attempt + 1,
                         reason=str(exc),
                     )
@@ -495,7 +504,7 @@ class DeepSeekQueryPlanner:
                 "planner_candidate_selected",
                 request_id=ANALYSIS_REQUEST_ID.get(),
                 provider="deepseek",
-                model=DEEPSEEK_MODEL,
+                model=model,
                 candidate_count=len(valid_candidates),
                 distinct_candidate_count=len(candidate_fingerprints),
                 score=self._candidate_score(selected),

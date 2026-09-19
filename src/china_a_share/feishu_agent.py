@@ -25,12 +25,20 @@ from china_a_share.result_pipeline import ResultPipelineExecutor
 
 
 DEEPSEEK_AGENT_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_AGENT_MODEL = "deepseek-v4-pro"
+DEEPSEEK_AGENT_MODEL = "deepseek-flash"
+DEEPSEEK_AGENT_FALLBACK_MODEL = "deepseek-v4-pro"
 DEEPSEEK_AGENT_TIMEOUT_SECONDS = 180
 MAX_AGENT_ROUNDS = 12
 MAX_AGENT_PREVIEW_ROWS = 20
 MAX_AGENT_CONTEXT_TURNS = 12
 logger = logging.getLogger(__name__)
+
+
+def _agent_model_for_round(round_index: int) -> str:
+    """Escalate only the final two tool rounds to the stronger recovery model."""
+    if round_index >= MAX_AGENT_ROUNDS - 2:
+        return DEEPSEEK_AGENT_FALLBACK_MODEL
+    return DEEPSEEK_AGENT_MODEL
 
 
 class FeishuAgentConversationTurn(BaseModel):
@@ -521,7 +529,8 @@ class FeishuAgentRuntime:
             messages.append({"role": "assistant", "content": turn.answer})
         messages.append({"role": "user", "content": request.prompt})
 
-        for _round in range(MAX_AGENT_ROUNDS):
+        for round_index in range(MAX_AGENT_ROUNDS):
+            model = _agent_model_for_round(round_index)
             response = self._session.post(
                 DEEPSEEK_AGENT_URL,
                 headers={
@@ -529,7 +538,7 @@ class FeishuAgentRuntime:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": DEEPSEEK_AGENT_MODEL,
+                    "model": model,
                     "messages": messages,
                     "tools": toolbox.definitions,
                     "tool_choice": "auto",

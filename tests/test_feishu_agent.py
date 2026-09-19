@@ -9,12 +9,15 @@ from china_a_share.bootstrap import create_feishu_agent_runtime
 from china_a_share.config import Settings
 from china_a_share.core.contracts import AnalysisTaskStatus, QueryResult, QueryStatus
 from china_a_share.feishu_agent import (
+    DEEPSEEK_AGENT_FALLBACK_MODEL,
     DEEPSEEK_AGENT_MODEL,
+    MAX_AGENT_ROUNDS,
     FeishuAgentCoordinator,
     FeishuAgentOutcome,
     FeishuAgentRequest,
     FeishuAgentRuntime,
     FeishuAgentTask,
+    _agent_model_for_round,
     build_research_workbook,
 )
 from china_a_share.feishu import FeishuOpenApiClient
@@ -99,6 +102,19 @@ class RecordingSink:
 
     def reply_file(self, message_id, path):
         self.files.append((message_id, path))
+
+
+def test_agent_model_escalates_only_final_recovery_rounds():
+    assert _agent_model_for_round(0) == DEEPSEEK_AGENT_MODEL
+    assert _agent_model_for_round(MAX_AGENT_ROUNDS - 3) == DEEPSEEK_AGENT_MODEL
+    assert (
+        _agent_model_for_round(MAX_AGENT_ROUNDS - 2)
+        == DEEPSEEK_AGENT_FALLBACK_MODEL
+    )
+    assert (
+        _agent_model_for_round(MAX_AGENT_ROUNDS - 1)
+        == DEEPSEEK_AGENT_FALLBACK_MODEL
+    )
 
 
 def test_agent_runtime_uses_tools_and_exports_complete_excel():

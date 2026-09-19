@@ -20,7 +20,13 @@ from china_a_share.core.contracts import (
     DataQuery,
     QueryPlan,
 )
-from china_a_share.planners.deepseek import DEEPSEEK_MODEL, DeepSeekQueryPlanner
+from china_a_share.planners.deepseek import (
+    DEEPSEEK_FALLBACK_MODEL,
+    DEEPSEEK_MAX_ATTEMPTS,
+    DEEPSEEK_MODEL,
+    DeepSeekQueryPlanner,
+    _planner_model_for_attempt,
+)
 from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
     TushareDataProvider,
@@ -122,7 +128,20 @@ def test_deepseek_skeleton_exposes_stable_name():
     planner = DeepSeekQueryPlanner("test-key")
 
     assert planner.name == "deepseek"
-    assert DEEPSEEK_MODEL == "deepseek-v4-pro"
+    assert DEEPSEEK_MODEL == "deepseek-flash"
+
+
+def test_deepseek_planner_escalates_only_final_recovery_attempts():
+    assert _planner_model_for_attempt(0) == DEEPSEEK_MODEL
+    assert _planner_model_for_attempt(DEEPSEEK_MAX_ATTEMPTS - 3) == DEEPSEEK_MODEL
+    assert (
+        _planner_model_for_attempt(DEEPSEEK_MAX_ATTEMPTS - 2)
+        == DEEPSEEK_FALLBACK_MODEL
+    )
+    assert (
+        _planner_model_for_attempt(DEEPSEEK_MAX_ATTEMPTS - 1)
+        == DEEPSEEK_FALLBACK_MODEL
+    )
 
 
 def test_bootstrap_uses_deepseek_as_primary_planner(monkeypatch):
