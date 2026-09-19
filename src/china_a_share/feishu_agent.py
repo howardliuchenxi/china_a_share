@@ -362,7 +362,7 @@ class FeishuAgentCoordinator:
                         f"{self._public_app_url}/research/{task_id}?{query}"
                     )
                     terminal_message += (
-                        "\n\n交互图表（30天内有效，点击后直接查看）：\n"
+                        "\n\n研究结果页面（30天内有效，点击后直接查看）：\n"
                         + visualization_url
                     )
                 except Exception:
