@@ -36,7 +36,7 @@ from china_a_share.core.contracts import (
     ResultPipelineStep,
 )
 from china_a_share.core.errors import PlannerError
-from china_a_share.planners.deepseek import DeepSeekQueryPlanner
+from china_a_share.planners.deepseek import DEEPSEEK_MODEL, DeepSeekQueryPlanner
 from china_a_share.planners.vertex_claude import VertexClaudeQueryPlanner
 from china_a_share.result_pipeline import ResultPipelineExecutor, ResultValidationError
 from china_a_share.registry import TushareOperationCatalog
@@ -2067,7 +2067,7 @@ def test_planner_retries_when_answer_contract_is_omitted(caplog):
     assert sum(event.get("event") == "planner_raw_output" for event in events) == 2
     assert any(
         event.get("event") == "planner_intent_normalized"
-        and event.get("model") == "deepseek-v4-pro"
+        and event.get("model") == DEEPSEEK_MODEL
         for event in events
     )
 
