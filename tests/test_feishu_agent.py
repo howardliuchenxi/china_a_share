@@ -589,6 +589,8 @@ def test_agent_coordinator_publishes_tokenized_visualization_link(tmp_path):
     completed = coordinator.run(task.task_id, FakeRuntime(), sink)
 
     terminal_message = sink.updates[-1][1]
+    assert "研究结果页面（30天内有效，点击后直接查看）" in terminal_message
+    assert "交互图表" not in terminal_message
     link = terminal_message.rsplit("\n", 1)[-1]
     token = link.split("token=", 1)[1]
     assert link.startswith("https://research.example/research/agent-task?")
