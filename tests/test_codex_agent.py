@@ -385,10 +385,22 @@ def test_workbook_is_converted_to_bounded_interactive_dataset(tmp_path):
             provider="tushare",
             operation="daily_basic",
             status=QueryStatus.SUCCESS,
-            columns=["name", "trade_date", "pe_ttm"],
+            columns=["name", "trade_date", "收盘日", "公告日期", "pe_ttm"],
             rows=[
-                {"name": "Example A", "trade_date": "20260916", "pe_ttm": 8.5},
-                {"name": "Example B", "trade_date": "20260916", "pe_ttm": 12.0},
+                {
+                    "name": "Example A",
+                    "trade_date": "20260916",
+                    "收盘日": 20221215,
+                    "公告日期": "20240131",
+                    "pe_ttm": 8.5,
+                },
+                {
+                    "name": "Example B",
+                    "trade_date": "20260916",
+                    "收盘日": 20221216,
+                    "公告日期": "20240201",
+                    "pe_ttm": 12.0,
+                },
             ],
             row_count=2,
         ),
@@ -401,8 +413,17 @@ def test_workbook_is_converted_to_bounded_interactive_dataset(tmp_path):
 
     assert visualization is not None
     assert visualization.title == "Valuation ranking"
-    assert visualization.columns == ["name", "trade_date", "pe_ttm"]
+    assert visualization.columns == [
+        "name",
+        "trade_date",
+        "收盘日",
+        "公告日期",
+        "pe_ttm",
+    ]
     assert visualization.numeric_columns == ["pe_ttm"]
+    assert visualization.rows[0]["trade_date"] == "2026-09-16"
+    assert visualization.rows[0]["收盘日"] == "2022-12-15"
+    assert visualization.rows[0]["公告日期"] == "2024-01-31"
     assert visualization.rows[0]["pe_ttm"] == 8.5
     assert visualization.source_row_count == 2
     assert visualization.suggested_x == "name"

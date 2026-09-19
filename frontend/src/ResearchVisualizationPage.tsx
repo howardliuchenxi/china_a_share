@@ -30,8 +30,34 @@ interface ResearchVisualizationResponse {
 
 const TABLE_ROW_LIMIT = 100;
 
-function displayValue(value: ViewerValue): string {
+function isDateColumn(column: string): boolean {
+  const normalized = column.trim().toLocaleLowerCase("zh-CN").replaceAll(" ", "_");
+  return ["date", "日期", "时间", "报告期", "收盘日", "交易日"].some((suffix) => (
+    normalized.endsWith(suffix)
+  ));
+}
+
+function compactCalendarDate(value: ViewerValue): string | null {
+  const text = typeof value === "number" && Number.isInteger(value)
+    ? String(value)
+    : typeof value === "string" ? value.trim() : "";
+  if (!/^\d{8}$/.test(text)) return null;
+  const year = Number(text.slice(0, 4));
+  const month = Number(text.slice(4, 6));
+  const day = Number(text.slice(6, 8));
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() !== month - 1
+    || parsed.getUTCDate() !== day
+  ) return null;
+  return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
+}
+
+function displayValue(value: ViewerValue, column = ""): string {
   if (value === null || value === undefined) return "—";
+  const calendarDate = isDateColumn(column) ? compactCalendarDate(value) : null;
+  if (calendarDate) return calendarDate;
   if (typeof value === "number") {
     return value.toLocaleString("zh-CN", { maximumFractionDigits: 6 });
   }
@@ -75,8 +101,8 @@ export default function ResearchVisualizationPage() {
     const rows = payload?.visualization.rows ?? [];
     const normalizedSearch = search.trim().toLocaleLowerCase("zh-CN");
     if (!normalizedSearch) return rows;
-    return rows.filter((row) => Object.values(row).some((value) => (
-      displayValue(value).toLocaleLowerCase("zh-CN").includes(normalizedSearch)
+    return rows.filter((row) => Object.entries(row).some(([column, value]) => (
+      displayValue(value, column).toLocaleLowerCase("zh-CN").includes(normalizedSearch)
     )));
   }, [payload, search]);
 
@@ -153,7 +179,7 @@ export default function ResearchVisualizationPage() {
               {tableRows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {visualization.columns.map((column) => (
-                    <td key={column}>{displayValue(row[column])}</td>
+                    <td key={column}>{displayValue(row[column], column)}</td>
                   ))}
                 </tr>
               ))}
