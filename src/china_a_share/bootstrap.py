@@ -94,6 +94,11 @@ def create_stock_catalog_service(settings: Settings) -> StockCatalogService:
 
 def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
     """Assemble the private Feishu ingress around the validated analysis core."""
+    from china_a_share.strategy.persistence import StrategyStore
+    from china_a_share.strategy.scanner import StrategyScanner
+    from china_a_share.strategy.data_loader import QFQDataLoader
+    from china_a_share.strategy.engine import RuleEngine
+    
     allowed_open_ids = {
         value.strip()
         for value in settings.feishu_allowed_open_ids.split(",")
@@ -105,6 +110,17 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         if isinstance(task_coordinator, AnalysisTaskCoordinator)
         else None
     )
+    
+    # Initialize Strategy Components
+    strategy_store = StrategyStore(settings.tushare_cache_bucket) if settings.tushare_cache_bucket else None
+    strategy_scanner = None
+    if strategy_store:
+        provider = _create_data_provider(settings)
+        data_loader = QFQDataLoader(provider)
+        engine = RuleEngine(data_loader)
+        sender = FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret)
+        strategy_scanner = StrategyScanner(strategy_store, data_loader, engine, sender)
+        
     return FeishuResearchBot(
         task_coordinator,
         FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),
@@ -113,6 +129,8 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         encrypt_key=settings.feishu_encrypt_key,
         allowed_open_ids=allowed_open_ids,
         agent_coordinator=agent_coordinator,
+        strategy_store=strategy_store,
+        strategy_scanner=strategy_scanner,
     )
 
 

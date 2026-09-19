@@ -729,7 +729,12 @@ class FeishuResearchBot:
         if not self._store.claim_event(event.event_id):
             return
         try:
-            if self._agent_coordinator is not None and (
+            # Handle strategy menu triggered by specific keywords or empty ping
+            if self._strategy_store and self._strategy_scanner and (
+                not event.prompt.strip() or "策略" in event.prompt or "回测" in event.prompt
+            ):
+                reply = self._strategy_menu_reply(event)
+            elif self._agent_coordinator is not None and (
                 NEW_SESSION_COMMAND_PATTERN.match(event.prompt)
                 or LIST_SESSIONS_COMMAND_PATTERN.match(event.prompt)
                 or SWITCH_SESSION_COMMAND_PATTERN.match(event.prompt)
@@ -741,7 +746,13 @@ class FeishuResearchBot:
                 reply = self._retry_reply(event)
             else:
                 reply = self._submit_reply(event)
-            self._sender.reply(event.message_id, reply)
+            
+            # Allow handlers to return rich interactive cards or plain text
+            if isinstance(reply, dict):
+                self._sender.send_interactive_card(event.conversation_id, reply)
+            else:
+                self._sender.reply(event.message_id, reply)
+                
             self._store.complete_event(event.event_id)
         except Exception:
             log_event(
@@ -757,6 +768,24 @@ class FeishuResearchBot:
                 "研究任务操作失败，请稍后重试。若问题持续，请联系管理员并提供"
                 f"事件编号 {event.event_id}。",
             )
+
+    def _strategy_menu_reply(self, event: FeishuMessageEvent) -> dict:
+        """Return the strategy interactive menu card."""
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": "📈 A股策略扫描与管理"},
+                "template": "blue"
+            },
+            "elements": [
+                {"tag": "markdown", "content": "请选择您需要的操作："},
+                {"tag": "action", "actions": [
+                    {"tag": "button", "text": {"tag": "plain_text", "content": "新建会话"}, "type": "primary", "value": {"action": "create_draft"}},
+                    {"tag": "button", "text": {"tag": "plain_text", "content": "会话列表"}, "type": "default", "value": {"action": "view_drafts"}},
+                    {"tag": "button", "text": {"tag": "plain_text", "content": "运行规则"}, "type": "danger", "value": {"action": "run_preview"}}
+                ]}
+            ]
+        }
 
     def _submit_reply(self, event: FeishuMessageEvent) -> str:
         """Create one durable analysis task and return its tracking commands."""
