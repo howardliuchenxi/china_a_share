@@ -727,6 +727,46 @@ def create_app(
                 ).model_dump(mode="json"),
             )
 
+    @application.post(f"{ANALYSIS_TASK_API_ROUTE}/strategy:daily-scan")
+    def trigger_daily_scan(
+        http_request: Request,
+        background_tasks: BackgroundTasks,
+        authorization: str = Header(default=""),
+    ) -> dict:
+        """Trigger the strategy scanner (called via Cloud Scheduler)."""
+        # We reuse the admin token check or a dedicated scheduler token
+        try:
+            _administrator_bearer_token(authorization)
+        except HTTPException:
+            # Check if this is a Cloud Scheduler call via OIDC
+            auth_header = authorization.lower()
+            if not auth_header.startswith("bearer "):
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        nonlocal active_feishu_research_bot
+        bot = get_feishu_research_bot()
+        if not bot._strategy_scanner:
+            raise HTTPException(status_code=503, detail="Strategy scanner not configured.")
+            
+        from datetime import datetime, timezone
+        target_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+        
+        background_tasks.add_task(bot._strategy_scanner.run_daily_scan, target_date)
+        return {"status": "accepted", "target_date": target_date}
+
+    @application.post(f"{FEISHU_EVENTS_API_ROUTE}/interactive")
+    async def receive_feishu_interactive_card(
+        request: Request,
+    ) -> dict:
+        """Handle Feishu interactive card actions."""
+        try:
+            bot = get_feishu_research_bot()
+            payload = await request.json()
+            return bot.process_interactive_card(payload)
+        except Exception as exc:
+            log_event(logger, logging.ERROR, "feishu_interactive_card_failed", exc_info=True)
+            return {"content": "Failed to process action."}
+
     if FRONTEND_DIST.is_dir():
         @application.get("/", include_in_schema=False)
         def redirect_to_analysis() -> RedirectResponse:

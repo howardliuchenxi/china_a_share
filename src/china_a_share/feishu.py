@@ -570,8 +570,10 @@ class FeishuMessageEvent:
     prompt: str
 
 
-from china_a_share.strategy.persistence import StrategyStore
-from china_a_share.strategy.scanner import StrategyScanner
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from china_a_share.strategy.persistence import StrategyStore
+    from china_a_share.strategy.scanner import StrategyScanner
 
 class FeishuResearchBot:
     """Validate callbacks and connect Feishu conversations to analysis."""
@@ -586,8 +588,8 @@ class FeishuResearchBot:
         encrypt_key: str,
         allowed_open_ids: Optional[set[str]] = None,
         agent_coordinator: Optional[FeishuAgentCoordinator] = None,
-        strategy_store: Optional[StrategyStore] = None,
-        strategy_scanner: Optional[StrategyScanner] = None,
+        strategy_store: Optional['StrategyStore'] = None,
+        strategy_scanner: Optional['StrategyScanner'] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
             raise FeishuConfigurationError(
@@ -709,6 +711,18 @@ class FeishuResearchBot:
         if not challenge:
             raise FeishuEventError("Feishu callback challenge is missing.")
         return challenge
+
+    def process_interactive_card(self, payload: dict) -> dict:
+        """Process interactive card button clicks (e.g. strategy drafts)."""
+        from china_a_share.strategy.feishu_interaction import handle_strategy_interactive_card
+        
+        if not self._strategy_store or not self._strategy_scanner:
+            return {"content": "Strategy module is disabled."}
+            
+        reply = handle_strategy_interactive_card(payload, self._strategy_store, self._strategy_scanner)
+        if reply:
+            return reply
+        return {"content": "Unknown action."}
 
     def process(self, event: FeishuMessageEvent) -> None:
         """Submit or inspect one durable research task from a claimed event."""
