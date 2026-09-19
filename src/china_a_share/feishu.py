@@ -570,6 +570,9 @@ class FeishuMessageEvent:
     prompt: str
 
 
+from china_a_share.strategy.persistence import StrategyStore
+from china_a_share.strategy.scanner import StrategyScanner
+
 class FeishuResearchBot:
     """Validate callbacks and connect Feishu conversations to analysis."""
 
@@ -583,6 +586,8 @@ class FeishuResearchBot:
         encrypt_key: str,
         allowed_open_ids: Optional[set[str]] = None,
         agent_coordinator: Optional[FeishuAgentCoordinator] = None,
+        strategy_store: Optional[StrategyStore] = None,
+        strategy_scanner: Optional[StrategyScanner] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
             raise FeishuConfigurationError(
@@ -591,6 +596,8 @@ class FeishuResearchBot:
         self._task_coordinator = task_coordinator
         self._sender = sender
         self._store = store
+        self._strategy_store = strategy_store
+        self._strategy_scanner = strategy_scanner
         self._verification_token = verification_token
         self._encrypt_key = encrypt_key
         self._allowed_open_ids = allowed_open_ids or set()
