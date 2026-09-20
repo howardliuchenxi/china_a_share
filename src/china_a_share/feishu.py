@@ -839,9 +839,16 @@ class FeishuResearchBot:
         context = self._extract_card_action_context(payload)
         if context is None:
             return None
-        event_id, chat_id, message_id, operator_id, action_name, form_value, value = (
-            context
-        )
+        (
+            event_id,
+            chat_id,
+            message_id,
+            operator_id,
+            action_name,
+            form_value,
+            selected_option,
+            value,
+        ) = context
 
         if action_name == "submit_research":
             prompt = str(
@@ -850,10 +857,12 @@ class FeishuResearchBot:
             if not prompt:
                 raise FeishuEventError("Research prompt is required.")
         elif action_name == "switch_model":
-            # The model selector is one dropdown form; its selection arrives
-            # as form_value keyed by the select_static component name.
+            # A standalone select_static fires immediately with the chosen
+            # option; a form-embedded one would deliver it via form_value.
             selected = str(
-                form_value.get("model") or "" if isinstance(form_value, dict) else ""
+                selected_option
+                or (form_value.get("model") if isinstance(form_value, dict) else "")
+                or ""
             ).strip()
             if not selected:
                 raise FeishuEventError("Model selection is required.")
@@ -888,7 +897,7 @@ class FeishuResearchBot:
         context = self._extract_card_action_context(payload)
         if context is None:
             return None
-        event_id, chat_id, message_id, operator_id, action_name, _form_value, value = (
+        event_id, chat_id, message_id, operator_id, action_name, _form_value, _option, value = (
             context
         )
         if not action_name.startswith("strategy_"):
@@ -925,7 +934,17 @@ class FeishuResearchBot:
         action_value = value.get("action") if isinstance(value, dict) else None
         action_name = str(action_value or action.get("name") or "").strip()
         form_value = action.get("form_value") or {}
-        return event_id, chat_id, message_id, operator_id, action_name, form_value, value
+        selected_option = str(action.get("option") or "").strip()
+        return (
+            event_id,
+            chat_id,
+            message_id,
+            operator_id,
+            action_name,
+            form_value,
+            selected_option,
+            value,
+        )
 
     def verify_challenge(self, payload: Dict[str, Any]) -> str:
         """Validate and return one Feishu endpoint-verification challenge."""
@@ -1579,18 +1598,20 @@ def build_feishu_quick_menu_card(
     if model_options:
         elements.append(
             {
-                "tag": "form",
-                "name": "model_form",
-                "elements": [
+                "tag": "action",
+                "actions": [
                     {
-                        # v1 card dropdown tag is select_static; the invalid
-                        # select_menu tag makes Feishu drop the whole form.
+                        # A standalone select_static inside an action container
+                        # fires immediately on selection (callback carries the
+                        # chosen option) and renders on older Feishu clients,
+                        # unlike form containers with input components.
                         "tag": "select_static",
                         "name": "model",
                         "placeholder": {
                             "tag": "plain_text",
                             "content": "选择研究模型…",
                         },
+                        "value": {"action": "switch_model"},
                         "options": [
                             {
                                 "text": {
@@ -1601,15 +1622,7 @@ def build_feishu_quick_menu_card(
                             }
                             for provider, label in model_options
                         ],
-                    },
-                    {
-                        "tag": "button",
-                        "name": "apply_model",
-                        "type": "primary",
-                        "action_type": "form_submit",
-                        "text": {"tag": "plain_text", "content": "切换模型"},
-                        "value": {"action": "switch_model"},
-                    },
+                    }
                 ],
             }
         )

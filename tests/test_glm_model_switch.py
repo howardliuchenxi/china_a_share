@@ -307,7 +307,7 @@ def message_payload(event_id, text):
     }
 
 
-def card_action_payload(action, form_value=None):
+def card_action_payload(action, form_value=None, option=None):
     return {
         "header": {
             "event_id": "card-event-model",
@@ -322,10 +322,11 @@ def card_action_payload(action, form_value=None):
                 "open_chat_id": "chat-1",
             },
             "action": {
-                "tag": "button",
+                "tag": "select_static" if option else "button",
                 "name": action,
                 "value": {"action": action},
                 "form_value": form_value or {},
+                "option": option,
             },
         },
     }
@@ -368,7 +369,7 @@ def test_bot_model_command_without_switcher_explains_configuration():
     assert "不可用" in sender.replies[0][1]
 
 
-def test_quick_menu_card_uses_one_model_dropdown_form():
+def test_quick_menu_card_uses_one_standalone_model_dropdown():
     controller = LlmPreferenceController(
         glm_capable_settings(), MemoryLlmPreferenceStore()
     )
@@ -377,34 +378,31 @@ def test_quick_menu_card_uses_one_model_dropdown_form():
         model_options=controller.dropdown_options(),
     )
 
-    forms = [
-        element for element in card["elements"] if element.get("tag") == "form"
-    ]
-    model_form = next(f for f in forms if f["name"] == "model_form")
-    # Feishu v1 cards only accept select_static inside a form; any other
-    # dropdown tag makes the renderer drop the whole form.
-    menu = next(
-        element
-        for element in model_form["elements"]
-        if element["tag"] == "select_static"
-    )
+    # The selector must be a standalone select_static inside an action
+    # container: form containers with input components render as
+    # "upgrade your client" placeholders on older Feishu clients.
     assert all(
-        element["tag"] in {"select_static", "button"}
-        for element in model_form["elements"]
+        form.get("name") != "model_form"
+        for form in card["elements"]
+        if form.get("tag") == "form"
     )
+    menus = [
+        component
+        for element in card["elements"]
+        if element.get("tag") == "action"
+        for component in element.get("actions", [])
+        if component.get("tag") == "select_static"
+    ]
+    assert len(menus) == 1
+    menu = menus[0]
     assert menu["name"] == "model"
+    assert menu["value"] == {"action": "switch_model"}
     assert [option["value"] for option in menu["options"]] == [
         "deepseek",
         "glm",
     ]
     assert menu["options"][0]["text"]["content"] == "✅ DeepSeek"
     assert menu["options"][1]["text"]["content"] == "GLM（智谱）"
-    submit = next(
-        element
-        for element in model_form["elements"]
-        if element["tag"] == "button"
-    )
-    assert submit["value"] == {"action": "switch_model"}
     status_text = next(
         element["text"]["content"]
         for element in card["elements"]
@@ -417,7 +415,8 @@ def test_quick_menu_card_uses_one_model_dropdown_form():
         for element in card["elements"]
         if element.get("tag") == "action"
         for button in element.get("actions", [])
-        if str(button["value"].get("action", "")).startswith("switch_model")
+        if button.get("tag") == "button"
+        and str(button["value"].get("action", "")).startswith("switch_model")
     ]
     assert switch_buttons == []
 
@@ -429,9 +428,7 @@ def test_quick_menu_card_omits_status_without_switcher():
         "**当前研究模型**" not in str(element) for element in card["elements"]
     )
     assert all(
-        form.get("name") != "model_form"
-        for form in card["elements"]
-        if form.get("tag") == "form"
+        "select_static" not in str(element) for element in card["elements"]
     )
 
 
@@ -442,25 +439,34 @@ def test_quick_menu_card_omits_status_without_switcher():
         ("deepseek", "切换模型 deepseek"),
     ],
 )
-def test_card_model_dropdown_submission_becomes_model_command(
-    selected, expected_prompt
-):
+def test_card_model_selection_becomes_model_command(selected, expected_prompt):
     bot, _ = build_model_command_bot(glm_capable_settings())
 
     event = bot.parse_card_action(
-        card_action_payload("switch_model", form_value={"model": selected})
+        card_action_payload("switch_model", option=selected)
     )
 
     assert event is not None
     assert event.prompt == expected_prompt
 
 
-def test_card_model_submission_requires_a_selection():
+def test_card_model_form_submission_still_supported():
+    bot, _ = build_model_command_bot(glm_capable_settings())
+
+    event = bot.parse_card_action(
+        card_action_payload("switch_model", form_value={"model": "glm"})
+    )
+
+    assert event is not None
+    assert event.prompt == "切换模型 glm"
+
+
+def test_card_model_selection_requires_a_choice():
     bot, _ = build_model_command_bot(glm_capable_settings())
 
     with pytest.raises(FeishuEventError, match="Model selection is required"):
         bot.parse_card_action(
-            card_action_payload("switch_model", form_value={})
+            card_action_payload("switch_model", option="", form_value={})
         )
 
 

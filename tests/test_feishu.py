@@ -154,6 +154,9 @@ def build_bot(*, allowed_open_ids=None):
 def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
     monkeypatch,
 ):
+    # Storage clients resolve lazily; a fake project keeps every constructor
+    # offline instead of depending on the local gcloud environment.
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     coordinator = object()
     store = object()
     sender = object()
@@ -172,6 +175,12 @@ def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
         "CloudStorageConversationStore",
         lambda bucket_name: store,
     )
+    llm_switcher = object()
+    monkeypatch.setattr(
+        bootstrap,
+        "create_llm_preference_controller",
+        lambda settings: llm_switcher,
+    )
 
     bot = bootstrap.create_feishu_research_bot(
         Settings(
@@ -189,6 +198,7 @@ def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
     assert bot._sender is sender
     assert bot._store is store
     assert bot._allowed_open_ids == set()
+    assert bot._llm_switcher is llm_switcher
 
 
 def message_payload(
