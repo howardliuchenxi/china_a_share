@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00261-mh6` |
+| Latest ready revision | `china-a-share-lab-00265-9wr` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `5012c8e412ac145d73b63f3675f2bb1fc34d3717` |
+| Deployed Git commit | `c67d26620f5e0b9f7badab82084d1c738680f16d` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
