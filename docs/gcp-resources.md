@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-09-18**
+Last verified: **2026-09-20**
 
 ## Project boundary
 
@@ -304,6 +304,18 @@ GitHub authorization.
 | State | ENABLED |
 | Expected cost impact | Within the monthly free allowance for three Scheduler jobs |
 
+| Setting | Value |
+| --- | --- |
+| Job | `china-a-share-keep-alive` |
+| Region | `asia-east2` |
+| Schedule | Every 5 minutes (`*/5 * * * *`, UTC) |
+| Target | GET `https://china-a-share-lab-1079739428171.asia-east2.run.app/api/health` |
+| Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` (OIDC token, audience set to the full route URL) |
+| State | Enabled; one verified manual run returned HTTP 200 in ~6 ms |
+| Retry count | Scheduler default; a missed ping is harmless because the next one arrives within five minutes |
+| Purpose | Keep a Cloud Run instance resident so Feishu card-action callbacks are answered inside Feishu's 3-second deadline; cold starts after scale-to-zero previously produced 3.2–6.2 s first responses and the client error toast |
+| Expected cost impact | 8,640 authenticated GETs per month at ~5 ms each under request-based billing (well under USD 0.10); with this job the project holds exactly three Scheduler jobs, the maximum of the monthly free allowance, so any fourth job would start incurring Scheduler charges |
+
 Google-managed Cloud Run, Cloud Build, Artifact Registry, Container Registry,
 and Pub/Sub service agents also exist. They are platform-managed identities and
 are not application runtime identities.
@@ -407,3 +419,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-08-10 | Deployed revision `china-a-share-lab-00188-cfp` through scheduled reconciliation; recorded source `main@aab7db3f45e1fca977220f52b0339931dafaf698`, verified 100% traffic, public health status, runtime configuration, synchronized worker deployment, and storage usage with no new resource types or IAM changes. |
 | 2026-08-11 | Rotated `feishu-bot-webhook` to enabled version 2 after the prior Lark bot was removed; the next scheduled reconciliation delivered its start notification and deployed revision `china-a-share-lab-00193-brg` from `main@395a633178fc57fc52b99a32964e3db83d4c3e5e`, with 100% traffic, public health status, and the synchronized worker verified. No IAM boundary, resource type, lifecycle policy, or material cost changed. |
 | 2026-08-11 | Deployed revision `china-a-share-lab-00194-sfq` through scheduled reconciliation from `main@07917699db8aea5b9d4ea94e33031ffe5e45aa12`; verified 100% traffic and the reported market-return ranking in production with a complete required answer result. No IAM boundary, resource type, lifecycle policy, or material cost changed. |
+| 2026-09-20 | Created Cloud Scheduler job `china-a-share-keep-alive` (asia-east2, `*/5 * * * *`, OIDC GET to `/api/health` as `china-a-share-scheduler@`) and verified a manual run returned 200 in ~6 ms. Rationale: request logs showed first Feishu card-action callback after each idle period cold-starting for 3.2–6.2 s, past Feishu's 3-second card-callback deadline, producing the client error toast while the action still executed. No IAM boundary, lifecycle policy, or Cloud Run setting changed; the project now holds exactly three Scheduler jobs (the monthly free-allowance maximum), and expected added spend is well under USD 0.10 per month from ~8,640 five-millisecond health requests. |
