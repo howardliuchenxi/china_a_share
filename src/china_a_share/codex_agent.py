@@ -26,7 +26,7 @@ from china_a_share.feishu_agent import (
 
 logger = logging.getLogger(__name__)
 CODEX_MODEL_PROVIDER = "deepseek"
-CODEX_TURN_TIMEOUT_SECONDS = 60 * 60
+CODEX_TURN_TIMEOUT_SECONDS = 6 * 60 * 60
 CODEX_INTERRUPT_GRACE_SECONDS = 30
 SUPPORTED_ARTIFACT_SUFFIXES = {".csv", ".docx", ".pdf", ".xlsx"}
 MAX_VISUALIZATION_ROWS = 2_000
@@ -242,7 +242,7 @@ def _run_turn_with_progress(
         except Exception:
             logger.exception("codex_feishu_turn_interrupt_failed")
         raise RuntimeError(
-            f"Codex turn exceeded {CODEX_TURN_TIMEOUT_SECONDS // 60} minutes."
+            f"Codex turn exceeded {CODEX_TURN_TIMEOUT_SECONDS // (60 * 60)} hours."
         ) from exc
     finally:
         executor.shutdown(wait=False, cancel_futures=True)

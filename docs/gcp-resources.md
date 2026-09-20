@@ -137,7 +137,7 @@ egress firewall to this service.
 | Command | `python -m china_a_share.worker` |
 | Tasks and parallelism | 1 task; parallelism 1 |
 | CPU and memory | 1 vCPU, 4 GiB |
-| Task timeout | 7,200 seconds |
+| Task timeout | 25,200 seconds |
 | Maximum retries | 1 |
 | Runtime identity | `china-a-share-runner@china-a-share-lab.iam.gserviceaccount.com` |
 | Feishu delivery | Plain `FEISHU_APP_ID` plus Secret Manager `feishu-app-secret:latest` |

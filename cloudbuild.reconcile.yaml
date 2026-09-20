@@ -295,7 +295,7 @@ steps:
           --tasks 1 \
           --parallelism 1 \
           --max-retries 1 \
-          --task-timeout 2h \
+          --task-timeout 7h \
           --cpu 1 \
           --memory 4Gi \
           --service-account "${_RUNTIME_SERVICE_ACCOUNT}" \

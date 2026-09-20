@@ -37,7 +37,7 @@ class FakeApprovalMode:
     deny_all = "deny-all"
 
 
-def test_codex_turn_timeout_is_one_hour_and_interrupts_the_turn(monkeypatch):
+def test_codex_turn_timeout_is_six_hours_and_interrupts_the_turn(monkeypatch):
     observed_timeouts = []
     shutdown_calls = []
 
@@ -70,10 +70,10 @@ def test_codex_turn_timeout_is_one_hour_and_interrupts_the_turn(monkeypatch):
     )
     turn = InterruptibleTurn()
 
-    with pytest.raises(RuntimeError, match="Codex turn exceeded 60 minutes"):
+    with pytest.raises(RuntimeError, match="Codex turn exceeded 6 hours"):
         _run_turn_with_progress(turn, lambda _stage, _message: None)
 
-    assert CODEX_TURN_TIMEOUT_SECONDS == 3_600
+    assert CODEX_TURN_TIMEOUT_SECONDS == 6 * 60 * 60
     assert observed_timeouts == [
         CODEX_TURN_TIMEOUT_SECONDS,
         CODEX_INTERRUPT_GRACE_SECONDS,
