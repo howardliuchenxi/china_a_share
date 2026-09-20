@@ -124,7 +124,9 @@ CORE_OPERATION_GUIDANCE = {
     "daily": (
         "Unadjusted A-share daily prices. Use trade_date=YYYYMMDD for the full "
         "market on one date, or ts_code with start_date and end_date. Common "
-        "fields: ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount."
+        "fields: ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount. "
+        "Unit note: amount is in thousands of CNY (千元) and vol is in lots (手); "
+        "convert explicitly before reporting monetary or volume figures."
     ),
     "daily_basic": (
         "Daily valuation and trading metrics. Parameters include trade_date, "
@@ -236,7 +238,8 @@ CORE_OPERATION_GUIDANCE = {
         "A-share security-level daily fund-flow data. Parameters include ts_code, "
         "trade_date, start_date, and end_date. Common fields include ts_code, "
         "trade_date, buy_sm_amount, sell_sm_amount, buy_lg_amount, sell_lg_amount, "
-        "buy_elg_amount, sell_elg_amount, and net_mf_amount. Requested net flows must "
+        "buy_elg_amount, sell_elg_amount, and net_mf_amount. Unit note: all amount "
+        "fields are in ten thousands of CNY (万元). Requested net flows must "
         "be derived from the documented buy and sell amount pairs when no direct net "
         "field exists."
     ),
@@ -244,7 +247,8 @@ CORE_OPERATION_GUIDANCE = {
         "A-share repurchase disclosures. Parameters include ann_date, start_date, "
         "end_date, and ts_code; full-market reads are supported. Common fields include "
         "ts_code, ann_date, end_date, proc, exp_date, vol, amount, high_limit, and "
-        "low_limit. Security names require a stock_basic join."
+        "low_limit. Unit note: amount is in ten thousands of CNY (万元) and vol is "
+        "in lots (手). Security names require a stock_basic join."
     ),
     "stk_holdertrade": (
         "Major shareholder transactions. Parameters include ts_code, ann_date, "

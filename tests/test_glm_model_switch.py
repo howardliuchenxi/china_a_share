@@ -587,7 +587,9 @@ def test_glm_runtime_runs_bounded_tool_loop():
     assert "adjust parameters" in system_prompt
     assert "Current date:" in system_prompt
     assert "Asia/Shanghai" in system_prompt
-    assert "thousands of CNY" in system_prompt
+    assert "Unit discipline" in system_prompt
+    # Provider schema facts live in the operation catalog, not this prompt.
+    assert "Tushare daily.amount" not in system_prompt
     assert "clarifying" in system_prompt
     history_messages = session.calls[1][1]["json"]["messages"]
     tool_message = next(
