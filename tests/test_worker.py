@@ -32,6 +32,7 @@ def test_worker_records_feishu_initialization_failure(monkeypatch):
                 tushare_cache_bucket="bucket",
                 feishu_app_id="",
                 feishu_app_secret="",
+                public_app_url="https://example.app",
             )
 
     monkeypatch.setenv("ANALYSIS_TASK_ID", task.task_id)

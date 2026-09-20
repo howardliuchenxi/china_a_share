@@ -34,6 +34,7 @@ from .bootstrap import create_stock_catalog_service as build_stock_catalog_servi
 from .bootstrap import create_ui_feedback_service as build_ui_feedback_service
 from .bootstrap import create_live_case_service as build_live_case_service
 from .bootstrap import create_feishu_research_bot as build_feishu_research_bot
+from .codex_agent import read_research_workbook_metadata
 from .config import ConfigurationError, Settings
 from .core.contracts import (
     AnalysisRequest,
@@ -720,10 +721,27 @@ def create_app(
     ) -> dict:
         """Return one token-protected read-only interactive research dataset."""
         task = get_authorized_research_visualization(task_id, token)
+        visualization_payload = task.visualization.model_dump(mode="json")
+        if not task.visualization.methodology and task.artifact_name:
+            # Legacy viewer tasks predate workbook column notes. Enrich the
+            # response read-only from the retained workbook so older links
+            # still surface the recorded methodology.
+            content = active_task_coordinator.store.get_artifact(
+                task.task_id,
+                task.artifact_name,
+            )
+            methodology, column_notes = read_research_workbook_metadata(
+                task.artifact_name,
+                content or b"",
+            )
+            if methodology:
+                visualization_payload["methodology"] = methodology
+            if column_notes:
+                visualization_payload["column_notes"] = column_notes
         return {
             "task_id": task.task_id,
             "answer": task.answer,
-            "visualization": task.visualization.model_dump(mode="json"),
+            "visualization": visualization_payload,
             "artifact_name": task.artifact_name,
             "expires_at": task.visualization_expires_at,
         }

@@ -7,8 +7,8 @@ __pycache__/
 .env
 *.swp
 data/*.csv
-frontend/node_modules/
-node_modules/
+frontend/node_modules
+node_modules
 frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js

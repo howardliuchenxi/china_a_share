@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -51,6 +51,11 @@ _SAFE_BUILTINS = {
     "zip": zip,
 }
 _ALLOWED_CALL_NAMES = frozenset(_SAFE_BUILTINS)
+_RESEARCH_HELPER_CALL_NAMES = frozenset(
+    {
+        "research_flag_overlapping_signals",
+    }
+)
 _ALLOWED_PANDAS_CALLS = frozenset(
     {
         "DataFrame",
@@ -248,6 +253,57 @@ _ALLOWED_NODES = (
 
 class SandboxValidationError(ValueError):
     """Raised when a DataFrame program exceeds the restricted execution contract."""
+
+
+def research_flag_overlapping_signals(
+    frame: pd.DataFrame,
+    ts_code: str,
+    signal_date: str,
+    window_end: str,
+) -> pd.Series:
+    """Return the keep-mask that collapses overlapping same-security signals.
+
+    Two signals of one security overlap when the later ``signal_date`` falls on
+    or before the earlier ``window_end``. Every overlap chain counts as one
+    event and keeps only its earliest signal, so probability statistics over
+    forward windows stop double-counting one persistent move. A chain blocks
+    later signals through the latest window end in the chain. Rows with an
+    unknown ``window_end`` never block later signals and are always kept.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise ValueError("research_flag_overlapping_signals requires a DataFrame.")
+    for required in (ts_code, signal_date, window_end):
+        if required not in frame.columns:
+            raise ValueError(
+                "research_flag_overlapping_signals requires column "
+                f"{required!r} on the signal table."
+            )
+    working = frame.reset_index(drop=True)[[ts_code, signal_date, window_end]].copy()
+    working["_signal_at"] = pd.to_datetime(working[signal_date], errors="coerce")
+    working["_window_end"] = pd.to_datetime(working[window_end], errors="coerce")
+    if working["_signal_at"].isna().any():
+        raise ValueError(
+            "research_flag_overlapping_signals requires valid signal dates."
+        )
+    working = working.sort_values([ts_code, "_signal_at"], kind="mergesort")
+    blocked_until: Dict[Any, Any] = {}
+    keep: List[bool] = []
+    for security, signal_at, window_end_at in zip(
+        working[ts_code].tolist(),
+        working["_signal_at"].tolist(),
+        working["_window_end"].tolist(),
+    ):
+        limit = blocked_until.get(security)
+        kept = limit is None or pd.isna(limit) or signal_at > limit
+        keep.append(bool(kept))
+        if kept:
+            blocked_until[security] = window_end_at
+        elif not pd.isna(window_end_at) and (
+            limit is None or pd.isna(limit) or window_end_at > limit
+        ):
+            blocked_until[security] = window_end_at
+    ordered = pd.Series(keep, index=working.index)
+    return ordered.reindex(pd.RangeIndex(len(frame))).astype(bool)
 
 
 class SandboxDataset(BaseModel):
@@ -489,7 +545,10 @@ def _assignment_targets(node: Any) -> list[ast.expr]:
 def _validate_call(node: ast.Call) -> None:
     """Allow only bounded builtins and DataFrame-oriented calls."""
     if isinstance(node.func, ast.Name):
-        if node.func.id not in _ALLOWED_CALL_NAMES:
+        if (
+            node.func.id not in _ALLOWED_CALL_NAMES
+            and node.func.id not in _RESEARCH_HELPER_CALL_NAMES
+        ):
             raise SandboxValidationError(
                 f"Unsupported Python call: {node.func.id}."
             )
@@ -565,6 +624,7 @@ def _worker_main(input_path: Path, output_path: Path) -> None:
         "datasets": datasets,
         "np": np,
         "pd": pd,
+        "research_flag_overlapping_signals": research_flag_overlapping_signals,
     }
     exec(compile(code, "<research-sandbox>", "exec"), namespace, namespace)
     result = namespace.get("result")

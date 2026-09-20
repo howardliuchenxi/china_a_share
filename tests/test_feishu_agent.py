@@ -408,6 +408,10 @@ def test_toolbox_restores_session_dataset_and_archives_follow_up_result(tmp_path
             "dataset_id": ranked["dataset_id"],
             "title": "Filtered result",
             "methodology": "Continued from the complete session dataset.",
+            "column_notes": [
+                {"column": "ts_code", "note": "A股证券代码，含交易所后缀。"},
+                {"column": "total_mv", "note": "当日总市值，单位为万元。"},
+            ],
         },
         lambda _stage, _message: None,
     )
@@ -453,23 +457,124 @@ def test_research_workbook_preserves_numeric_values_and_source_context():
         completeness="complete",
     )
 
-    path = build_research_workbook(result, "Valuation results", "Ranked by PE.")
+    path = build_research_workbook(
+        result,
+        "Valuation results",
+        "Ranked by PE.",
+        column_notes={
+            "ts_code": "A股证券代码，含交易所后缀。",
+            "pe": "市盈率 = 收盘价 / 每股收益。",
+            "dividend_yield": "股息率 = 近12个月每股分红 / 收盘价。",
+        },
+    )
 
     workbook = load_workbook(path, data_only=False)
     results = workbook["Results"]
     methodology = workbook["Methodology"]
+    notes = workbook["列说明"]
     assert results["B6"].value == 24.5
     assert isinstance(results["B6"].value, float)
     assert methodology["B4"].value == "tushare"
     assert methodology["B5"].value == "daily_basic"
     assert methodology["B7"].value == "Ranked by PE."
     assert results["C6"].number_format == "0.00%"
+    assert notes["A5"].value == "ts_code"
+    assert notes["B5"].value == "A股证券代码，含交易所后缀。"
+    assert notes["A6"].value == "pe"
+    assert notes["B7"].value == "股息率 = 近12个月每股分红 / 收盘价。"
+    assert results["A5"].comment is not None
+    assert "证券代码" in results["A5"].comment.text
     assert all(
         cell.data_type != "e"
         for sheet in workbook.worksheets
         for row in sheet.iter_rows()
         for cell in row
     )
+
+
+def test_research_workbook_links_security_codes_to_quote_pages():
+    result = QueryResult(
+        query_id="events",
+        provider="tushare",
+        operation="event_study",
+        status=QueryStatus.SUCCESS,
+        columns=["signal_date", "ts_code", "hk_code"],
+        rows=[
+            {"signal_date": 20260401, "ts_code": "688220.SH", "hk_code": "00700.HK"},
+            {"signal_date": 20260402, "ts_code": "000002.SZ", "hk_code": "2.HK"},
+        ],
+        row_count=2,
+        completeness="complete",
+    )
+
+    path = build_research_workbook(result, "Signals", "Event study basis.")
+
+    results = load_workbook(path)["Results"]
+    assert results["A6"].hyperlink is None
+    assert results["B6"].hyperlink.target == "https://stockpage.10jqka.com.cn/688220/"
+    assert results["B7"].hyperlink.target == "https://stockpage.10jqka.com.cn/000002/"
+    assert results["C6"].hyperlink.target == "https://stockpage.10jqka.com.cn/HK0700/"
+    assert results["C7"].hyperlink.target == "https://stockpage.10jqka.com.cn/HK0002/"
+
+
+def test_export_tool_rejects_incomplete_column_notes(tmp_path):
+    toolbox = ResearchToolbox(FakeProvider(), "request-1", artifact_dir=tmp_path)
+    queried = toolbox.call(
+        "query_market_data",
+        {
+            "operation": "daily",
+            "params": {"trade_date": "20260916"},
+            "fields": ["ts_code", "close"],
+        },
+        lambda _stage, _message: None,
+    )
+
+    missing = pytest.raises(
+        ValueError,
+        match=r"column_notes must exactly cover.*missing notes for: close",
+    )
+    with missing:
+        toolbox.call(
+            "export_excel",
+            {
+                "dataset_id": queried["dataset_id"],
+                "title": "Incomplete",
+                "methodology": "Basis.",
+                "column_notes": [
+                    {"column": "ts_code", "note": "A股证券代码，含交易所后缀。"}
+                ],
+            },
+            lambda _stage, _message: None,
+        )
+    with pytest.raises(ValueError, match="notes for unknown columns: name"):
+        toolbox.call(
+            "export_excel",
+            {
+                "dataset_id": queried["dataset_id"],
+                "title": "Unexpected",
+                "methodology": "Basis.",
+                "column_notes": [
+                    {"column": "ts_code", "note": "A股证券代码，含交易所后缀。"},
+                    {"column": "close", "note": "未复权收盘价，单位为元。"},
+                    {"column": "name", "note": "不在导出数据集中的列。"},
+                ],
+            },
+            lambda _stage, _message: None,
+        )
+    with pytest.raises(ValueError, match=r"8-400 characters"):
+        toolbox.call(
+            "export_excel",
+            {
+                "dataset_id": queried["dataset_id"],
+                "title": "Too short",
+                "methodology": "Basis.",
+                "column_notes": [
+                    {"column": "ts_code", "note": "太短"},
+                    {"column": "close", "note": "未复权收盘价，单位为元。"},
+                ],
+            },
+            lambda _stage, _message: None,
+        )
 
 
 def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):

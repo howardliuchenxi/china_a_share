@@ -21,6 +21,9 @@ from china_a_share.feishu_agent import (
     FeishuAgentRequest,
     FeishuResearchVisualization,
     MAX_AGENT_CONTEXT_TURNS,
+    MAX_COLUMN_NOTE_CHARACTERS,
+    MAX_VISUALIZATION_METHODOLOGY_CHARACTERS,
+    RESEARCH_COLUMN_NOTES_SHEET_NAME,
 )
 
 
@@ -437,7 +440,29 @@ def _developer_instructions() -> str:
         "If a result has more than ten rows or the user asks for a file, create an "
         "Excel artifact with the export tool. When the user asks for a chart or "
         "interactive visualization, export the complete final dataset to Excel so "
-        "the delivery layer can render it interactively. Do not create keyword routes, "
+        "the delivery layer can render it interactively. "
+        "State methodology precisely: for every derived indicator in the workbook "
+        "and in the final answer, enumerate its input fields, the exact price "
+        "series and adjustment basis it was computed on, its window semantics "
+        "(trading days or calendar days, inclusive bounds), and the event "
+        "deduplication rule. Never describe one indicator by referencing another "
+        "with phrases like same basis or identical to the previous run; restate "
+        "the full computation every time, because indicators derived from "
+        "different series (for example adjusted versus unadjusted closes) are not "
+        "interchangeable. "
+        "Count events, not repeated signals: when a study measures forward-window "
+        "outcomes such as probabilities or mean returns, signals of the same "
+        "security whose forward windows overlap in time are one event. Before any "
+        "such statistics, compute the forward-window end date per signal in the "
+        "Python sandbox, call research_flag_overlapping_signals(frame, ts_code, "
+        "signal_date, window_end) to keep only the first signal of each overlap "
+        "chain, and run the statistics on the kept events. Report both the raw "
+        "signal count and the deduplicated event count whenever they differ, and "
+        "record the deduplication rule in the export methodology. "
+        "The export tool requires column_notes: supply one concise Chinese "
+        "explanation for every exported column, covering what the value is, its "
+        "unit or percentage basis, and which price series it was derived from. "
+        "Do not create keyword routes, "
         "domain-specific shortcuts, or special cases for individual questions."
     )
 
@@ -490,6 +515,66 @@ def _safe_artifact_filename_stem(value: str) -> str:
     return sanitized or "a_share_research"
 
 
+def _extract_column_notes(workbook: Any) -> dict[str, str]:
+    """Read the bounded column-name to explanation mapping from one workbook."""
+    if RESEARCH_COLUMN_NOTES_SHEET_NAME not in workbook.sheetnames:
+        return {}
+    sheet = workbook[RESEARCH_COLUMN_NOTES_SHEET_NAME]
+    notes: dict[str, str] = {}
+    for values in sheet.iter_rows(min_row=5, max_col=2, values_only=True):
+        column = values[0] if len(values) > 0 else None
+        note = values[1] if len(values) > 1 else None
+        if column is None or note is None:
+            continue
+        column_name = str(column).strip()
+        note_text = str(note).strip()
+        if not column_name or not note_text:
+            continue
+        notes[column_name] = note_text[:MAX_COLUMN_NOTE_CHARACTERS]
+    return notes
+
+
+def _extract_workbook_methodology(workbook: Any) -> str:
+    """Read the bounded methodology text recorded on the Methodology sheet."""
+    if "Methodology" not in workbook.sheetnames:
+        return ""
+    method = str(workbook["Methodology"]["B7"].value or "").strip()
+    return method[:MAX_VISUALIZATION_METHODOLOGY_CHARACTERS]
+
+
+def read_research_workbook_metadata(
+    artifact_name: str,
+    artifact_bytes: bytes,
+) -> tuple[str, dict[str, str]]:
+    """Return (methodology, column_notes) recorded inside one stored workbook.
+
+    Read-only helper for legacy viewer tasks whose persisted visualization
+    predates workbook column notes; any parse failure yields empty values so
+    callers can serve the stored payload unchanged.
+    """
+    if not artifact_name.casefold().endswith(".xlsx") or not artifact_bytes:
+        return "", {}
+    temp_path: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="viewer-workbook-", suffix=".xlsx") as handle:
+            handle.write(artifact_bytes)
+            handle.flush()
+            temp_path = Path(handle.name)
+            visualization = _build_research_visualization(temp_path)
+        if visualization is None:
+            return "", {}
+        return visualization.methodology, dict(visualization.column_notes)
+    except Exception:
+        logger.exception(
+            "research_viewer_workbook_metadata_read_failed artifact=%s",
+            artifact_name,
+        )
+        return "", {}
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
 def _build_research_visualization(
     artifact_path: Optional[Path],
 ) -> Optional[FeishuResearchVisualization]:
@@ -531,6 +616,8 @@ def _build_research_visualization(
                 }
             )
         source_row_count = max(sheet.max_row - 5, 0)
+        column_notes = _extract_column_notes(workbook)
+        methodology = _extract_workbook_methodology(workbook)
         workbook.close()
         numeric_columns = [
             column
@@ -551,6 +638,8 @@ def _build_research_visualization(
             truncated=source_row_count > len(rows),
             suggested_x=suggested_x,
             suggested_y=suggested_y,
+            column_notes=column_notes,
+            methodology=methodology,
         )
     except Exception:
         # Workbook delivery remains useful even when a malformed sheet cannot be

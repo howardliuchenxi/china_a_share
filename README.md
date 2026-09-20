@@ -210,8 +210,10 @@ The model transport is configured through `LLM_BASE_URL`, `LLM_MODEL`,
 `LLM_API_KEY`, and the optional `LLM_API_SECRET`; changing compatible models
 does not change the agent or research tools. The worker proactively replies at
 material stages and posts the terminal answer. Results with more than ten rows,
-or explicit export requests, can produce a two-sheet Excel workbook that is
-uploaded back to the originating Feishu message.
+or explicit export requests, can produce a three-sheet Excel workbook — results
+with per-column notes and security-code quote-page links, a methodology sheet,
+and a column-notes sheet — that is uploaded back to the originating Feishu
+message and rendered by the token-protected read-only research viewer.
 
 Users can send `查看进度` (optionally followed by a task identifier) to inspect
 queued, running, succeeded, or failed state, and `重试` to resubmit a failed
