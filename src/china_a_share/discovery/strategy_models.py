@@ -70,8 +70,33 @@ class FirstBullishMARule(BaseRule):
         return self
 
 
+class LimitUpRule(BaseRule):
+    """Require at least one close-at-limit-up day within the trailing window.
+
+    The limit ratio follows the current exchange regime for the stock's board
+    (10% main board, 20% ChiNext / STAR, 30% BSE) and the limit price is the
+    previous nominal close multiplied by that ratio and rounded half-up to the
+    0.01 tick, exactly as the exchanges compute it. Judgement uses raw
+    (unadjusted) closes, so ex-dividend distortions cannot fake a limit-up.
+    ST stocks carry a 5% limit that cannot be derived from price data alone;
+    their limit-up days are not flagged by this rule.
+    """
+
+    type: Literal["limit_up"] = "limit_up"
+    window: int = Field(
+        default=1,
+        ge=1,
+        description="Trading-day window scanned for a close-at-limit-up day, inclusive of the current day.",
+    )
+
+
 Rule = Annotated[
-    Union[DrawdownRule, CumulativeReturnRule, FirstBullishMARule],
+    Union[
+        DrawdownRule,
+        CumulativeReturnRule,
+        FirstBullishMARule,
+        LimitUpRule,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -116,6 +141,8 @@ class StrategyConfig(BaseModel):
             elif isinstance(rule, FirstBullishMARule):
                 # The prior bullish state compares its averages with the day before it.
                 requirements.append(rule.slow_window + 2)
+            elif isinstance(rule, LimitUpRule):
+                requirements.append(rule.window + 1)
         return max(requirements)
 
 

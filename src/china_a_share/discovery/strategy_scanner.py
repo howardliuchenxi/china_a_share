@@ -16,6 +16,7 @@ from china_a_share.discovery.strategy_models import (
     CumulativeReturnRule,
     DrawdownRule,
     FirstBullishMARule,
+    LimitUpRule,
     SignalDirection,
     StrategyConfig,
 )
@@ -289,4 +290,11 @@ def format_strategy_rules(strategy: StrategyConfig) -> str:
             lines.append(
                 f"- MA{rule.fast_window} 与 MA{rule.slow_window} 首次形成多头向上"
             )
+        elif isinstance(rule, LimitUpRule):
+            if rule.window == 1:
+                lines.append("- 当日收盘涨停（按板块涨跌幅限制精确判定）")
+            else:
+                lines.append(
+                    f"- 近 {rule.window} 个交易日内出现过收盘涨停（含当日）"
+                )
     return "\n".join(lines)

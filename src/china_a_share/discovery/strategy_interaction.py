@@ -16,6 +16,7 @@ from china_a_share.discovery.strategy_models import (
     DraftState,
     DrawdownRule,
     FirstBullishMARule,
+    LimitUpRule,
     Rule,
     SignalDirection,
     StrategyConfig,
@@ -55,7 +56,11 @@ DIRECTION_LABELS = {
 }
 
 _RULES_EXAMPLE = (
-    "规则 回撤 窗口=60 阈值=30%；涨幅 窗口=10 下限=-10% 上限=10%；金叉 快线=5 慢线=10"
+    "规则 回撤 窗口=60 阈值=30%；涨幅 窗口=10 下限=-10% 上限=10%；金叉 快线=5 慢线=10；涨停"
+)
+_RULES_TYPE_HINT = (
+    "规则类型：回撤（窗口/阈值）、涨幅（窗口/下限/上限）、金叉（快线/慢线）、"
+    "涨停（无需参数，可选 窗口=N 表示近 N 日内出现过涨停）。"
 )
 
 
@@ -76,6 +81,9 @@ _RULE_TYPE_ALIASES: Dict[str, str] = {
     "金叉": "first_bullish_ma",
     "ma": "first_bullish_ma",
     "first_bullish_ma": "first_bullish_ma",
+    "涨停": "limit_up",
+    "limit_up": "limit_up",
+    "limitup": "limit_up",
 }
 
 _RULE_KEYS: Dict[str, Dict[str, tuple[str, ...]]] = {
@@ -92,6 +100,13 @@ _RULE_KEYS: Dict[str, Dict[str, tuple[str, ...]]] = {
         "fast_window": ("fast", "fast_window", "快线"),
         "slow_window": ("slow", "slow_window", "慢线"),
     },
+    "limit_up": {
+        "window": ("window", "窗口", "w"),
+    },
+}
+# Rule fields that keep their model default when the user omits them.
+_OPTIONAL_RULE_FIELDS: Dict[str, set[str]] = {
+    "limit_up": {"window"},
 }
 _INT_FIELDS = {"window", "fast_window", "slow_window"}
 
@@ -118,7 +133,7 @@ def parse_rule_spec(spec: str) -> list[Rule]:
         canonical = _RULE_TYPE_ALIASES.get(head) or _RULE_TYPE_ALIASES.get(head.lower())
         if canonical is None:
             raise RuleSpecError(
-                f"不支持的规则类型「{head}」，支持的类型：回撤 / 涨幅 / 金叉。"
+                f"不支持的规则类型「{head}」，支持的类型：回撤 / 涨幅 / 金叉 / 涨停。"
             )
         values: Dict[str, float] = {}
         for token in tokens[1:]:
@@ -142,7 +157,11 @@ def parse_rule_spec(spec: str) -> list[Rule]:
                 raise RuleSpecError(
                     f"参数「{token}」的数值无法识别，请使用数字或百分比。"
                 ) from exc
-        missing = sorted(set(_RULE_KEYS[canonical]) - set(values))
+        missing = sorted(
+            set(_RULE_KEYS[canonical])
+            - set(values)
+            - _OPTIONAL_RULE_FIELDS.get(canonical, set())
+        )
         if missing:
             hints = "、".join(
                 "/".join(_RULE_KEYS[canonical][field] ) for field in missing
@@ -164,6 +183,8 @@ def parse_rule_spec(spec: str) -> list[Rule]:
                         max_return=values["max_return"],
                     )
                 )
+            elif canonical == "limit_up":
+                rules.append(LimitUpRule(window=int(values.get("window", 1))))
             else:
                 rules.append(
                     FirstBullishMARule(
@@ -304,8 +325,7 @@ def build_draft_card(
                         "请回复一条消息设置规则，多个规则用「；」分隔，"
                         "数值可用百分比或小数：\n"
                         f"**{_RULES_EXAMPLE}**\n"
-                        "规则类型：回撤（窗口/阈值）、涨幅（窗口/下限/上限）、"
-                        "金叉（快线/慢线）。"
+                        f"{_RULES_TYPE_HINT}"
                     ),
                 },
             }

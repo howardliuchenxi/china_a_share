@@ -21,6 +21,7 @@ from china_a_share.discovery.strategy_models import (
     DraftState,
     DrawdownRule,
     FirstBullishMARule,
+    LimitUpRule,
     SignalDirection,
 )
 from china_a_share.discovery.strategy_store import MemoryStrategyStore
@@ -140,12 +141,47 @@ def test_parse_rule_spec_accepts_english_aliases_and_decimals():
         ("回撤 窗口=six 阈值=30%", "数值"),
         ("回撤 窗口=60 阈值=30% 未知=1", "不支持参数"),
         ("金叉 快线=10 慢线=5", "fast_window"),
+        ("涨停 阈值=10%", "涨停"),
+        ("最近交易日涨停", "涨停"),
     ],
 )
 def test_parse_rule_spec_rejects_invalid_input_with_guidance(spec, expected_hint):
     with pytest.raises(RuleSpecError) as exc_info:
         parse_rule_spec(spec)
     assert expected_hint in str(exc_info.value)
+
+
+def test_parse_rule_spec_supports_limit_up_with_optional_window():
+    rules = parse_rule_spec("涨停")
+    assert rules == [LimitUpRule(window=1)]
+    windowed = parse_rule_spec("涨停 窗口=3")
+    assert windowed == [LimitUpRule(window=3)]
+    combined = parse_rule_spec("涨停；金叉 快线=5 慢线=10")
+    assert combined == [LimitUpRule(window=1), FirstBullishMARule(fast_window=5, slow_window=10)]
+
+
+def test_limit_up_rule_full_draft_flow():
+    coordinator, store = build_interaction()
+    coordinator.handle_message("ou_a", "oc_chat", "新建策略 拉取最近交易日涨停的股票")
+    draft = store.list_drafts("ou_a")[0]
+    coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+
+    ready_card = coordinator.handle_message("ou_a", "oc_chat", "规则 涨停")
+    assert "保存策略" in card_text(ready_card)
+    draft = store.get_draft(draft.draft_id, "ou_a")
+    assert draft.state == DraftState.READY
+    assert draft.rules == [LimitUpRule(window=1)]
+
+    saved_card = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
+    assert "已保存" in card_text(saved_card)
+    assert store.list_strategies("ou_a")[0].rules == [LimitUpRule(window=1)]
 
 
 def test_guided_draft_flow_saves_enabled_strategy():
