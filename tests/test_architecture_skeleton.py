@@ -442,6 +442,55 @@ def test_tushare_provider_fans_out_full_market_daily_range_by_open_date():
     ]
 
 
+def test_tushare_provider_fans_out_full_market_adj_factor_range_by_open_date():
+    provider = TushareDataProvider("test-token", FakeCache())
+    calls = []
+
+    class FakeTransport:
+        def query(self, operation, params, fields):
+            calls.append((operation, dict(params), list(fields)))
+            if operation == "trade_cal":
+                return pd.DataFrame(
+                    [
+                        {"cal_date": "20260701", "is_open": 1},
+                        {"cal_date": "20260702", "is_open": 1},
+                    ]
+                )
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": params["trade_date"],
+                        "adj_factor": 1.0,
+                    }
+                ]
+            )
+
+    provider._transport = FakeTransport()
+
+    frame = provider._fetch_complete(
+        "adj_factor",
+        {"start_date": "20260701", "end_date": "20260702"},
+        ["ts_code", "trade_date", "adj_factor"],
+    )
+
+    assert list(frame["trade_date"]) == ["20260701", "20260702"]
+    assert calls[0] == (
+        "trade_cal",
+        {
+            "exchange": "SSE",
+            "start_date": "20260701",
+            "end_date": "20260702",
+            "is_open": "1",
+        },
+        ["cal_date", "is_open"],
+    )
+    assert [call[1] for call in calls[1:]] == [
+        {"trade_date": "20260701"},
+        {"trade_date": "20260702"},
+    ]
+
+
 def test_tushare_provider_rejects_a_repeated_full_page():
     provider = TushareDataProvider("test-token", FakeCache())
     repeated_page = pd.DataFrame(

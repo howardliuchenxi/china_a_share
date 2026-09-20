@@ -333,7 +333,7 @@ class TushareDataProvider:
         """Fetch every provider page for operations with a documented row cap."""
         shape = (
             resolve_query_shape(operation, params)
-            if operation == "daily"
+            if operation in {"daily", "adj_factor"}
             and params.get("start_date")
             and params.get("end_date")
             else None

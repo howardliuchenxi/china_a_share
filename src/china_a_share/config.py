@@ -49,6 +49,8 @@ class Settings:
     research_sandbox_url: str = ""
     # Stable public origin used in token-protected research viewer links.
     public_app_url: str = ""
+    # Bearer token required by the strategy daily-scan scheduler entry point.
+    strategy_scan_token: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -95,6 +97,7 @@ class Settings:
         llm_api_secret = os.getenv("LLM_API_SECRET", "").strip()
         research_sandbox_url = os.getenv("RESEARCH_SANDBOX_URL", "").strip()
         public_app_url = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
+        strategy_scan_token = os.getenv("STRATEGY_SCAN_TOKEN", "").strip()
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
@@ -122,4 +125,5 @@ class Settings:
             llm_api_secret=llm_api_secret,
             research_sandbox_url=research_sandbox_url,
             public_app_url=public_app_url,
+            strategy_scan_token=strategy_scan_token,
         )

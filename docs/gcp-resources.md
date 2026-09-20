@@ -361,6 +361,17 @@ GitHub authorization.
 | Retry count | 1 |
 | Expected cost impact | No execution or Cloud Build usage while paused; the retained job remains within the three-job Scheduler monthly free allowance |
 
+| Setting | Value |
+| --- | --- |
+| Job | `china-a-share-strategy-daily-scan` |
+| Region | `asia-east2` |
+| Schedule | `30 16 * * 1-5` (Asia/Shanghai), after the A-share close |
+| Target | POST `https://china-a-share-lab-1079739428171.asia-east2.run.app/api/analysis/tasks/strategy:daily-scan` |
+| Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` (OIDC token, audience set to the full route URL; the API also accepts the optional `STRATEGY_SCAN_TOKEN` static bearer) |
+| State | Paused until the strategy scan feature is deployed and verified |
+| Retry count | Scheduler default (5); the API returns 500 on any per-strategy failure so retries are at-least-once |
+| Expected cost impact | One authenticated POST per weekday while enabled; remains within the monthly free allowance for Scheduler jobs |
+
 Google-managed Cloud Run, Cloud Build, Artifact Registry, Container Registry,
 and Pub/Sub service agents also exist. They are platform-managed identities and
 are not application runtime identities.
