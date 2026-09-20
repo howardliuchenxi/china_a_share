@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-09-18**
+Last verified: **2026-09-19**
 
 ## Project boundary
 
@@ -27,9 +27,9 @@ resources.
 | Service | `china-a-share-lab` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-lab-1079739428171.asia-east2.run.app> |
-| Latest ready revision | `china-a-share-lab-00257-scz` |
+| Latest ready revision | `china-a-share-lab-00261-mh6` |
 | Deployed Git branch | `main` |
-| Deployed Git commit | `0ec81fe1d2626c5f1c9ee1ddaebdad4ded1c46cc` |
+| Deployed Git commit | `5012c8e412ac145d73b63f3675f2bb1fc34d3717` |
 | Traffic | 100% to the latest revision |
 | Billing mode | Instance-based while an instance is active; scales to zero |
 | CPU and memory | 1 vCPU, 1 GiB |
@@ -105,9 +105,9 @@ protected from anonymous consumption.
 | Service | `china-a-share-research-sandbox` |
 | Region | `asia-east2` |
 | Service URL | <https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app> |
-| Latest ready revision | `china-a-share-research-sandbox-00016-vj9` |
+| Latest ready revision | `china-a-share-research-sandbox-00020-h4n` |
 | Purpose | Execute restricted pandas and NumPy calculations for the Feishu research agent |
-| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:0ec81fe1d2626c5f1c9ee1ddaebdad4ded1c46cc` |
+| Image | `asia-east2-docker.pkg.dev/china-a-share-lab/cloud-run-source-deploy/china-a-share-lab:5012c8e412ac145d73b63f3675f2bb1fc34d3717` |
 | Command | `python -m uvicorn china_a_share.sandbox_server:app --host 0.0.0.0 --port 8080` |
 | Traffic | 100% to the latest revision |
 | CPU and memory | 1 vCPU, 2 GiB |
@@ -498,3 +498,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-19 | Deployed revision `china-a-share-lab-00257-scz` immediately through the main push trigger from `main@0ec81fe1d2626c5f1c9ee1ddaebdad4ded1c46cc`; verified 100% traffic, public health, the synchronized `china-a-share-analysis-worker` image, private sandbox revision `china-a-share-research-sandbox-00016-vj9`, and the reported historical research link rendering `20221215` as `2022-12-15` without numeric thousands separators. The release normalizes valid compact calendar dates in date-semantic result columns for both new and retained research results. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-19 | Deployed revision `china-a-share-lab-00259-gcx` immediately through the main push trigger from `main@88ac653574d02993767c16e0406754a179a76450`; verified 100% traffic, public health, and the synchronized `china-a-share-analysis-worker` Git SHA. The release extends the bounded Codex research turn window from 15 minutes to one hour while retaining interruption and cleanup behavior. No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 | 2026-09-19 | Deployed revision `china-a-share-lab-00260-c8w` immediately through the main push trigger from `main@f8efb2fb140abcf4c8cca7c2d2db9c8a890c45be`; verified 100% traffic, public health, and the synchronized `china-a-share-analysis-worker` Git SHA and 25,200-second task timeout. The release extends the bounded Codex research turn window to six hours and the Worker execution window to seven hours for cleanup and result persistence. No resource type, IAM boundary, lifecycle policy, or fixed cost changed; maximum usage-based cost per long-running execution increases with the longer allowed runtime. |
+| 2026-09-19 | Deployed revision `china-a-share-lab-00261-mh6` through the main push trigger from `main@5012c8e412ac145d73b63f3675f2bb1fc34d3717`; verified 100% traffic, the synchronized sandbox revision `china-a-share-research-sandbox-00020-h4n` running the same image digest, and the reported historical research link now returning the recorded workbook methodology through the read-only legacy enrichment. The release adds required per-column notes and security-code quote-page links to research workbooks, viewer column tooltips, a methodology section, and a sandbox helper that collapses overlapping same-security signal windows into one event; no resource type, IAM boundary, lifecycle policy, or material cost changed. |
