@@ -24,6 +24,7 @@ from china_a_share.core.contracts import (
     ServiceError,
 )
 from china_a_share.result_pipeline import ResultPipelineExecutor
+from china_a_share.registry import field_unit_notes_for
 from china_a_share.security_links import (
     is_security_code_column,
     security_quote_page_url,
@@ -1162,7 +1163,7 @@ def _frame_to_result(
 
 def _result_payload(result: QueryResult) -> Dict[str, Any]:
     """Return bounded model-visible evidence while retaining the complete dataset."""
-    return {
+    payload = {
         "dataset_id": result.query_id,
         "row_count": result.row_count,
         "columns": result.columns,
@@ -1172,6 +1173,12 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
         "dataset_scope": "complete_retained_result",
         "preview_note": "Display only; tools use every row retained by dataset_id.",
     }
+    # Unit facts travel with the data so every model sees them without any
+    # runtime-specific prompt logic.
+    field_units = field_unit_notes_for(result.operation, result.columns)
+    if field_units:
+        payload["field_units"] = field_units
+    return payload
 
 
 def _format_clarification(arguments: Any) -> str:

@@ -1,12 +1,21 @@
-"""Field-unit documentation lives in the shared operation catalog.
+"""Field-unit facts live in the registry and travel with every dataset.
 
-Every runtime (Codex MCP toolbox and the GLM chat loop) reads the same
-catalog guidance, so monetary unit facts must be documented here rather
-than baked into any single runtime's prompt.
+Unit facts have exactly one machine-readable source (registry.FIELD_UNIT_NOTES).
+Dataset payloads returned to every model embed them as field_units, and the
+catalog guidance documents the same facts in prose — so no runtime needs
+its own unit special cases.
 """
 
+import pandas as pd
+
+from china_a_share.feishu_agent import ResearchToolbox, _result_payload
 from china_a_share.glm_agent import GLM_RECOVERY_INSTRUCTIONS
-from china_a_share.registry import TushareOperationCatalog
+from china_a_share.core.contracts import QueryResult, QueryStatus
+from china_a_share.registry import (
+    FIELD_UNIT_NOTES,
+    TushareOperationCatalog,
+    field_unit_notes_for,
+)
 
 
 def guidance_for(operation: str) -> str:
@@ -68,8 +77,88 @@ def test_runtime_prompt_requires_ths_taxonomy_discipline_without_field_facts():
     assert "net_buy_amount" not in instructions
 
 
+def test_structured_unit_table_covers_every_documented_operation():
+    for operation in FIELD_UNIT_NOTES:
+        guidance = guidance_for(operation)
+        assert "Unit note" in guidance, (
+            f"{operation} has structured units but no prose unit note"
+        )
+
+
+def test_field_unit_notes_filter_to_requested_columns():
+    notes = field_unit_notes_for(
+        "daily", ["ts_code", "trade_date", "close", "amount"]
+    )
+
+    assert notes == {"amount": "thousands of CNY (千元)"}
+    assert field_unit_notes_for("stock_basic", ["industry"]) == {}
+
+
+def _query_result(operation: str, columns: list) -> QueryResult:
+    return QueryResult(
+        query_id="unit-check",
+        provider="tushare",
+        operation=operation,
+        status=QueryStatus.SUCCESS,
+        columns=columns,
+        rows=[{column: 1 for column in columns}],
+    )
+
+
+def test_dataset_payload_embeds_field_units_for_every_runtime():
+    payload = _result_payload(
+        _query_result("daily", ["ts_code", "trade_date", "amount", "vol"])
+    )
+
+    assert payload["field_units"] == {
+        "amount": "thousands of CNY (千元)",
+        "vol": "lots (手)",
+    }
+
+
+def test_dataset_payload_omits_field_units_when_none_apply():
+    payload = _result_payload(
+        _query_result("stock_basic", ["ts_code", "industry"])
+    )
+
+    assert "field_units" not in payload
+
+
 def test_runtime_prompts_do_not_embed_provider_schema_facts():
-    # Unit facts belong to the catalog; a runtime prompt may only require the
-    # generic discipline of reading units from the catalog documentation.
+    # Unit facts belong to the registry and dataset payloads; a runtime
+    # prompt may only require the generic discipline of reading them.
     assert "Tushare daily.amount" not in GLM_RECOVERY_INSTRUCTIONS
+    assert "thousands of CNY" not in GLM_RECOVERY_INSTRUCTIONS
     assert "Unit discipline" in GLM_RECOVERY_INSTRUCTIONS
+    assert "field_units" in GLM_RECOVERY_INSTRUCTIONS
+
+
+def test_toolbox_query_result_carries_units_end_to_end():
+    class UnitProvider:
+        name = "tushare"
+
+        def search_operations(self, prompt):
+            return []
+
+        def supports(self, operation):
+            return operation == "daily"
+
+        def describe_query_shapes(self, operation):
+            return ()
+
+        def validate_query(self, operation, params, fields):
+            return None
+
+        def query(self, operation, params, fields, **kwargs):
+            return pd.DataFrame(
+                [{"ts_code": "000001.SZ", "trade_date": "20260918", "amount": 860000}]
+            )
+
+    toolbox = ResearchToolbox(UnitProvider(), "request-units")
+    payload = toolbox.call(
+        "query_market_data",
+        {"operation": "daily", "params": {"trade_date": "20260918"}, "fields": ["ts_code", "trade_date", "amount"]},
+        lambda stage, message: None,
+    )
+
+    assert payload["field_units"]["amount"] == "thousands of CNY (千元)"

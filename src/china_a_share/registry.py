@@ -1,6 +1,6 @@
 """Read-only Tushare operation catalog exposed through neutral contracts."""
 
-from typing import Sequence, Set
+from typing import Dict, Sequence, Set
 
 from .core.contracts import DataOperation
 
@@ -118,6 +118,50 @@ READ_ONLY_API_NAMES = tuple(
     for operations in TUSHARE_API_CATEGORIES.values()
     for operation in operations
 )
+
+
+# Field-unit facts for provider operations. This is the single machine-
+# readable source: the catalog guidance below documents the same facts in
+# prose, and dataset payloads returned to every model embed these notes via
+# field_unit_notes_for so no runtime needs its own unit special cases.
+FIELD_UNIT_NOTES: Dict[str, Dict[str, str]] = {
+    "daily": {
+        "amount": "thousands of CNY (千元)",
+        "vol": "lots (手)",
+    },
+    "moneyflow_ind_ths": {
+        "net_amount": "CNY 100 million units (亿元), net fund flow",
+        "net_buy_amount": "CNY 100 million units (亿元), GROSS inflow (not net)",
+    },
+    "moneyflow_cnt_ths": {
+        "net_amount": "CNY 100 million units (亿元), net fund flow",
+        "net_buy_amount": "CNY 100 million units (亿元), GROSS inflow (not net)",
+    },
+    "moneyflow": {
+        "buy_sm_amount": "ten thousands of CNY (万元)",
+        "sell_sm_amount": "ten thousands of CNY (万元)",
+        "buy_lg_amount": "ten thousands of CNY (万元)",
+        "sell_lg_amount": "ten thousands of CNY (万元)",
+        "buy_elg_amount": "ten thousands of CNY (万元)",
+        "sell_elg_amount": "ten thousands of CNY (万元)",
+        "net_mf_amount": "ten thousands of CNY (万元)",
+    },
+    "repurchase": {
+        "amount": "ten thousands of CNY (万元)",
+        "vol": "lots (手)",
+    },
+}
+
+
+def field_unit_notes_for(operation: str, fields) -> Dict[str, str]:
+    """Return unit notes for the requested fields of one operation."""
+    notes = FIELD_UNIT_NOTES.get(operation, {})
+    field_names = [str(field) for field in fields]
+    return {
+        field: notes[field]
+        for field in field_names
+        if field in notes
+    }
 
 
 CORE_OPERATION_GUIDANCE = {
