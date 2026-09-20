@@ -13,6 +13,8 @@ from china_a_share.core.contracts import (
     AnalysisTaskSubmission,
     AnalysisResponse,
     AnalysisStatus,
+    QueryResult,
+    QueryStatus,
     ServiceError,
     StockListItem,
     StockListResponse,
@@ -32,6 +34,7 @@ from china_a_share.feishu_agent import (
     FeishuAgentRequest,
     FeishuAgentTask,
     FeishuResearchVisualization,
+    build_research_workbook,
     research_visualization_token_hash,
 )
 from china_a_share.tasks import MemoryAnalysisTaskStore
@@ -728,6 +731,8 @@ def test_research_viewer_requires_token_and_serves_workbook(tmp_path):
             truncated=False,
             suggested_x="name",
             suggested_y="pe_ttm",
+            column_notes={"pe_ttm": "滚动市盈率 = 收盘价 / 近12个月每股收益。"},
+            methodology="估值快照口径说明。",
         ),
         visualization_token_hash=research_visualization_token_hash(token),
         visualization_expires_at=now + timedelta(days=30),
@@ -762,11 +767,92 @@ def test_research_viewer_requires_token_and_serves_workbook(tmp_path):
     assert response.json()["visualization"]["rows"] == [
         {"name": "Example", "pe_ttm": 10.5}
     ]
+    assert response.json()["visualization"]["column_notes"] == {
+        "pe_ttm": "滚动市盈率 = 收盘价 / 近12个月每股收益。"
+    }
+    assert response.json()["visualization"]["methodology"] == "估值快照口径说明。"
     assert download.status_code == 200
     assert download.content == b"xlsx-content"
     assert download.headers["content-disposition"] == (
         'attachment; filename="result.xlsx"'
     )
+
+
+def test_research_viewer_backfills_legacy_workbook_metadata_read_only(tmp_path):
+    token = "viewer-token-abcdefghijklmnopqrstuvwxyz-123456"
+    now = datetime.now(timezone.utc)
+    store = MemoryAnalysisTaskStore()
+    task = FeishuAgentTask(
+        task_id="legacy-task",
+        status=AnalysisTaskStatus.SUCCEEDED,
+        request=FeishuAgentRequest(
+            prompt="Run the pattern study.",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        created_at=now,
+        updated_at=now,
+        stage="completed",
+        progress_message="研究完成。",
+        answer="研究结论。",
+        artifact_name="legacy.xlsx",
+        visualization=FeishuResearchVisualization(
+            title="Legacy study",
+            columns=["ts_code", "fwd_ret"],
+            numeric_columns=["fwd_ret"],
+            rows=[{"ts_code": "600000.SH", "fwd_ret": -0.12}],
+            source_row_count=1,
+            truncated=False,
+            suggested_x="ts_code",
+            suggested_y="fwd_ret",
+        ),
+        visualization_token_hash=research_visualization_token_hash(token),
+        visualization_expires_at=now + timedelta(days=30),
+    )
+    store.put(task)
+    workbook_path = build_research_workbook(
+        QueryResult(
+            query_id="legacy",
+            provider="tushare",
+            operation="event_study",
+            status=QueryStatus.SUCCESS,
+            columns=["ts_code", "fwd_ret"],
+            rows=[{"ts_code": "600000.SH", "fwd_ret": -0.12}],
+            row_count=1,
+        ),
+        "Legacy study",
+        "旧任务记录的前复权与去重口径。",
+        output_dir=tmp_path,
+        column_notes={"fwd_ret": "前向窗口收益率 = 窗口末复权收盘 / 信号日复权收盘 - 1。"},
+    )
+    artifact = tmp_path / "legacy.xlsx"
+    artifact.write_bytes(workbook_path.read_bytes())
+    store.put_artifact(task.task_id, artifact)
+    client = TestClient(
+        create_app(
+            FakeAnalysisService(),
+            task_coordinator=ResearchResultCoordinator(store),
+        )
+    )
+
+    response = client.get(
+        "/api/research/visualizations/legacy-task",
+        params={"token": token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["visualization"]["methodology"] == (
+        "旧任务记录的前复权与去重口径。"
+    )
+    assert response.json()["visualization"]["column_notes"] == {
+        "fwd_ret": "前向窗口收益率 = 窗口末复权收盘 / 信号日复权收盘 - 1。"
+    }
+    # The enrichment stays read-only: the persisted task keeps its legacy form.
+    stored = store.get("legacy-task")
+    assert stored is not None
+    assert stored.visualization is not None
+    assert stored.visualization.methodology == ""
+    assert stored.visualization.column_notes == {}
 
 
 def test_research_viewer_rejects_expired_link():

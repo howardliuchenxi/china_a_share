@@ -23,12 +23,19 @@ from china_a_share.core.contracts import (
     ServiceError,
 )
 from china_a_share.result_pipeline import ResultPipelineExecutor
+from china_a_share.security_links import (
+    is_security_code_column,
+    security_quote_page_url,
+)
 
 
 MAX_AGENT_PREVIEW_ROWS = 10
 MAX_AGENT_CONTEXT_TURNS = 12
 MAX_AGENT_PROGRESS_UPDATES = 19
 RESEARCH_VISUALIZATION_LINK_LIFETIME = timedelta(days=30)
+MIN_COLUMN_NOTE_CHARACTERS = 8
+MAX_COLUMN_NOTE_CHARACTERS = 400
+MAX_VISUALIZATION_METHODOLOGY_CHARACTERS = 6_000
 logger = logging.getLogger(__name__)
 
 
@@ -83,6 +90,21 @@ class FeishuResearchVisualization(BaseModel):
     )
     suggested_x: str = Field(description="Default horizontal-axis column.")
     suggested_y: str = Field(description="Default numeric vertical-axis column.")
+    column_notes: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "One concise reader-facing explanation per result column, extracted "
+            "from the workbook column-notes sheet."
+        ),
+    )
+    methodology: str = Field(
+        default="",
+        max_length=MAX_VISUALIZATION_METHODOLOGY_CHARACTERS,
+        description=(
+            "Bounded methodology text recorded with the workbook and shown by "
+            "the read-only viewer."
+        ),
+    )
 
 
 class FeishuAgentTask(BaseModel):
@@ -601,15 +623,44 @@ class ResearchToolbox:
                 "type": "function",
                 "function": {
                     "name": "export_excel",
-                    "description": "Create a polished two-tab Excel workbook from a retained dataset.",
+                    "description": (
+                        "Create a polished Excel workbook from a retained "
+                        "dataset. methodology must enumerate, for every derived "
+                        "indicator: its input fields, the exact price series and "
+                        "adjustment basis, window semantics (trading days or "
+                        "calendar days), and the event-deduplication rule. Never "
+                        "refer to another indicator's basis with phrases like "
+                        "same basis; restate the full computation each time. "
+                        "column_notes must explain every exported column in "
+                        "concise Chinese so a reader can interpret each value."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "dataset_id": {"type": "string"},
                             "title": {"type": "string"},
                             "methodology": {"type": "string"},
+                            "column_notes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "column": {"type": "string"},
+                                        "note": {"type": "string"},
+                                    },
+                                    "required": ["column", "note"],
+                                    "additionalProperties": False,
+                                },
+                                "minItems": 1,
+                                "maxItems": 200,
+                            },
                         },
-                        "required": ["dataset_id", "title", "methodology"],
+                        "required": [
+                            "dataset_id",
+                            "title",
+                            "methodology",
+                            "column_notes",
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -647,7 +698,11 @@ class ResearchToolbox:
                             "Run a restricted pandas/numpy DataFrame program in the "
                             "independent secretless sandbox. Inputs are available as "
                             "datasets[dataset_id], imports and external I/O are forbidden, "
-                            "and the final DataFrame must be assigned to result."
+                            "and the final DataFrame must be assigned to result. The "
+                            "preloaded helper research_flag_overlapping_signals(frame, "
+                            "ts_code, signal_date, window_end) returns the Boolean "
+                            "keep-mask that collapses overlapping same-security signal "
+                            "windows into one keep-first event."
                         ),
                         "parameters": {
                             "type": "object",
@@ -844,12 +899,14 @@ class ResearchToolbox:
             result = self._datasets.get(dataset_id)
             if result is None:
                 raise ValueError(f"Unknown Excel dataset: {dataset_id}")
+            column_notes = _validated_column_notes(arguments["column_notes"], result)
             progress("exporting", "正在生成 Excel 研究结果…")
             artifact_path = build_research_workbook(
                 result,
                 str(arguments["title"]),
                 str(arguments["methodology"]),
                 output_dir=self._artifact_dir,
+                column_notes=column_notes,
             )
             if self._dataset_archive is not None and self._task_id:
                 if dataset_id == "session_dataset":
@@ -869,27 +926,74 @@ class ResearchToolbox:
             self._dataset_archive.archive_dataset(self._task_id, result)
 
 
+def _validated_column_notes(
+    raw_notes: object,
+    result: QueryResult,
+) -> Dict[str, str]:
+    """Return one bounded note per column and reject incomplete coverage."""
+    if not isinstance(raw_notes, list) or not raw_notes:
+        raise ValueError("export_excel requires column_notes for every column.")
+    notes: Dict[str, str] = {}
+    for entry in raw_notes:
+        if not isinstance(entry, Mapping):
+            raise ValueError("Each column note must be an object with column and note.")
+        column = str(entry.get("column") or "").strip()
+        note = str(entry.get("note") or "").strip()
+        if not column:
+            raise ValueError("Each column note requires a column name.")
+        if not MIN_COLUMN_NOTE_CHARACTERS <= len(note) <= MAX_COLUMN_NOTE_CHARACTERS:
+            raise ValueError(
+                f"Column note for {column} must be "
+                f"{MIN_COLUMN_NOTE_CHARACTERS}-{MAX_COLUMN_NOTE_CHARACTERS} characters."
+            )
+        if column in notes:
+            raise ValueError(f"Duplicate column note for {column}.")
+        notes[column] = note
+    missing = sorted(set(result.columns).difference(notes))
+    unexpected = sorted(set(notes).difference(result.columns))
+    if missing or unexpected:
+        parts = []
+        if missing:
+            parts.append("missing notes for: " + ", ".join(missing))
+        if unexpected:
+            parts.append("notes for unknown columns: " + ", ".join(unexpected))
+        raise ValueError(
+            "column_notes must exactly cover the exported columns ("
+            + "; ".join(parts)
+            + ")."
+        )
+    return notes
+
+
+RESEARCH_COLUMN_NOTES_SHEET_NAME = "列说明"
+
+
 def build_research_workbook(
     result: QueryResult,
     title: str,
     methodology: str,
     *,
     output_dir: Optional[Path] = None,
+    column_notes: Optional[Mapping[str, str]] = None,
 ) -> Path:
-    """Create one readable two-tab workbook from a complete result dataset."""
+    """Create one readable workbook with results, notes, and methodology."""
     try:
         from openpyxl import Workbook
+        from openpyxl.comments import Comment
         from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.utils import get_column_letter
     except ImportError as exc:
         raise RuntimeError("Excel export requires the openpyxl dependency.") from exc
 
+    notes = {str(key): str(value) for key, value in (column_notes or {}).items()}
     workbook = Workbook()
     results_sheet = workbook.active
     results_sheet.title = "Results"
     methodology_sheet = workbook.create_sheet("Methodology")
+    notes_sheet = workbook.create_sheet(RESEARCH_COLUMN_NOTES_SHEET_NAME)
     results_sheet.sheet_view.showGridLines = False
     methodology_sheet.sheet_view.showGridLines = False
+    notes_sheet.sheet_view.showGridLines = False
 
     results_sheet["A2"] = title
     results_sheet["A2"].font = Font(name="Arial", size=14, bold=True)
@@ -901,11 +1005,24 @@ def build_research_workbook(
         cell.fill = PatternFill("solid", fgColor="1F4E78")
         cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
         cell.alignment = Alignment(horizontal="center", vertical="center")
+        note = notes.get(column)
+        if note:
+            cell.comment = Comment(note, "A股研究助手", height=120, width=280)
+    linkable_columns = {
+        column
+        for column in result.columns
+        if is_security_code_column(column, [row.get(column) for row in result.rows[:50]])
+    }
     for row_index, row in enumerate(result.rows, start=header_row + 1):
         for column_index, column in enumerate(result.columns, start=1):
             cell = results_sheet.cell(row_index, column_index, row.get(column))
             cell.font = Font(name="Arial", size=10)
             cell.alignment = Alignment(vertical="center")
+            if column in linkable_columns:
+                quote_url = security_quote_page_url(row.get(column))
+                if quote_url:
+                    cell.hyperlink = quote_url
+                    cell.font = Font(name="Arial", size=10, color="0563C1", underline="single")
     results_sheet.freeze_panes = "A6"
     results_sheet.auto_filter.ref = (
         f"A{header_row}:{get_column_letter(max(len(result.columns), 1))}"
@@ -926,6 +1043,31 @@ def build_research_workbook(
     results_sheet.print_area = (
         f"A1:{get_column_letter(max(len(result.columns), 1))}"
         f"{header_row + max(result.row_count, 1)}"
+    )
+
+    notes_sheet["A2"] = "列说明"
+    notes_sheet["A2"].font = Font(name="Arial", size=14, bold=True)
+    notes_header_row = 4
+    for column_index, header in enumerate(("列", "说明"), start=1):
+        cell = notes_sheet.cell(notes_header_row, column_index, header)
+        cell.fill = PatternFill("solid", fgColor="1F4E78")
+        cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    for row_index, column in enumerate(result.columns, start=notes_header_row + 1):
+        note_cell = notes_sheet.cell(row_index, 1, column)
+        note_cell.font = Font(name="Arial", size=10, bold=True)
+        note_cell.alignment = Alignment(vertical="center")
+        detail_cell = notes_sheet.cell(row_index, 2, notes.get(column, ""))
+        detail_cell.font = Font(name="Arial", size=10)
+        detail_cell.alignment = Alignment(wrap_text=True, vertical="top")
+    notes_sheet.column_dimensions["A"].width = 24
+    notes_sheet.column_dimensions["B"].width = 80
+    notes_sheet.freeze_panes = "A5"
+    notes_sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    notes_sheet.page_setup.fitToWidth = 1
+    notes_sheet.page_setup.fitToHeight = 0
+    notes_sheet.print_area = (
+        f"A1:B{notes_header_row + max(len(result.columns), 1)}"
     )
 
     methodology_sheet["A2"] = "Methodology"

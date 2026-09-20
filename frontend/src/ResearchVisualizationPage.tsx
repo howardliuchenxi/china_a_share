@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { columnNote } from "./researchColumnNotes";
+import { isSecurityCodeColumn, securityQuotePageUrl } from "./securityLinks";
 
 type ViewerValue = string | number | boolean | null;
 
@@ -13,6 +15,10 @@ interface ResearchVisualization {
   source_row_count: number;
   /** Whether the complete workbook contains additional rows. */
   truncated: boolean;
+  /** Recorded workbook explanation per column, shown as hover notes. */
+  column_notes?: Record<string, string>;
+  /** Bounded methodology text recorded with the workbook. */
+  methodology?: string;
 }
 
 interface ResearchVisualizationResponse {
@@ -133,6 +139,12 @@ export default function ResearchVisualizationPage() {
   const { visualization } = payload;
   const tableRows = filteredRows.slice(0, TABLE_ROW_LIMIT);
   const workbookUrl = `/api/research/visualizations/${encodeURIComponent(taskId)}/workbook?token=${encodeURIComponent(token)}`;
+  const linkableColumns = new Set(
+    visualization.columns.filter((column) => (
+      isSecurityCodeColumn(column, visualization.rows)
+    )),
+  );
+  const methodologyText = (visualization.methodology ?? "").trim();
 
   return (
     <main className="research-viewer-shell">
@@ -155,11 +167,18 @@ export default function ResearchVisualizationPage() {
         <div>{payload.answer}</div>
       </section>
 
+      {methodologyText && (
+        <details className="research-viewer-methodology">
+          <summary>研究口径</summary>
+          <div>{methodologyText}</div>
+        </details>
+      )}
+
       <section className="research-viewer-panel">
         <div className="research-viewer-panel-heading research-viewer-table-heading">
           <div>
             <h2>结果明细</h2>
-            <p>表格显示当前搜索结果的前 {TABLE_ROW_LIMIT} 条，完整数据请下载 Excel。</p>
+            <p>把鼠标移到列名上可以查看每一列的定义和口径；完整数据请下载 Excel。</p>
           </div>
           <label className="research-viewer-search">
             <span>搜索结果</span>
@@ -173,14 +192,43 @@ export default function ResearchVisualizationPage() {
         <div className="research-viewer-table-wrap">
           <table className="research-viewer-table">
             <thead>
-              <tr>{visualization.columns.map((column) => <th key={column}>{column}</th>)}</tr>
+              <tr>
+                {visualization.columns.map((column) => {
+                  const note = columnNote(column, visualization.column_notes);
+                  return (
+                    <th key={column} title={note}>
+                      <span className="research-viewer-th-label" data-note={note}>
+                        {column}
+                      </span>
+                    </th>
+                  );
+                })}
+              </tr>
             </thead>
             <tbody>
               {tableRows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
-                  {visualization.columns.map((column) => (
-                    <td key={column}>{displayValue(row[column], column)}</td>
-                  ))}
+                  {visualization.columns.map((column) => {
+                    const quoteUrl = linkableColumns.has(column)
+                      ? securityQuotePageUrl(row[column])
+                      : null;
+                    return (
+                      <td key={column}>
+                        {quoteUrl ? (
+                          <a
+                            className="research-viewer-code-link"
+                            href={quoteUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {displayValue(row[column], column)}
+                          </a>
+                        ) : (
+                          displayValue(row[column], column)
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>

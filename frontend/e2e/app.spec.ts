@@ -59,6 +59,11 @@ test("research result page prioritizes the searchable table without a generic ch
           truncated: false,
           suggested_x: "代码",
           suggested_y: "动态市盈率(ttm)",
+          column_notes: {
+            "代码": "A股证券代码，含交易所后缀，链接到公开行情页。",
+            "动态市盈率(ttm)": "滚动市盈率 = 收盘价 / 近12个月每股收益。",
+          },
+          methodology: "收盘价为前复权口径；市盈率来自估值快照接口。",
         },
         artifact_name: "a_share_research.xlsx",
         expires_at: "2026-10-18T00:00:00Z",
@@ -74,6 +79,26 @@ test("research result page prioritizes the searchable table without a generic ch
   await expect(page.getByRole("table")).not.toContainText("20,221,215");
   await expect(page.getByRole("heading", { name: "交互图表" })).toHaveCount(0);
   await expect(page.getByRole("img")).toHaveCount(0);
+
+  // Column headers expose their recorded explanations on hover.
+  await expect(page.locator(".research-viewer-table th", { hasText: "动态市盈率(ttm)" })).toHaveAttribute(
+    "title",
+    "滚动市盈率 = 收盘价 / 近12个月每股收益。",
+  );
+
+  // Security codes link to their public quote pages.
+  const codeLink = page.locator(".research-viewer-code-link");
+  await expect(codeLink).toHaveText("600000.SH");
+  await expect(codeLink).toHaveAttribute(
+    "href",
+    "https://stockpage.10jqka.com.cn/600000/",
+  );
+
+  // The workbook methodology is readable on the page.
+  await expect(page.locator(".research-viewer-methodology summary")).toHaveText("研究口径");
+  await expect(page.locator(".research-viewer-methodology div")).toContainText(
+    "收盘价为前复权口径",
+  );
 });
 
 /* ------------------------------------------------------------------ */

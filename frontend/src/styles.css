@@ -1949,6 +1949,78 @@ table tbody tr:hover { background-color: #f1f3ee; }
   font-size: 0.75rem;
   letter-spacing: 0.01em;
 }
+.research-viewer-th-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: help;
+}
+.research-viewer-th-label::after {
+  content: "ⓘ";
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+.research-viewer-th-label::before {
+  content: attr(data-note);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: 340px;
+  padding: 10px 12px;
+  border: 1px solid #d4dfd7;
+  border-radius: 10px;
+  background: #fff;
+  color: #35443b;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  letter-spacing: normal;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 12px 32px rgba(30, 54, 42, 0.16);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.research-viewer-th-label:hover::before,
+.research-viewer-th-label:focus::before {
+  opacity: 1;
+  visibility: visible;
+}
+.research-viewer-code-link {
+  color: #17694a;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dashed #7fa793;
+}
+.research-viewer-code-link:hover {
+  color: #0f4e35;
+  border-bottom-style: solid;
+}
+.research-viewer-methodology {
+  max-width: 1240px;
+  margin: 14px auto 0;
+  padding: 14px 18px;
+  border: 1px dashed #c8d6cc;
+  border-radius: 12px;
+  background: #fbfdfc;
+  color: #4a5a50;
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+.research-viewer-methodology summary {
+  cursor: pointer;
+  color: #284739;
+  font-weight: 600;
+}
+.research-viewer-methodology div {
+  margin-top: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .research-viewer-table tbody tr:nth-child(even) { background: #f7faf8; }
 .research-viewer-table tbody tr:hover { background: #edf5f0; }
 .research-viewer-footer {

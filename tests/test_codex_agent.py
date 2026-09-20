@@ -458,6 +458,13 @@ def test_workbook_is_converted_to_bounded_interactive_dataset(tmp_path):
         "Valuation ranking",
         "Rank the complete market snapshot.",
         output_dir=tmp_path,
+        column_notes={
+            "name": "证券简称，来自交易所证券主档。",
+            "trade_date": "交易日，格式 YYYYMMDD。",
+            "收盘日": "行情收盘日期，格式 YYYYMMDD。",
+            "公告日期": "公告发布日期，格式 YYYYMMDD。",
+            "pe_ttm": "滚动市盈率 = 收盘价 / 近12个月每股收益。",
+        },
     )
 
     visualization = _build_research_visualization(workbook_path)
@@ -479,3 +486,34 @@ def test_workbook_is_converted_to_bounded_interactive_dataset(tmp_path):
     assert visualization.source_row_count == 2
     assert visualization.suggested_x == "name"
     assert visualization.suggested_y == "pe_ttm"
+    assert visualization.methodology == "Rank the complete market snapshot."
+    assert visualization.column_notes == {
+        "name": "证券简称，来自交易所证券主档。",
+        "trade_date": "交易日，格式 YYYYMMDD。",
+        "收盘日": "行情收盘日期，格式 YYYYMMDD。",
+        "公告日期": "公告发布日期，格式 YYYYMMDD。",
+        "pe_ttm": "滚动市盈率 = 收盘价 / 近12个月每股收益。",
+    }
+
+
+def test_legacy_workbook_without_notes_still_extracts_methodology(tmp_path):
+    workbook_path = build_research_workbook(
+        QueryResult(
+            query_id="legacy",
+            provider="tushare",
+            operation="daily",
+            status=QueryStatus.SUCCESS,
+            columns=["ts_code", "close"],
+            rows=[{"ts_code": "600000.SH", "close": 12.5}],
+            row_count=1,
+        ),
+        "Legacy study",
+        "前复权口径说明。",
+        output_dir=tmp_path,
+    )
+
+    visualization = _build_research_visualization(workbook_path)
+
+    assert visualization is not None
+    assert visualization.column_notes == {}
+    assert visualization.methodology == "前复权口径说明。"
