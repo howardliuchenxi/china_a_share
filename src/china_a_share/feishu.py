@@ -1499,13 +1499,9 @@ def build_feishu_quick_menu_card(include_strategy: bool = False) -> Dict[str, An
                     },
                     {
                         "tag": "button",
+                        "type": "primary",
                         "text": {"tag": "plain_text", "content": "策略列表"},
                         "value": {"action": "strategy_list"},
-                    },
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "运行规则"},
-                        "value": {"action": "strategy_run_all"},
                     },
                 ],
             }

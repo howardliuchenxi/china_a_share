@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta
 import logging
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Optional, Protocol
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -81,9 +81,18 @@ class StrategyScanner:
             preview=False,
         )
 
-    def run_manual_preview(self, owner_open_id: str, request_id: str) -> None:
-        """Run one owner's enabled strategies without reading or writing dedup markers."""
+    def run_manual_preview(
+        self, owner_open_id: str, request_id: str, strategy_id: Optional[str] = None
+    ) -> None:
+        """Run one owner's enabled strategies without reading or writing dedup markers.
+
+        With strategy_id, restrict the run to that single strategy; a missing or
+        disabled id simply runs nothing, letting the interaction layer decide
+        what notice to show.
+        """
         strategies = self._store.list_strategies(owner_open_id, enabled=True)
+        if strategy_id is not None:
+            strategies = [s for s in strategies if s.id == strategy_id]
         if not strategies:
             return
         requested_date = self._scan_date()

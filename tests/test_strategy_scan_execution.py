@@ -216,6 +216,46 @@ def test_manual_preview_ignores_and_does_not_mutate_deduplication() -> None:
     assert "000001.SZ" in card_content(sender.cards[0][1])
 
 
+def test_manual_preview_with_strategy_id_runs_only_that_strategy() -> None:
+    store = MemoryStrategyStore()
+    first = make_strategy("preview-first")
+    second = make_strategy("preview-second")
+    disabled = make_strategy("preview-disabled").model_copy(update={"enabled": False})
+    for strategy in (first, second, disabled):
+        store.put_strategy(strategy, strategy.creator_open_id)
+    sender = FakeSender()
+
+    scanner(
+        FakeLoader(),
+        FakeEngine({first.id: {"000001.SZ"}, second.id: {"000001.SZ"}}),
+        store,
+        sender,
+    ).run_manual_preview(
+        first.creator_open_id, "request-preview-one", strategy_id=second.id
+    )
+
+    assert len(sender.cards) == 1
+    assert f"Strategy {second.id}" in card_content(sender.cards[0][1])
+
+
+def test_manual_preview_with_unknown_strategy_id_runs_nothing() -> None:
+    strategy = make_strategy("preview-known")
+    store = MemoryStrategyStore()
+    store.put_strategy(strategy, strategy.creator_open_id)
+    sender = FakeSender()
+
+    scanner(
+        FakeLoader(),
+        FakeEngine({strategy.id: {"000001.SZ"}}),
+        store,
+        sender,
+    ).run_manual_preview(
+        strategy.creator_open_id, "request-preview-none", strategy_id="no-such-id"
+    )
+
+    assert sender.cards == []
+
+
 def test_strategy_failure_isolated_but_reported_after_later_strategy() -> None:
     store = MemoryStrategyStore()
     first = make_strategy("bad")
