@@ -5,7 +5,9 @@ not serve, so GLM chat research runs through this bounded function-calling
 loop instead. It reuses the same research toolbox, remote Python sandbox,
 developer instructions, artifact persistence, and visualization assembly as
 the Codex runtime, keeping capability parity wherever the wire protocol is
-not the bottleneck.
+not the bottleneck. Planning and error-recovery depth approach the Codex
+harness through enabled thinking, a high tool-round budget, and an explicit
+retry strategy instead of protocol-level orchestration.
 """
 
 from __future__ import annotations
@@ -13,8 +15,10 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, List, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -33,9 +37,33 @@ from china_a_share.feishu_agent import (
 
 GLM_RUNTIME_NAME = "glm"
 GLM_CHAT_PATH = "/chat/completions"
-GLM_RUNTIME_TIMEOUT_SECONDS = 180
-GLM_RUNTIME_MAX_ROUNDS = 24
-GLM_RUNTIME_MAX_OUTPUT_TOKENS = 12_000
+GLM_RUNTIME_TIMEOUT_SECONDS = 300
+GLM_RUNTIME_MAX_ROUNDS = 60
+GLM_RUNTIME_MAX_OUTPUT_TOKENS = 16_000
+GLM_RECOVERY_INSTRUCTIONS = (
+    "Research loop discipline:\n"
+    "- Plan before acting: decompose the question into the data you need, "
+    "then fetch exactly that.\n"
+    "- When a tool call fails or returns an error payload, do not give up "
+    "and do not answer from memory. Analyze the error, adjust parameters, "
+    "narrow the query, or split it into smaller queries, then retry.\n"
+    "- When a requested metric is unavailable, use the nearest documented "
+    "alternative and state the substitution explicitly in the final answer.\n"
+    "- Verify surprising numbers by cross-checking one independent query "
+    "before reporting them.\n"
+    "- Keep going until every part of the user's question is answered with "
+    "retrieved data; only stop when the answer is complete."
+)
+
+
+def _current_date_line() -> str:
+    """Anchor relative dates to the real Shanghai trading calendar clock."""
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    return (
+        f"Current date: {today} (Asia/Shanghai). Resolve every relative "
+        "date such as 最近/今天/上周 from this date, and prefer the latest "
+        "completed trading day for end-of-day data."
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +97,14 @@ class GlmFeishuAgentRuntime:
             artifact_dir.mkdir()
             toolbox = self._toolbox_factory(artifact_dir, request.conversation_id)
             messages: List[Dict[str, Any]] = [
-                {"role": "system", "content": _developer_instructions()},
+                {
+                    "role": "system",
+                    "content": (
+                        f"{_current_date_line()}\n\n"
+                        f"{_developer_instructions()}\n\n"
+                        f"{GLM_RECOVERY_INSTRUCTIONS}"
+                    ),
+                },
                 {"role": "user", "content": _request_prompt(request)},
             ]
             answer = ""
@@ -85,6 +120,7 @@ class GlmFeishuAgentRuntime:
                         "messages": messages,
                         "tools": toolbox.definitions,
                         "tool_choice": "auto",
+                        "thinking": {"type": "enabled"},
                         "temperature": 0,
                         "max_tokens": GLM_RUNTIME_MAX_OUTPUT_TOKENS,
                         "stream": False,
@@ -101,7 +137,14 @@ class GlmFeishuAgentRuntime:
                 if not tool_calls:
                     answer = str(message.get("content") or "").strip()
                     break
-                messages.append(message)
+                # Reasoning fields are provider-specific; strip them so the
+                # accumulated history stays plain OpenAI-compatible.
+                history_message = {
+                    key: value
+                    for key, value in message.items()
+                    if key != "reasoning_content"
+                }
+                messages.append(history_message)
                 for tool_call in tool_calls:
                     function = tool_call.get("function") or {}
                     name = str(function.get("name") or "")

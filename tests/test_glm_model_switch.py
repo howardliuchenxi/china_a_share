@@ -491,6 +491,7 @@ def test_glm_runtime_runs_bounded_tool_loop():
                         "message": {
                             "role": "assistant",
                             "content": None,
+                            "reasoning_content": "先检索日线数据。",
                             "tool_calls": [
                                 {
                                     "id": "call-1",
@@ -541,12 +542,28 @@ def test_glm_runtime_runs_bounded_tool_loop():
     assert kwargs["headers"]["Authorization"] == "Bearer zai-key"
     assert kwargs["json"]["model"] == "glm-5.3"
     assert kwargs["json"]["tools"] == toolbox.definitions
+    assert kwargs["json"]["thinking"] == {"type": "enabled"}
+    assert kwargs["json"]["max_tokens"] >= 16_000
+    system_prompt = kwargs["json"]["messages"][0]["content"]
+    assert "tool call fails" in system_prompt
+    assert "adjust parameters" in system_prompt
+    assert "Current date:" in system_prompt
+    assert "Asia/Shanghai" in system_prompt
+    history_messages = session.calls[1][1]["json"]["messages"]
     tool_message = next(
-        message
-        for message in session.calls[1][1]["json"]["messages"]
-        if message.get("role") == "tool"
+        message for message in history_messages if message.get("role") == "tool"
     )
     assert json.loads(tool_message["content"]) == {"results": ["daily"]}
+    # Provider-specific reasoning must not leak back into the request history.
+    assert all(
+        "reasoning_content" not in message for message in history_messages
+    )
+
+
+def test_glm_runtime_budgets_sixty_tool_rounds():
+    from china_a_share.glm_agent import GLM_RUNTIME_MAX_ROUNDS
+
+    assert GLM_RUNTIME_MAX_ROUNDS >= 60
 
 
 def test_read_llm_preference_returns_none_without_bucket():
