@@ -95,14 +95,40 @@ class FakeScanner:
             raise RuntimeError("strategy preview failed")
 
 
-def build_interaction(scanner=None):
+class FakeCompiler:
+    def __init__(self, result=None, raising=False):
+        self.result = result
+        self.raising = raising
+        self.calls = []
+
+    def compile(self, text):
+        self.calls.append(text)
+        if self.raising:
+            raise RuntimeError("compiler exploded")
+        return self.result
+
+
+def build_interaction(scanner=None, compiler=None):
     store = MemoryStrategyStore()
     coordinator = StrategyInteractionCoordinator(
         store,
         scanner,
         clock=lambda: FIXED_NOW,
+        compiler=compiler,
     )
     return coordinator, store
+
+
+def seed_draft_at_rules_step(coordinator, store, owner="ou_a", name="策略甲"):
+    coordinator.handle_message(owner, "oc_chat", f"新建策略 {name}")
+    draft = store.list_drafts(owner)[0]
+    coordinator.handle_card_action(
+        owner,
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+    return store.get_draft(draft.draft_id, owner)
 
 
 def card_text(card):
@@ -403,6 +429,105 @@ def test_toggle_and_delete_card_actions_refresh_list():
     )
     assert "还没有已保存的策略" in card_text(list_card)
     assert store.list_strategies("ou_a") == []
+
+
+def test_natural_language_rules_compile_to_validated_rules():
+    from china_a_share.discovery.rule_compiler import RuleCompileResult
+
+    compiler = FakeCompiler(
+        result=RuleCompileResult(
+            rules=[LimitUpRule(window=1)],
+        )
+    )
+    coordinator, store = build_interaction(compiler=compiler)
+    seed_draft_at_rules_step(coordinator, store)
+
+    card = coordinator.handle_message(
+        "ou_a", "oc_chat", "规则 60天内跌掉三成后横盘，今天涨停"
+    )
+    assert "保存策略" in card_text(card)
+    assert compiler.calls == ["60天内跌掉三成后横盘，今天涨停"]
+    draft = store.list_drafts("ou_a")[0]
+    assert draft.state == DraftState.READY
+    assert draft.rules == [LimitUpRule(window=1)]
+
+
+def test_unclear_rules_return_candidate_option_buttons():
+    from china_a_share.discovery.rule_compiler import RuleCompileResult
+
+    compiler = FakeCompiler(
+        result=RuleCompileResult(
+            candidates=["涨停", "涨停 窗口=3", "这不是有效DSL"],
+        )
+    )
+    coordinator, store = build_interaction(compiler=compiler)
+    draft = seed_draft_at_rules_step(coordinator, store)
+
+    card = coordinator.handle_message("ou_a", "oc_chat", "规则 最近交易日涨停")
+    text = card_text(card)
+    # Only the two DSL-parseable candidates become buttons; the junk one is dropped.
+    assert "涨停 窗口=3" in text
+    assert "这不是有效DSL" not in text
+    assert "补充描述" in text
+    # The draft itself is unchanged and still waiting for rules.
+    assert store.get_draft(draft.draft_id, "ou_a").state == DraftState.AWAITING_RULES
+
+    adopted = coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_rules_candidate",
+        {"draft_id": draft.draft_id, "text": "涨停 窗口=3"},
+    )
+    assert "保存策略" in card_text(adopted)
+    updated = store.get_draft(draft.draft_id, "ou_a")
+    assert updated.state == DraftState.READY
+    assert updated.rules == [LimitUpRule(window=3)]
+
+
+def test_candidate_action_is_denied_for_other_users():
+    coordinator, store = build_interaction()
+    draft = seed_draft_at_rules_step(coordinator, store)
+
+    denied = coordinator.handle_card_action(
+        "ou_b",
+        "oc_chat",
+        "strategy_rules_candidate",
+        {"draft_id": draft.draft_id, "text": "涨停"},
+    )
+    assert "无权访问" in card_text(denied)
+
+
+def test_uncompilable_rules_show_supported_vocabulary():
+    compiler = FakeCompiler(result=None)
+    coordinator, store = build_interaction(compiler=compiler)
+    seed_draft_at_rules_step(coordinator, store)
+
+    card = coordinator.handle_message("ou_a", "oc_chat", "规则 成交量放大十倍")
+    text = card_text(card)
+    assert "暂时没有接近的候选" in text
+    assert "回撤" in text and "金叉" in text and "涨停" in text
+    assert "补充描述" in text
+    assert store.list_drafts("ou_a")[0].state == DraftState.AWAITING_RULES
+
+
+def test_compiler_failure_falls_back_to_options_card():
+    compiler = FakeCompiler(raising=True)
+    coordinator, store = build_interaction(compiler=compiler)
+    seed_draft_at_rules_step(coordinator, store)
+
+    card = coordinator.handle_message("ou_a", "oc_chat", "规则 回撤 阈值=30%")
+    assert "条件解析" in card_text(card)
+    assert store.list_drafts("ou_a")[0].state == DraftState.AWAITING_RULES
+
+
+def test_without_compiler_strict_dsl_errors_still_guide_user():
+    coordinator, store = build_interaction()
+    seed_draft_at_rules_step(coordinator, store)
+
+    card = coordinator.handle_message("ou_a", "oc_chat", "规则 回撤 阈值=30%")
+    text = card_text(card)
+    assert "窗口" in text
+    assert store.list_drafts("ou_a")[0].state == DraftState.AWAITING_RULES
 
 
 def test_menu_cards_defer_manual_runs_to_strategy_list():
