@@ -45,7 +45,9 @@ def test_worker_records_feishu_initialization_failure(monkeypatch):
     monkeypatch.setattr(
         worker,
         "create_feishu_agent_runtime",
-        lambda _settings: (_ for _ in ()).throw(RuntimeError("missing worker config")),
+        lambda _settings, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("missing worker config")
+        ),
     )
     with pytest.raises(RuntimeError, match="missing worker config"):
         worker.main()

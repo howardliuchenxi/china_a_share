@@ -1,5 +1,10 @@
 """Dependency assembly for the provider-neutral application."""
 
+import os
+from pathlib import Path
+from typing import Optional
+from uuid import uuid4
+
 from china_a_share.application.workflow import (
     ASharePlanValidator,
     AnalysisService,
@@ -45,8 +50,18 @@ from china_a_share.feishu import (
 )
 from china_a_share.feishu_agent import (
     FeishuAgentCoordinator,
+    ResearchToolbox,
 )
 from china_a_share.codex_agent import CodexFeishuAgentRuntime
+from china_a_share.glm_agent import GlmFeishuAgentRuntime
+from china_a_share.llm_preference import (
+    CloudStorageLlmPreferenceStore,
+    LlmPreferenceController,
+    glm_agent_base_url,
+    glm_agent_model,
+    resolve_active_provider,
+)
+from china_a_share.research_sandbox import RemotePythonSandbox
 
 
 def create_analysis_service(settings: Settings) -> AnalysisService:
@@ -142,11 +157,72 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         allowed_open_ids=allowed_open_ids,
         agent_coordinator=agent_coordinator,
         strategy_interaction=strategy_interaction,
+        llm_switcher=create_llm_preference_controller(settings),
     )
 
 
-def create_feishu_agent_runtime(settings: Settings) -> CodexFeishuAgentRuntime:
-    """Assemble the Feishu channel around the full Codex agent harness."""
+def create_llm_preference_controller(
+    settings: Settings,
+) -> Optional[LlmPreferenceController]:
+    """Build the chat model-switch controller when persistence is available."""
+    if not settings.tushare_cache_bucket:
+        return None
+    return LlmPreferenceController(
+        settings,
+        CloudStorageLlmPreferenceStore(settings.tushare_cache_bucket),
+    )
+
+
+def _build_glm_research_toolbox(
+    settings: Settings,
+    artifact_dir: Path,
+    conversation_id: str,
+) -> ResearchToolbox:
+    """Assemble the same toolbox boundary the Codex MCP server exposes."""
+    dataset_archive = None
+    session_dataset = None
+    task_id = os.getenv("ANALYSIS_TASK_ID", "").strip()
+    if task_id:
+        dataset_archive = CloudStorageAnalysisTaskStore(
+            settings.tushare_cache_bucket
+        )
+        session_dataset = dataset_archive.get_session_workspace(conversation_id)
+    return ResearchToolbox(
+        _create_feishu_data_provider(settings),
+        uuid4().hex,
+        python_sandbox=RemotePythonSandbox(settings.research_sandbox_url),
+        artifact_dir=artifact_dir,
+        dataset_archive=dataset_archive,
+        task_id=task_id,
+        session_dataset=session_dataset,
+    )
+
+
+def create_feishu_agent_runtime(
+    settings: Settings,
+    *,
+    llm_preference: Optional[str] = None,
+):
+    """Assemble the configured Feishu research runtime.
+
+    The deployed Codex harness stays the default; a persisted GLM preference
+    selects the OpenAI-compatible chat tool loop on the Zhipu endpoint.
+    """
+    if resolve_active_provider(settings, llm_preference) == "glm":
+        if not settings.research_sandbox_url:
+            raise ConfigurationError(
+                "RESEARCH_SANDBOX_URL is required for the GLM research runtime."
+            )
+        return GlmFeishuAgentRuntime(
+            base_url=glm_agent_base_url(settings),
+            model=glm_agent_model(settings),
+            api_key=settings.zai_api_key,
+            toolbox_factory=lambda artifact_dir, conversation_id: (
+                _build_glm_research_toolbox(
+                    settings, artifact_dir, conversation_id
+                )
+            ),
+        )
     required_settings = {
         "LLM_BASE_URL": settings.llm_base_url,
         "LLM_MODEL": settings.llm_model,

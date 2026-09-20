@@ -230,7 +230,14 @@ available in code as a rollback path but is not the default Feishu runtime.
 
 Mentioning the bot without additional text opens an interactive quick menu.
 The card accepts a research prompt and exposes shortcuts for creating a session,
-listing sessions, and checking task progress. Enable the Feishu
+listing sessions, and checking task progress. The card also shows the active
+research model with one-tap switching between DeepSeek (the deployed Codex
+agent, pay-as-you-go) and GLM (the Zhipu Coding Plan quota through an
+OpenAI-compatible tool loop); the same switch is available as the text
+commands `切换模型 glm`, `切换模型 deepseek`, and `当前模型`. The choice
+persists in the application bucket, applies to the next research task,
+requires `ZAI_API_KEY` in the deployment for GLM, and always falls back to
+the deployed DeepSeek default. Enable the Feishu
 `card.action.trigger` callback and point its developer-server subscription to
 the same `/api/integrations/feishu/events` endpoint used by message events.
 

@@ -51,6 +51,9 @@ class Settings:
     public_app_url: str = ""
     # Bearer token required by the strategy daily-scan scheduler entry point.
     strategy_scan_token: str = ""
+    # Optional overrides for the GLM chat-research runtime selected in Feishu.
+    glm_agent_base_url: str = ""
+    glm_agent_model: str = ""
 
     @classmethod
     def from_env(cls, env_file: Union[str, Path] = ".env") -> "Settings":
@@ -98,6 +101,8 @@ class Settings:
         research_sandbox_url = os.getenv("RESEARCH_SANDBOX_URL", "").strip()
         public_app_url = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
         strategy_scan_token = os.getenv("STRATEGY_SCAN_TOKEN", "").strip()
+        glm_agent_base_url = os.getenv("GLM_AGENT_BASE_URL", "").strip()
+        glm_agent_model = os.getenv("GLM_AGENT_MODEL", "").strip()
         return cls(
             tushare_token=token,
             deepseek_api_key=deepseek_api_key,
@@ -126,4 +131,6 @@ class Settings:
             research_sandbox_url=research_sandbox_url,
             public_app_url=public_app_url,
             strategy_scan_token=strategy_scan_token,
+            glm_agent_base_url=glm_agent_base_url,
+            glm_agent_model=glm_agent_model,
         )

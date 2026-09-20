@@ -77,6 +77,14 @@ QUICK_MENU_COMMAND_PATTERN = re.compile(
     r"^(?:帮助|菜单|快捷菜单|help)$",
     re.IGNORECASE,
 )
+MODEL_COMMAND_PATTERN = re.compile(
+    r"^(?:切换模型|当前模型|switch\s+model|current\s+model)"
+    r"(?:\s+(?P<target>\S+))?$",
+    re.IGNORECASE,
+)
+MODEL_COMMAND_QUERY_PATTERN = re.compile(
+    r"^(?:当前模型|current\s+model)", re.IGNORECASE
+)
 MAX_FEISHU_RESULT_ROWS = 10
 logger = logging.getLogger(__name__)
 
@@ -687,6 +695,7 @@ class FeishuResearchBot:
         allowed_open_ids: Optional[set[str]] = None,
         agent_coordinator: Optional[FeishuAgentCoordinator] = None,
         strategy_interaction: Optional[StrategyInteractionCoordinator] = None,
+        llm_switcher: Optional[Any] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
             raise FeishuConfigurationError(
@@ -700,6 +709,7 @@ class FeishuResearchBot:
         self._allowed_open_ids = allowed_open_ids or set()
         self._agent_coordinator = agent_coordinator
         self._strategy_interaction = strategy_interaction
+        self._llm_switcher = llm_switcher
 
     @property
     def strategy_scanner(self):
@@ -844,6 +854,8 @@ class FeishuResearchBot:
                 "new_session": "新建会话",
                 "list_sessions": "会话列表",
                 "task_status": "查看进度",
+                "switch_model_glm": "切换模型 glm",
+                "switch_model_deepseek": "切换模型 deepseek",
             }.get(action_name, "")
         if not prompt:
             return None
@@ -936,7 +948,12 @@ class FeishuResearchBot:
                 self._sender.reply_card(
                     event.message_id,
                     build_feishu_quick_menu_card(
-                        include_strategy=self._strategy_interaction is not None
+                        include_strategy=self._strategy_interaction is not None,
+                        model_status=(
+                            self._llm_switcher.status_line()
+                            if self._llm_switcher is not None
+                            else ""
+                        ),
                     ),
                 )
                 reply = None
@@ -958,6 +975,8 @@ class FeishuResearchBot:
                     reply = self._status_reply(event)
                 elif RETRY_COMMAND_PATTERN.match(event.prompt):
                     reply = self._retry_reply(event)
+                elif MODEL_COMMAND_PATTERN.match(event.prompt):
+                    reply = self._model_command_reply(event)
                 else:
                     reply = self._submit_reply(event)
             if reply is not None:
@@ -1116,6 +1135,21 @@ class FeishuResearchBot:
         if task.status == AnalysisTaskStatus.SUCCEEDED:
             self._record_completed_context(record, task)
         return format_analysis_task(task)
+
+    def _model_command_reply(self, event: FeishuMessageEvent) -> str:
+        """Answer 切换模型/当前模型 commands against persisted preference."""
+        if self._llm_switcher is None:
+            return (
+                "模型切换不可用：当前部署未配置持久化偏好存储。"
+                "请联系管理员配置应用存储桶。"
+            )
+        if MODEL_COMMAND_QUERY_PATTERN.match(event.prompt):
+            return self._llm_switcher.status_reply()
+        match = MODEL_COMMAND_PATTERN.match(event.prompt)
+        target = (match.groupdict().get("target") or "").strip() if match else ""
+        if not target:
+            return self._llm_switcher.status_reply()
+        return self._llm_switcher.switch(target)
 
     def _retry_reply(self, event: FeishuMessageEvent) -> Optional[str]:
         """Submit a new attempt from one failed task without changing its request."""
@@ -1432,16 +1466,31 @@ def _format_analysis_response(response: AnalysisResponse) -> str:
     return "\n".join(lines)
 
 
-def build_feishu_quick_menu_card(include_strategy: bool = False) -> Dict[str, Any]:
+def build_feishu_quick_menu_card(
+    include_strategy: bool = False,
+    model_status: str = "",
+) -> Dict[str, Any]:
     """Return the interactive research form and common command shortcuts."""
-    elements: list[Dict[str, Any]] = [
-        {
-            "tag": "div",
-            "text": {
-                "tag": "lark_md",
-                "content": "输入研究问题，或者选择一个快捷操作。",
+    elements: list[Dict[str, Any]] = []
+    if model_status:
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**研究模型**：{model_status}",
+                },
+            }
+        )
+    elements.extend(
+        [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "输入研究问题，或者选择一个快捷操作。",
+                },
             },
-        },
         {
             "tag": "form",
             "name": "research_form",
@@ -1486,7 +1535,8 @@ def build_feishu_quick_menu_card(include_strategy: bool = False) -> Dict[str, An
                 },
             ],
         },
-    ]
+        ]
+    )
     if include_strategy:
         elements.append(
             {
@@ -1506,6 +1556,23 @@ def build_feishu_quick_menu_card(include_strategy: bool = False) -> Dict[str, An
                 ],
             }
         )
+    elements.append(
+        {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "🤖 切到 GLM"},
+                    "value": {"action": "switch_model_glm"},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "🤖 切到 DeepSeek"},
+                    "value": {"action": "switch_model_deepseek"},
+                },
+            ],
+        }
+    )
     elements.append(
         {
             "tag": "note",

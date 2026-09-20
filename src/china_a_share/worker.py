@@ -9,6 +9,7 @@ from china_a_share.bootstrap import (
     create_feishu_agent_runtime,
 )
 from china_a_share.config import ConfigurationError, Settings
+from china_a_share.llm_preference import read_llm_preference
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
     CloudStorageAnalysisTaskStore,
@@ -45,7 +46,10 @@ def main() -> None:
             public_app_url=settings.public_app_url,
         )
         try:
-            runtime = create_feishu_agent_runtime(settings)
+            runtime = create_feishu_agent_runtime(
+                settings,
+                llm_preference=read_llm_preference(settings),
+            )
             progress_sink = FeishuOpenApiClient(
                 settings.feishu_app_id,
                 settings.feishu_app_secret,
