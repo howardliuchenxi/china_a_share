@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { compactCalendarDate, isDateLikeColumn } from "./calendarDates";
 import { columnNote } from "./researchColumnNotes";
+import { ResearchMarkdown } from "./researchMarkdown";
 import { isSecurityCodeColumn, securityQuotePageUrl } from "./securityLinks";
 
 type ViewerValue = string | number | boolean | null;
@@ -141,13 +142,13 @@ export default function ResearchVisualizationPage() {
 
       <section className="research-viewer-summary">
         <h2>研究结论</h2>
-        <div>{payload.answer}</div>
+        <ResearchMarkdown text={payload.answer} />
       </section>
 
       {methodologyText && (
         <details className="research-viewer-methodology">
           <summary>研究口径</summary>
-          <div>{methodologyText}</div>
+          <ResearchMarkdown text={methodologyText} />
         </details>
       )}
 

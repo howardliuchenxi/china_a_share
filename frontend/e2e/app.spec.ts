@@ -49,7 +49,15 @@ test("research result page prioritizes the searchable table without a generic ch
       contentType: "application/json",
       body: JSON.stringify({
         task_id: "research-task",
-        answer: "研究完成。",
+        answer: [
+          "**一、本次口径（底座换成滚动累积的集合b）**",
+          "- **集合b（滚动累积）**：集合A内，大涨日＝当日**未复权收盘涨幅 ≥5% 且为近 10 个交易日内首次**（首现）→ 1265 只",
+          "- 普通说明行，无加粗。",
+          "",
+          "| N 档 | b1 | b2 |",
+          "|---|---|---|",
+          "| 只数 | 10 | 12 |",
+        ].join("\n"),
         visualization: {
           title: "估值筛选结果",
           columns: ["代码", "名称", "收盘日", "最近大涨日", "动态市盈率(ttm)"],
@@ -82,12 +90,21 @@ test("research result page prioritizes the searchable table without a generic ch
   await page.goto("/research/research-task?token=viewer-token");
 
   await expect(page.getByRole("heading", { name: "结果明细" })).toBeVisible();
-  await expect(page.getByRole("table")).toContainText("浦发银行");
-  await expect(page.getByRole("table")).toContainText("2022-12-15");
-  await expect(page.getByRole("table")).not.toContainText("20,221,215");
+  // The markdown answer renders real structure instead of literal markers.
+  const summary = page.locator(".research-viewer-summary");
+  await expect(summary.locator("strong", { hasText: "集合b（滚动累积）" })).toBeVisible();
+  await expect(summary).toContainText("本次口径");
+  await expect(summary).toContainText("普通说明行，无加粗。");
+  await expect(summary).not.toContainText("**");
+  await expect(summary.locator(".research-markdown-list li")).toHaveCount(2);
+  await expect(summary.locator(".research-markdown-table")).toContainText("只数");
+  const resultsTable = page.locator(".research-viewer-table");
+  await expect(resultsTable).toContainText("浦发银行");
+  await expect(resultsTable).toContainText("2022-12-15");
+  await expect(resultsTable).not.toContainText("20,221,215");
   // Agent-named date columns beyond the enumerated suffixes stay calendar dates.
-  await expect(page.getByRole("table")).toContainText("2026-09-17");
-  await expect(page.getByRole("table")).not.toContainText("20,260,917");
+  await expect(resultsTable).toContainText("2026-09-17");
+  await expect(resultsTable).not.toContainText("20,260,917");
   await expect(page.getByRole("heading", { name: "交互图表" })).toHaveCount(0);
   await expect(page.getByRole("img")).toHaveCount(0);
 

@@ -2084,3 +2084,44 @@ table tbody tr:hover { background-color: #f1f3ee; }
   .research-viewer-summary,
   .research-viewer-panel { padding: 18px; }
 }
+
+/* Rendered markdown inside the research viewer answer and methodology. */
+.research-viewer-summary .research-markdown,
+.research-viewer-methodology .research-markdown {
+  color: #32443a;
+  line-height: 1.75;
+  white-space: normal;
+  word-break: break-word;
+}
+.research-markdown-paragraph { margin: 0 0 10px; }
+.research-markdown-paragraph:last-child,
+.research-markdown-list:last-child,
+.research-markdown-table:last-child { margin-bottom: 0; }
+.research-markdown-heading {
+  margin: 14px 0 8px;
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.research-markdown-heading:first-child { margin-top: 0; }
+.research-markdown-list { margin: 0 0 10px; padding-left: 1.35em; }
+.research-markdown-list li { margin: 3px 0; }
+.research-markdown-list strong,
+.research-markdown-paragraph strong { font-weight: 750; }
+.research-markdown-table {
+  margin: 10px 0 14px;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.research-markdown-table th,
+.research-markdown-table td {
+  padding: 7px 11px;
+  border: 1px solid #e0e8e3;
+  text-align: left;
+}
+.research-markdown-table th {
+  color: #fff;
+  background: #284739;
+  font-size: 0.75rem;
+}
+.research-markdown-table tr:nth-child(even) td { background: #f6f9f7; }
