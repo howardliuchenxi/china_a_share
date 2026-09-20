@@ -130,7 +130,45 @@ class FakeSession:
 
     def post(self, *args, **kwargs):
         self.calls.append((args, kwargs))
-        return FakeResponse(self.responses.pop(0))
+        item = self.responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return FakeResponse(item)
+
+
+def test_glm_runtime_retries_one_transient_read_timeout():
+    import requests as requests_module
+
+    toolbox = FakeToolbox()
+    session = FakeSession(
+        [
+            requests_module.Timeout("read timed out"),
+            {
+                "choices": [
+                    {"message": {"role": "assistant", "content": "恢复后的答案。"}}
+                ]
+            },
+        ]
+    )
+    runtime = GlmFeishuAgentRuntime(
+        base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        model="glm-5.3",
+        api_key="zai-key",
+        toolbox_factory=lambda artifact_dir, conversation_id: toolbox,
+        session=session,
+    )
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="任意问题",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        lambda stage, message: None,
+    )
+
+    assert outcome.answer == "恢复后的答案。"
+    assert len(session.calls) == 2
 
 
 def glm_capable_settings(**overrides):
@@ -549,6 +587,8 @@ def test_glm_runtime_runs_bounded_tool_loop():
     assert "adjust parameters" in system_prompt
     assert "Current date:" in system_prompt
     assert "Asia/Shanghai" in system_prompt
+    assert "thousands of CNY" in system_prompt
+    assert "clarifying" in system_prompt
     history_messages = session.calls[1][1]["json"]["messages"]
     tool_message = next(
         message for message in history_messages if message.get("role") == "tool"

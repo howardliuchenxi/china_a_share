@@ -33,11 +33,13 @@ from china_a_share.feishu_agent import (
     FeishuAgentRequest,
     ResearchToolbox,
 )
+from china_a_share.observability import log_event
 
 
 GLM_RUNTIME_NAME = "glm"
 GLM_CHAT_PATH = "/chat/completions"
-GLM_RUNTIME_TIMEOUT_SECONDS = 300
+GLM_RUNTIME_TIMEOUT_SECONDS = 600
+GLM_RUNTIME_TIMEOUT_RETRIES = 1
 GLM_RUNTIME_MAX_ROUNDS = 60
 GLM_RUNTIME_MAX_OUTPUT_TOKENS = 16_000
 GLM_RECOVERY_INSTRUCTIONS = (
@@ -47,6 +49,14 @@ GLM_RECOVERY_INSTRUCTIONS = (
     "- When a tool call fails or returns an error payload, do not give up "
     "and do not answer from memory. Analyze the error, adjust parameters, "
     "narrow the query, or split it into smaller queries, then retry.\n"
+    "- Unit discipline: Tushare daily.amount is in thousands of CNY (千元) "
+    "and daily.vol is in lots (手). State the raw unit and the conversion "
+    "whenever reporting monetary figures, and sanity-check the magnitude "
+    "against typical A-share levels before reporting.\n"
+    "- When the request is materially ambiguous (for example an unclear "
+    "relative date range such as 上周 on a weekend), ask a clarifying "
+    "question with concrete options and one recommended default instead "
+    "of silently guessing one interpretation.\n"
     "- When a requested metric is unavailable, use the nearest documented "
     "alternative and state the substitution explicitly in the final answer.\n"
     "- Verify surprising numbers by cross-checking one independent query "
@@ -86,6 +96,32 @@ class GlmFeishuAgentRuntime:
         self._toolbox_factory = toolbox_factory
         self._session = session or requests.Session()
 
+    def _post_with_retry(self, request_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Post one chat request, retrying transient read timeouts once."""
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        last_exc: Optional[Exception] = None
+        for attempt in range(GLM_RUNTIME_TIMEOUT_RETRIES + 1):
+            try:
+                return self._session.post(
+                    self._api_url,
+                    headers=headers,
+                    json=request_payload,
+                    timeout=GLM_RUNTIME_TIMEOUT_SECONDS,
+                ).json()
+            except requests.Timeout as exc:
+                last_exc = exc
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "glm_agent_request_timeout",
+                    attempt=attempt + 1,
+                    retries=GLM_RUNTIME_TIMEOUT_RETRIES,
+                )
+        raise last_exc
+
     def run(
         self,
         request: FeishuAgentRequest,
@@ -109,13 +145,8 @@ class GlmFeishuAgentRuntime:
             ]
             answer = ""
             for round_index in range(GLM_RUNTIME_MAX_ROUNDS):
-                payload = self._session.post(
-                    self._api_url,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
+                payload = self._post_with_retry(
+                    {
                         "model": self._model,
                         "messages": messages,
                         "tools": toolbox.definitions,
@@ -124,9 +155,8 @@ class GlmFeishuAgentRuntime:
                         "temperature": 0,
                         "max_tokens": GLM_RUNTIME_MAX_OUTPUT_TOKENS,
                         "stream": False,
-                    },
-                    timeout=GLM_RUNTIME_TIMEOUT_SECONDS,
-                ).json()
+                    }
+                )
                 error = payload.get("error")
                 if error:
                     raise RuntimeError(
