@@ -308,7 +308,11 @@ def build_rule_options_card(
 
 
 def build_strategy_menu_card() -> Dict[str, Any]:
-    """Return the strategy management menu shown inside the group chat."""
+    """Return the strategy management menu shown inside the group chat.
+
+    Manual runs live inside the strategy list, where each strategy can be run
+    on its own, so the menu only offers creating and listing.
+    """
     return {
         "config": {"wide_screen_mode": True},
         "header": {
@@ -320,7 +324,10 @@ def build_strategy_menu_card() -> Dict[str, Any]:
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": "策略会按交易日自动扫描并推送结果卡片，也可以随时手动运行。",
+                    "content": (
+                        "策略会按交易日自动扫描并推送结果卡片；"
+                        "手动运行请在策略列表中选择单条或全部运行。"
+                    ),
                 },
             },
             {
@@ -333,14 +340,9 @@ def build_strategy_menu_card() -> Dict[str, Any]:
                     },
                     {
                         "tag": "button",
+                        "type": "primary",
                         "text": {"tag": "plain_text", "content": "策略列表"},
                         "value": {"action": "strategy_list"},
-                    },
-                    {
-                        "tag": "button",
-                        "type": "primary",
-                        "text": {"tag": "plain_text", "content": "运行规则"},
-                        "value": {"action": "strategy_run_all"},
                     },
                 ],
             },
@@ -525,6 +527,14 @@ def build_strategy_list_card(strategies: list[StrategyConfig]) -> Dict[str, Any]
                 "actions": [
                     {
                         "tag": "button",
+                        "text": {"tag": "plain_text", "content": "运行"},
+                        "value": {
+                            "action": "strategy_run",
+                            "strategy_id": strategy.id,
+                        },
+                    },
+                    {
+                        "tag": "button",
                         "text": {"tag": "plain_text", "content": toggle_label},
                         "value": {
                             "action": "strategy_toggle",
@@ -551,7 +561,7 @@ def build_strategy_list_card(strategies: list[StrategyConfig]) -> Dict[str, Any]
                 {
                     "tag": "button",
                     "type": "primary",
-                    "text": {"tag": "plain_text", "content": "运行规则"},
+                    "text": {"tag": "plain_text", "content": "运行全部"},
                     "value": {"action": "strategy_run_all"},
                 }
             ],
@@ -593,7 +603,10 @@ def build_strategy_saved_card(strategy: StrategyConfig) -> Dict[str, Any]:
                         "tag": "button",
                         "type": "primary",
                         "text": {"tag": "plain_text", "content": "立即运行"},
-                        "value": {"action": "strategy_run_all"},
+                        "value": {
+                            "action": "strategy_run",
+                            "strategy_id": strategy.id,
+                        },
                     }
                 ],
             },
@@ -675,6 +688,10 @@ class StrategyInteractionCoordinator:
             return self._list_card(operator_open_id)
         if action_name == "strategy_run_all":
             return self._run_all(operator_open_id, request_id)
+        if action_name == "strategy_run":
+            return self._run_one(
+                operator_open_id, str(value.get("strategy_id", "")), request_id
+            )
         if action_name == "strategy_draft_direction":
             return self._apply_direction(
                 operator_open_id,
@@ -919,4 +936,19 @@ class StrategyInteractionCoordinator:
         if not enabled:
             return build_notice_card("策略运行", "您还没有启用的策略，请先创建。")
         self._scanner.run_manual_preview(owner_open_id, request_id or "manual")
+        return None
+
+    def _run_one(
+        self, owner_open_id: str, strategy_id: str, request_id: str
+    ) -> Optional[Dict[str, Any]]:
+        if self._scanner is None:
+            return build_notice_card("策略运行", "策略扫描器未配置，无法运行。")
+        strategy = self._store.get_strategy(strategy_id, owner_open_id)
+        if strategy is None:
+            return build_notice_card("策略运行", "策略不存在或无权访问。")
+        if not strategy.enabled:
+            return build_notice_card("策略运行", "该策略已停用，请先启用后再运行。")
+        self._scanner.run_manual_preview(
+            owner_open_id, request_id or "manual", strategy_id=strategy.id
+        )
         return None

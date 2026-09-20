@@ -30,6 +30,7 @@ from china_a_share.feishu import (
     FeishuMessageEvent,
     FeishuResearchBot,
     MemoryConversationStore,
+    build_feishu_quick_menu_card,
 )
 
 
@@ -88,8 +89,8 @@ class FakeScanner:
         self.calls = []
         self.failing = failing
 
-    def run_manual_preview(self, owner_open_id, request_id):
-        self.calls.append((owner_open_id, request_id))
+    def run_manual_preview(self, owner_open_id, request_id, strategy_id=None):
+        self.calls.append((owner_open_id, request_id, strategy_id))
         if self.failing:
             raise RuntimeError("strategy preview failed")
 
@@ -132,6 +133,30 @@ def seed_draft_at_rules_step(coordinator, store, owner="ou_a", name="策略甲")
 
 def card_text(card):
     return str(card)
+
+
+def button_values(card):
+    values = []
+    for element in card.get("elements", []):
+        if element.get("tag") == "action":
+            values.extend(button.get("value", {}) for button in element["actions"])
+    return values
+
+
+def save_strategy_via_draft(coordinator, store, owner, chat, name):
+    """Walk the guided draft flow once and return the saved-confirmation card."""
+    coordinator.handle_message(owner, chat, f"新建策略 {name}")
+    draft = store.list_drafts(owner)[0]
+    coordinator.handle_card_action(
+        owner,
+        chat,
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+    coordinator.handle_message(owner, chat, f"规则 {USER_RULES_TEXT}")
+    return coordinator.handle_card_action(
+        owner, chat, "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
 
 
 def test_parse_rule_spec_supports_user_preset_rules():
@@ -358,7 +383,7 @@ def test_run_all_runs_owner_enabled_strategies_once():
         "ou_a", "oc_chat", "strategy_run_all", {}, request_id="req-1"
     )
     assert result is None
-    assert scanner.calls == [("ou_a", "req-1")]
+    assert scanner.calls == [("ou_a", "req-1", None)]
 
 
 def test_run_all_reports_when_no_enabled_strategies_or_no_scanner():
@@ -505,10 +530,96 @@ def test_without_compiler_strict_dsl_errors_still_guide_user():
     assert store.list_drafts("ou_a")[0].state == DraftState.AWAITING_RULES
 
 
-def test_menu_card_offers_create_list_and_run():
-    card = build_strategy_menu_card()
-    text = card_text(card)
-    assert "新建策略" in text and "策略列表" in text and "运行规则" in text
+def test_menu_cards_defer_manual_runs_to_strategy_list():
+    strategy_menu = build_strategy_menu_card()
+    quick_menu = build_feishu_quick_menu_card(include_strategy=True)
+    for card in (strategy_menu, quick_menu):
+        actions = [value["action"] for value in button_values(card)]
+        assert "strategy_create_draft" in actions
+        assert "strategy_list" in actions
+        assert "strategy_run_all" not in actions
+
+    plain_quick_menu = build_feishu_quick_menu_card(include_strategy=False)
+    assert not any(
+        "strategy" in value.get("action", "")
+        for value in button_values(plain_quick_menu)
+    )
+
+
+def test_list_card_offers_per_strategy_run_and_run_all():
+    coordinator, store = build_interaction()
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "甲策略")
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "乙策略")
+
+    card = coordinator.handle_card_action("ou_a", "oc_chat", "strategy_list", {})
+    values = button_values(card)
+    strategy_ids = {strategy.id for strategy in store.list_strategies("ou_a")}
+    per_row_runs = [
+        value for value in values if value.get("action") == "strategy_run"
+    ]
+    assert {value["strategy_id"] for value in per_row_runs} == strategy_ids
+    assert [value.get("action") for value in values].count("strategy_run_all") == 1
+
+
+def test_saved_card_runs_only_the_just_saved_strategy():
+    coordinator, store = build_interaction()
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "甲策略")
+    saved_card = save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "乙策略")
+
+    values = button_values(saved_card)
+    run_values = [value for value in values if value.get("action") == "strategy_run"]
+    assert len(run_values) == 1
+    assert run_values[0]["strategy_id"] in {
+        strategy.id for strategy in store.list_strategies("ou_a")
+    }
+    assert all(value.get("action") != "strategy_run_all" for value in values)
+
+
+def test_run_one_runs_only_that_strategy():
+    scanner = FakeScanner()
+    coordinator, store = build_interaction(scanner)
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "甲策略")
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "乙策略")
+    target = store.list_strategies("ou_a")[1]
+
+    result = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_run", {"strategy_id": target.id}, request_id="req-1"
+    )
+
+    assert result is None
+    assert scanner.calls == [("ou_a", "req-1", target.id)]
+
+
+def test_run_one_rejects_missing_disabled_or_foreign_strategy():
+    scanner = FakeScanner()
+    coordinator, store = build_interaction(scanner)
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "甲策略")
+    save_strategy_via_draft(coordinator, store, "ou_b", "oc_chat", "乙策略")
+    foreign = store.list_strategies("ou_b")[0]
+
+    missing = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_run", {"strategy_id": "missing"}, request_id="r1"
+    )
+    assert "策略不存在或无权访问" in card_text(missing)
+
+    foreign_notice = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_run", {"strategy_id": foreign.id}, request_id="r2"
+    )
+    assert "策略不存在或无权访问" in card_text(foreign_notice)
+
+    own = store.list_strategies("ou_a")[0]
+    coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_toggle",
+        {"strategy_id": own.id, "enabled": False},
+        request_id="r3",
+    )
+    disabled_notice = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_run", {"strategy_id": own.id}, request_id="r4"
+    )
+    assert "已停用" in card_text(disabled_notice)
+    assert scanner.calls == []
 
 
 def build_bot(interaction, allowed_open_ids=None):
