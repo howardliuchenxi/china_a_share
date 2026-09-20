@@ -26,7 +26,7 @@ from china_a_share.feishu_agent import (
 
 logger = logging.getLogger(__name__)
 CODEX_MODEL_PROVIDER = "deepseek"
-CODEX_TURN_TIMEOUT_SECONDS = 900
+CODEX_TURN_TIMEOUT_SECONDS = 60 * 60
 CODEX_INTERRUPT_GRACE_SECONDS = 30
 SUPPORTED_ARTIFACT_SUFFIXES = {".csv", ".docx", ".pdf", ".xlsx"}
 MAX_VISUALIZATION_ROWS = 2_000
@@ -68,7 +68,7 @@ class CodexFeishuAgentRuntime:
         request: FeishuAgentRequest,
         progress: Callable[[str, str], None],
     ) -> FeishuAgentOutcome:
-        """Execute the request without imposing an application-level turn limit."""
+        """Execute the request within the bounded application turn window."""
         Codex, CodexConfig, Sandbox, ApprovalMode = self._sdk_loader()
         with tempfile.TemporaryDirectory(prefix="feishu-codex-") as workspace_value:
             workspace = Path(workspace_value)

@@ -1,10 +1,16 @@
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from china_a_share.codex_agent import (
+    CODEX_INTERRUPT_GRACE_SECONDS,
+    CODEX_TURN_TIMEOUT_SECONDS,
     CodexFeishuAgentRuntime,
     _build_research_visualization,
     _normalize_token_usage,
+    _run_turn_with_progress,
     _safe_artifact_filename_stem,
 )
 from china_a_share.core.contracts import QueryResult, QueryStatus
@@ -29,6 +35,51 @@ class FakeSandbox:
 
 class FakeApprovalMode:
     deny_all = "deny-all"
+
+
+def test_codex_turn_timeout_is_one_hour_and_interrupts_the_turn(monkeypatch):
+    observed_timeouts = []
+    shutdown_calls = []
+
+    class TimeoutFuture:
+        def result(self, timeout):
+            observed_timeouts.append(timeout)
+            if timeout == CODEX_TURN_TIMEOUT_SECONDS:
+                raise FutureTimeoutError
+            return None
+
+    class TimeoutExecutor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def submit(self, _function, *_args):
+            return TimeoutFuture()
+
+        def shutdown(self, **kwargs):
+            shutdown_calls.append(kwargs)
+
+    class InterruptibleTurn:
+        interrupted = False
+
+        def interrupt(self):
+            self.interrupted = True
+
+    monkeypatch.setattr(
+        "china_a_share.codex_agent.ThreadPoolExecutor",
+        TimeoutExecutor,
+    )
+    turn = InterruptibleTurn()
+
+    with pytest.raises(RuntimeError, match="Codex turn exceeded 60 minutes"):
+        _run_turn_with_progress(turn, lambda _stage, _message: None)
+
+    assert CODEX_TURN_TIMEOUT_SECONDS == 3_600
+    assert observed_timeouts == [
+        CODEX_TURN_TIMEOUT_SECONDS,
+        CODEX_INTERRUPT_GRACE_SECONDS,
+    ]
+    assert turn.interrupted is True
+    assert shutdown_calls == [{"wait": False, "cancel_futures": True}]
 
 
 def test_artifact_filename_preserves_safe_session_name_and_replaces_separators():
