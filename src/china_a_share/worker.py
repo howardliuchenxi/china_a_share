@@ -8,6 +8,7 @@ from china_a_share.bootstrap import (
     create_feishu_agent_runtime,
 )
 from china_a_share.config import ConfigurationError, Settings
+from china_a_share.llm_preference import read_llm_preference
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
     CloudStorageAnalysisTaskStore,
@@ -32,16 +33,17 @@ def main() -> None:
         raise ConfigurationError("ANALYSIS_TASK_ID is required for the worker.")
     settings = Settings.from_env()
     store = CloudStorageAnalysisTaskStore(settings.tushare_cache_bucket)
-    
+    llm_preference = read_llm_preference(settings)
+
     task = store.get(task_id)
     if task is None:
         raise RuntimeError(f"Task {task_id} not found in store.")
-        
+
     if isinstance(task, FeishuAgentTask):
         coordinator = FeishuAgentCoordinator(store, WorkerDispatcher())
         coordinator.run(
             task_id,
-            create_feishu_agent_runtime(settings),
+            create_feishu_agent_runtime(settings, llm_preference=llm_preference),
             FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),
         )
     elif isinstance(task, DiscoveryTask):
@@ -52,7 +54,10 @@ def main() -> None:
             store,
             WorkerDispatcher(),
         )
-        coordinator.run(task_id, create_analysis_service(settings))
+        coordinator.run(
+            task_id,
+            create_analysis_service(settings, llm_preference=llm_preference),
+        )
 
 
 if __name__ == "__main__":

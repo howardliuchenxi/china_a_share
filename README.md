@@ -222,7 +222,12 @@ uploaded back to the originating Feishu message.
 Users can send `查看进度` (optionally followed by a task identifier) to inspect
 queued, running, succeeded, or failed state, and `重试` to resubmit a failed
 turn. Named sessions within the same group or private chat are managed with
-`新建会话 <名称>`, `会话列表`, and `切换会话 <名称或编号>`. Tasks in one named
+`新建会话 <名称>`, `会话列表`, and `切换会话 <名称或编号>`. The planning model
+behind chat research is switchable at runtime with `切换模型 glm` or
+`切换模型 deepseek` (`当前模型` shows the active one); the choice persists in
+the application bucket, applies to the next research task, requires the
+matching API key in the deployment, and falls back to the `LLM_PROVIDER`
+default otherwise. Tasks in one named
 session may run concurrently. Completed turns are isolated by tenant, chat,
 thread, user, and named session, and up to twelve completed exchanges are
 retained as follow-up context. The legacy validated analysis workflow remains

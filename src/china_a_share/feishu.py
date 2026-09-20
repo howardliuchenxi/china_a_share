@@ -67,6 +67,14 @@ SWITCH_SESSION_COMMAND_PATTERN = re.compile(
     r"^(?:切换会话|切换对话|switch\s+session)\s+(?P<target>.+)$",
     re.IGNORECASE,
 )
+MODEL_COMMAND_PATTERN = re.compile(
+    r"^(?:切换模型|当前模型|switch\s+model|current\s+model)"
+    r"(?:\s+(?P<target>\S+))?$",
+    re.IGNORECASE,
+)
+MODEL_COMMAND_QUERY_PATTERN = re.compile(
+    r"^(?:当前模型|current\s+model)", re.IGNORECASE
+)
 MAX_FEISHU_RESULT_ROWS = 10
 logger = logging.getLogger(__name__)
 
@@ -591,6 +599,7 @@ class FeishuResearchBot:
         agent_coordinator: Optional[FeishuAgentCoordinator] = None,
         strategy_store: Optional['StrategyStore'] = None,
         strategy_scanner: Optional['StrategyScanner'] = None,
+        llm_switcher: Optional[Any] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
             raise FeishuConfigurationError(
@@ -605,6 +614,7 @@ class FeishuResearchBot:
         self._encrypt_key = encrypt_key
         self._allowed_open_ids = allowed_open_ids or set()
         self._agent_coordinator = agent_coordinator
+        self._llm_switcher = llm_switcher
 
     def verify_signature(
         self,
@@ -752,6 +762,8 @@ class FeishuResearchBot:
                 reply = self._status_reply(event)
             elif RETRY_COMMAND_PATTERN.match(event.prompt):
                 reply = self._retry_reply(event)
+            elif MODEL_COMMAND_PATTERN.match(event.prompt):
+                reply = self._model_command_reply(event)
             else:
                 reply = self._submit_reply(event)
             
@@ -776,6 +788,21 @@ class FeishuResearchBot:
                 "研究任务操作失败，请稍后重试。若问题持续，请联系管理员并提供"
                 f"事件编号 {event.event_id}。",
             )
+
+    def _model_command_reply(self, event: FeishuMessageEvent) -> str:
+        """Answer 切换模型/当前模型 commands against persisted preference."""
+        if self._llm_switcher is None:
+            return (
+                "模型切换不可用：当前部署未配置持久化偏好存储。"
+                "可通过环境变量 LLM_PROVIDER 配置默认模型。"
+            )
+        if MODEL_COMMAND_QUERY_PATTERN.match(event.prompt):
+            return self._llm_switcher.status_reply()
+        match = MODEL_COMMAND_PATTERN.match(event.prompt)
+        target = (match.groupdict().get("target") or "").strip() if match else ""
+        if not target:
+            return self._llm_switcher.status_reply()
+        return self._llm_switcher.switch(target)
 
     def _strategy_menu_reply(self, event: FeishuMessageEvent) -> dict:
         """Return the strategy interactive menu card."""

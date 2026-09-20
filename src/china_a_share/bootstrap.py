@@ -1,5 +1,7 @@
 """Dependency assembly for the provider-neutral application."""
 
+from typing import Optional
+
 from china_a_share.application.workflow import (
     ASharePlanValidator,
     AnalysisService,
@@ -15,6 +17,11 @@ from china_a_share.cache import (
     NoopDataCacheStore,
 )
 from china_a_share.config import ConfigurationError, Settings
+from china_a_share.llm_preference import (
+    CloudStorageLlmPreferenceStore,
+    LlmPreferenceController,
+    resolve_active_provider,
+)
 from china_a_share.feedback import (
     CloudStorageUiFeedbackStore,
     DeepSeekUiFeedbackAssistant,
@@ -65,10 +72,26 @@ def _glm_chat_config(settings: Settings) -> dict:
     }
 
 
-def create_analysis_service(settings: Settings) -> AnalysisService:
+def create_llm_preference_controller(
+    settings: Settings,
+) -> Optional[LlmPreferenceController]:
+    """Build the chat model-switch controller when persistence is available."""
+    if not settings.tushare_cache_bucket:
+        return None
+    return LlmPreferenceController(
+        settings,
+        CloudStorageLlmPreferenceStore(settings.tushare_cache_bucket),
+    )
+
+
+def create_analysis_service(
+    settings: Settings,
+    *,
+    llm_preference: Optional[str] = None,
+) -> AnalysisService:
     """Assemble the configured planner, provider, cache, validator, and executor."""
     provider = _create_data_provider(settings)
-    if settings.llm_provider == "glm":
+    if resolve_active_provider(settings, llm_preference) == "glm":
         glm = _glm_chat_config(settings)
         planner = GlmQueryPlanner(
             glm["api_key"],
@@ -156,13 +179,18 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         agent_coordinator=agent_coordinator,
         strategy_store=strategy_store,
         strategy_scanner=strategy_scanner,
+        llm_switcher=create_llm_preference_controller(settings),
     )
 
 
-def create_feishu_agent_runtime(settings: Settings) -> FeishuAgentRuntime:
+def create_feishu_agent_runtime(
+    settings: Settings,
+    *,
+    llm_preference: Optional[str] = None,
+) -> FeishuAgentRuntime:
     """Assemble the independent Feishu agent around read-only provider tools."""
     data_provider = _create_feishu_data_provider(settings)
-    if settings.llm_provider == "glm":
+    if resolve_active_provider(settings, llm_preference) == "glm":
         glm = _glm_chat_config(settings)
         return FeishuAgentRuntime(
             glm["api_key"],
