@@ -976,3 +976,48 @@ def test_live_feishu_agent_answers_reported_precise_pe_ranking():
         "推荐" in outcome.answer and "请回复序号" in outcome.answer
     )
     assert answered_with_data or requested_clarification
+
+
+def test_research_workbook_renders_compact_calendar_dates_not_grouped_numbers():
+    from china_a_share.feishu_agent import compact_calendar_date_text
+
+    assert compact_calendar_date_text("最近大涨日", 20260917) == "2026-09-17"
+    assert compact_calendar_date_text("trade_date", "20260917 ") == "2026-09-17"
+    assert compact_calendar_date_text("上市时间", 20260917) == "2026-09-17"
+    assert compact_calendar_date_text("上市日期", 20261345) == 20261345
+    assert compact_calendar_date_text("市值_元", 20260917) == 20260917
+    assert compact_calendar_date_text("最近大涨日", 708) == 708
+
+    result = QueryResult(
+        query_id="ranked",
+        provider="tushare",
+        operation="daily",
+        status=QueryStatus.SUCCESS,
+        columns=["代码", "名称", "最近大涨日", "市值_元"],
+        rows=[
+            {
+                "代码": "002487.SZ",
+                "名称": "大金重工",
+                "最近大涨日": 20260917,
+                "市值_元": 20260917,
+            }
+        ],
+        row_count=1,
+        completeness="complete",
+    )
+
+    path = build_research_workbook(
+        result,
+        "大涨日触发统计",
+        "未复权日线口径。",
+        column_notes={
+            "代码": "A股证券代码，含交易所后缀。",
+            "名称": "证券简称。",
+            "最近大涨日": "窗口内最近一次收盘涨幅达到5%的交易日。",
+            "市值_元": "收盘总市值，单位为元。",
+        },
+    )
+
+    results = load_workbook(path, data_only=False)["Results"]
+    assert results["C6"].value == "2026-09-17"
+    assert results["D6"].value == 20260917

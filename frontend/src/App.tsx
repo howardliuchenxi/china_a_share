@@ -11,6 +11,7 @@ import { UiFeedbackController } from "./UiFeedbackController";
 import { DiscoveryPage } from "./DiscoveryPage";
 import { EndToEndCasesPage } from "./EndToEndCasesPage";
 import { TermHelp } from "./TermHelp";
+import { compactCalendarDate, isDateLikeColumn } from "./calendarDates";
 import type {
   AnalysisConversationTurn,
   AnalysisImage,
@@ -386,12 +387,16 @@ function formatResultValue(
     }
   }
   if (typeof value === "number" && Number.isFinite(value)) {
+    const calendarDate = isDateLikeColumn(column) ? compactCalendarDate(value) : null;
+    if (calendarDate) return calendarDate;
     if (IDENTIFIER_COLUMN_PATTERN.test(column)) return String(value);
     if (isPercentageColumn(column)) return `${value.toFixed(2)}%`;
     const currencyValue = normalizeKnownCurrencyUnit(operation, column, value);
     if (currencyValue != null) return formatAdaptiveNumber(currencyValue, "元");
     return formatAdaptiveNumber(value);
   }
+  const calendarDate = isDateLikeColumn(column) ? compactCalendarDate(value) : null;
+  if (calendarDate) return calendarDate;
   return String(value);
 }
 

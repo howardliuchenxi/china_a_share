@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 from pathlib import Path
+import re
 import secrets
 import tempfile
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Protocol
@@ -967,6 +968,36 @@ def _validated_column_notes(
 
 RESEARCH_COLUMN_NOTES_SHEET_NAME = "列说明"
 
+_DATE_COLUMN_TOKEN_PATTERN = re.compile(r"date|day|time|时|日|期", re.IGNORECASE)
+_COMPACT_CALENDAR_DATE_PATTERN = re.compile(r"\d{8}")
+
+
+def compact_calendar_date_text(column: str, value: Any) -> Any:
+    """Render an eight-digit YYYYMMDD calendar value as YYYY-MM-DD.
+
+    Research datasets frequently carry calendar dates as plain integers such
+    as 20260917; numeric renderings split those into thousands groups
+    (20,260,917). Any date-named column whose value is a valid calendar date
+    keeps its calendar shape, and every other value passes through unchanged.
+    """
+    if not _DATE_COLUMN_TOKEN_PATTERN.search(str(column or "")):
+        return value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        return value
+    if not _COMPACT_CALENDAR_DATE_PATTERN.fullmatch(text):
+        return value
+    try:
+        parsed = datetime.strptime(text, "%Y%m%d")
+    except ValueError:
+        return value
+    return parsed.strftime("%Y-%m-%d")
+
 
 def build_research_workbook(
     result: QueryResult,
@@ -1015,7 +1046,11 @@ def build_research_workbook(
     }
     for row_index, row in enumerate(result.rows, start=header_row + 1):
         for column_index, column in enumerate(result.columns, start=1):
-            cell = results_sheet.cell(row_index, column_index, row.get(column))
+            cell = results_sheet.cell(
+                row_index,
+                column_index,
+                compact_calendar_date_text(column, row.get(column)),
+            )
             cell.font = Font(name="Arial", size=10)
             cell.alignment = Alignment(vertical="center")
             if column in linkable_columns:
