@@ -19,32 +19,40 @@ def test_draft_state_machine_and_isolation():
     store = MockStrategyStore()
     draft = StrategyDraft(id="d1", creator_id="user1", step="name")
     store.put_draft(draft)
-    
+
+    def card_of(res):
+        return res["card"]["data"]
+
     # 1. View progress - auth success
     res = _handle_view_progress("user1", "d1", store)
-    assert "当前进度**: name" in res["elements"][0]["content"]
-    assert "d1" in str(res["elements"][1]) # buttons
-    
-    # 2. View progress - auth fail
+    assert "当前进度**: name" in card_of(res)["elements"][0]["content"]
+    assert "d1" in str(card_of(res)["elements"][1]) # buttons
+
+    # 2. View progress - auth fail (toast-only error reply)
     res = _handle_view_progress("user2", "d1", store)
-    assert "权限被拒绝" in res["content"]
-    
+    assert "card" not in res
+    assert "权限被拒绝" in res["toast"]["content"]
+
     # 3. Save draft - auth success
     res = _handle_save_draft("user1", "d1", store)
-    assert res["header"]["template"] == "green"
+    assert card_of(res)["header"]["template"] == "green"
     assert "d1" not in store.drafts # Draft is deleted upon save
     assert "d1" in store.strategies # Promoted to strategy (keeps ID)
     assert store.strategies["d1"].name == "回撤后首次转多" # preset default
-    
+
     # 4. Cancel draft
     store.put_draft(StrategyDraft(id="d2", creator_id="user1", step="name"))
     res = _handle_cancel_draft("user1", "d2", store)
-    assert "成功删除" in res["elements"][0]["content"]
+    assert "成功删除" in card_of(res)["elements"][0]["content"]
     assert "d2" not in store.drafts
 
 
 def test_daily_scan_auth_and_failure_propagation(monkeypatch):
     import os
+    monkeypatch.setenv("TUSHARE_TOKEN", "test-token")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("TUSHARE_CACHE_BUCKET", "test-bucket")
     monkeypatch.setenv("FEISHU_APP_ID", "test")
     monkeypatch.setenv("FEISHU_APP_SECRET", "test")
     monkeypatch.setenv("FEISHU_VERIFICATION_TOKEN", "test")
@@ -78,6 +86,10 @@ def test_daily_scan_auth_and_failure_propagation(monkeypatch):
 
 def test_interactive_card_signature_validation(monkeypatch):
     import os
+    monkeypatch.setenv("TUSHARE_TOKEN", "test-token")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("TUSHARE_CACHE_BUCKET", "test-bucket")
     monkeypatch.setenv("FEISHU_APP_ID", "test")
     monkeypatch.setenv("FEISHU_APP_SECRET", "test")
     monkeypatch.setenv("FEISHU_VERIFICATION_TOKEN", "test")

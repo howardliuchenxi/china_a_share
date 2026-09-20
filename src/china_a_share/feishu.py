@@ -722,14 +722,14 @@ class FeishuResearchBot:
     def process_interactive_card(self, payload: dict) -> dict:
         """Process interactive card button clicks (e.g. strategy drafts)."""
         from china_a_share.strategy.feishu_interaction import handle_strategy_interactive_card
-        
+
         if not self._strategy_store or not self._strategy_scanner:
-            return {"content": "Strategy module is disabled."}
-            
+            return {"toast": {"type": "error", "content": "Strategy module is disabled."}}
+
         reply = handle_strategy_interactive_card(payload, self._strategy_store, self._strategy_scanner)
         if reply:
             return reply
-        return {"content": "Unknown action."}
+        return {"toast": {"type": "error", "content": "Unknown action."}}
 
     def process(self, event: FeishuMessageEvent) -> None:
         """Submit or inspect one durable research task from a claimed event."""

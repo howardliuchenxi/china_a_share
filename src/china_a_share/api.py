@@ -783,7 +783,12 @@ def create_app(
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
         except Exception as exc:
             log_event(logger, logging.ERROR, "feishu_interactive_card_failed", exc_info=True)
-            return {"content": "Failed to process action."}
+            return {
+                "toast": {
+                    "type": "error",
+                    "content": "Failed to process action, please retry.",
+                }
+            }
 
     if FRONTEND_DIST.is_dir():
         @application.get("/", include_in_schema=False)
