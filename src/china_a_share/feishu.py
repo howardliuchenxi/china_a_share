@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 import re
 from threading import Lock
-from typing import Any, Dict, Optional, Protocol, Union
+from typing import Any, Dict, List, Optional, Protocol, Union
 
 import requests
 from Crypto.Cipher import AES
@@ -845,17 +845,24 @@ class FeishuResearchBot:
 
         if action_name == "submit_research":
             prompt = str(
-                form_value.get("prompt") if isinstance(form_value, dict) else ""
+                form_value.get("prompt") or "" if isinstance(form_value, dict) else ""
             ).strip()
             if not prompt:
                 raise FeishuEventError("Research prompt is required.")
+        elif action_name == "switch_model":
+            # The model selector is one dropdown form; its selection arrives
+            # as form_value keyed by the select_menu component name.
+            selected = str(
+                form_value.get("model") or "" if isinstance(form_value, dict) else ""
+            ).strip()
+            if not selected:
+                raise FeishuEventError("Model selection is required.")
+            prompt = f"切换模型 {selected}"
         else:
             prompt = {
                 "new_session": "新建会话",
                 "list_sessions": "会话列表",
                 "task_status": "查看进度",
-                "switch_model_glm": "切换模型 glm",
-                "switch_model_deepseek": "切换模型 deepseek",
             }.get(action_name, "")
         if not prompt:
             return None
@@ -945,14 +952,20 @@ class FeishuResearchBot:
                     self._sender.reply_card(event.message_id, card)
                 reply = None
             elif QUICK_MENU_COMMAND_PATTERN.match(event.prompt):
+                model_switcher = self._llm_switcher
                 self._sender.reply_card(
                     event.message_id,
                     build_feishu_quick_menu_card(
                         include_strategy=self._strategy_interaction is not None,
                         model_status=(
-                            self._llm_switcher.status_line()
-                            if self._llm_switcher is not None
+                            model_switcher.status_line()
+                            if model_switcher is not None
                             else ""
+                        ),
+                        model_options=(
+                            model_switcher.dropdown_options()
+                            if model_switcher is not None
+                            else []
                         ),
                     ),
                 )
@@ -1469,8 +1482,15 @@ def _format_analysis_response(response: AnalysisResponse) -> str:
 def build_feishu_quick_menu_card(
     include_strategy: bool = False,
     model_status: str = "",
+    model_options: Optional[List[tuple[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """Return the interactive research form and common command shortcuts."""
+    """Return the interactive research form and common command shortcuts.
+
+    The model selector is one dropdown form fed by the chat-model registry,
+    so registering an additional model extends the card without layout
+    changes. The status line and the check-marked option both reflect the
+    preference at render time.
+    """
     elements: list[Dict[str, Any]] = []
     if model_status:
         elements.append(
@@ -1478,7 +1498,7 @@ def build_feishu_quick_menu_card(
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": f"**研究模型**：{model_status}",
+                    "content": f"**当前研究模型**：{model_status}",
                 },
             }
         )
@@ -1556,23 +1576,41 @@ def build_feishu_quick_menu_card(
                 ],
             }
         )
-    elements.append(
-        {
-            "tag": "action",
-            "actions": [
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "🤖 切到 GLM"},
-                    "value": {"action": "switch_model_glm"},
-                },
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "🤖 切到 DeepSeek"},
-                    "value": {"action": "switch_model_deepseek"},
-                },
-            ],
-        }
-    )
+    if model_options:
+        elements.append(
+            {
+                "tag": "form",
+                "name": "model_form",
+                "elements": [
+                    {
+                        "tag": "select_menu",
+                        "name": "model",
+                        "placeholder": {
+                            "tag": "plain_text",
+                            "content": "选择研究模型…",
+                        },
+                        "options": [
+                            {
+                                "text": {
+                                    "tag": "plain_text",
+                                    "content": label,
+                                },
+                                "value": provider,
+                            }
+                            for provider, label in model_options
+                        ],
+                    },
+                    {
+                        "tag": "button",
+                        "name": "apply_model",
+                        "type": "primary",
+                        "action_type": "form_submit",
+                        "text": {"tag": "plain_text", "content": "切换模型"},
+                        "value": {"action": "switch_model"},
+                    },
+                ],
+            }
+        )
     elements.append(
         {
             "tag": "note",

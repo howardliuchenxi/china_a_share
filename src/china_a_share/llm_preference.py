@@ -3,16 +3,18 @@
 The Feishu webhook and the worker job are separate processes, so a model
 switch issued in a conversation must persist outside process memory. The
 preference lives as one small JSON object in the application bucket and
-selects which research runtime the worker assembles: the deployed Codex
-harness (DeepSeek default) or the GLM chat tool loop on the Zhipu Coding
-Plan endpoint.
+selects which research runtime the worker assembles. Every user-facing
+surface (quick-menu dropdown, text-command validation, runtime resolution)
+is driven by one registry, so adding a model means adding one registry
+entry plus its runtime mapping.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import logging
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Sequence
 
 from google.cloud import storage
 
@@ -22,14 +24,84 @@ from china_a_share.observability import log_event
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_PROVIDERS = ("deepseek", "glm")
 GLM_AGENT_DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
 GLM_AGENT_DEFAULT_MODEL = "glm-5.3"
-_PROVIDER_LABELS = {
-    "deepseek": "DeepSeek（默认，Codex 研究代理）",
-    "glm": "GLM（智谱编码套餐额度，轻量研究循环）",
-}
-_SWITCH_USAGE = "用法：切换模型 glm 或 切换模型 deepseek；查看当前用「当前模型」。"
+_SWITCH_USAGE = "用法：切换模型 <模型名>；查看当前用「当前模型」。"
+
+
+@dataclass(frozen=True)
+class ChatModelOption:
+    """One selectable chat-research model published to every surface."""
+
+    provider: str
+    label: str
+    note: str
+    required_settings_field: str = ""
+
+    def available_for(self, settings: Settings) -> bool:
+        """Return whether this deployment can actually use the model."""
+        if not self.required_settings_field:
+            return True
+        return bool(getattr(settings, self.required_settings_field, ""))
+
+
+# The single source of truth for selectable chat-research models. Adding a
+# third model means appending one entry here and wiring its runtime in
+# bootstrap.create_feishu_agent_runtime; the dropdown, command validation,
+# and status replies pick it up automatically.
+CHAT_MODEL_REGISTRY: tuple[ChatModelOption, ...] = (
+    ChatModelOption(
+        provider="deepseek",
+        label="DeepSeek",
+        note="默认 · Codex 研究代理 · API 按量计费",
+    ),
+    ChatModelOption(
+        provider="glm",
+        label="GLM（智谱）",
+        note="编码套餐额度 · 轻量研究循环",
+        required_settings_field="zai_api_key",
+    ),
+)
+
+
+def chat_model_options(
+    settings: Optional[Settings] = None,
+) -> Sequence[ChatModelOption]:
+    """Return the registered models, optionally with availability flags."""
+    return CHAT_MODEL_REGISTRY
+
+
+def chat_model_option(provider: str) -> Optional[ChatModelOption]:
+    """Return one registered model option by provider name."""
+    return next(
+        (option for option in CHAT_MODEL_REGISTRY if option.provider == provider),
+        None,
+    )
+
+
+def available_providers(settings: Settings) -> tuple[str, ...]:
+    """Return provider names this deployment can switch between."""
+    return tuple(
+        option.provider
+        for option in CHAT_MODEL_REGISTRY
+        if option.available_for(settings)
+    )
+
+
+ALLOWED_PROVIDERS = tuple(option.provider for option in CHAT_MODEL_REGISTRY)
+
+
+def provider_label(provider: str) -> str:
+    """Return the user-facing label for one provider name."""
+    option = chat_model_option(provider)
+    if option is None:
+        return provider
+    return f"{option.label}（{option.note}）"
+
+
+def _available_hint(settings: Settings) -> str:
+    names = " / ".join(available_providers(settings)) or "（无）"
+    return f"当前可用模型：{names}"
 
 
 class LlmPreferenceStore(Protocol):
@@ -97,16 +169,11 @@ class CloudStorageLlmPreferenceStore:
 
 
 def _validate_provider(provider: str) -> None:
-    if provider not in ALLOWED_PROVIDERS:
+    if chat_model_option(provider) is None:
         raise ValueError(
             f"Unknown chat-research provider '{provider}'. "
             f"Allowed providers: {', '.join(ALLOWED_PROVIDERS)}."
         )
-
-
-def provider_label(provider: str) -> str:
-    """Return the user-facing label for one provider name."""
-    return _PROVIDER_LABELS.get(provider, provider)
 
 
 def resolve_active_provider(
@@ -115,12 +182,13 @@ def resolve_active_provider(
 ) -> str:
     """Return the research runtime provider for the next chat run.
 
-    A persisted GLM preference applies only when the Zhipu API key is
+    A persisted preference applies only when the model's required key is
     present in this environment; otherwise the deployed DeepSeek default
     stays active.
     """
-    if preference == "glm" and settings.zai_api_key:
-        return "glm"
+    option = chat_model_option(preference) if preference else None
+    if option is not None and option.available_for(settings):
+        return option.provider
     return "deepseek"
 
 
@@ -149,33 +217,49 @@ class LlmPreferenceController:
         """Return the one-line status rendered on the quick-menu card."""
         return provider_label(self.current())
 
+    def dropdown_options(self) -> list[tuple[str, str]]:
+        """Return (provider, label) pairs for the quick-menu selector."""
+        current = self.current()
+        return [
+            (
+                option.provider,
+                ("✅ " if option.provider == current else "") + option.label,
+            )
+            for option in chat_model_options(self._settings)
+        ]
+
     def status_reply(self) -> str:
         """Compose the「当前模型」answer."""
+        notes = "\n".join(
+            f"- {option.label}：{option.note}"
+            + ("（当前）" if option.provider == self.current() else "")
+            for option in chat_model_options(self._settings)
+        )
         return (
             f"当前研究模型：{provider_label(self.current())}\n"
-            "DeepSeek 走完整 Codex 研究代理；GLM 走轻量工具循环、"
-            "消耗智谱编码套餐额度（与编码工具共享 5 小时/每周上限）。\n"
-            f"{_SWITCH_USAGE}"
+            f"{notes}\n"
+            f"{_SWITCH_USAGE}\n{_available_hint(self._settings)}"
         )
 
     def switch(self, target: str) -> str:
         """Validate, persist, and confirm one provider switch."""
         target = target.strip().lower()
-        if target not in ALLOWED_PROVIDERS:
+        option = chat_model_option(target)
+        if option is None:
             return (
-                f"未知模型「{target}」。{_SWITCH_USAGE}\n当前研究模型："
+                f"未知模型「{target}」。{_SWITCH_USAGE}\n"
+                f"{_available_hint(self._settings)}\n当前研究模型："
                 f"{provider_label(self.current())}"
             )
-        if target == "glm" and not self._settings.zai_api_key:
+        if not option.available_for(self._settings):
+            missing = option.required_settings_field or "所需密钥"
             return (
-                "无法切换到 GLM：当前环境未配置 ZAI_API_KEY。"
+                f"无法切换到 {option.label}：当前环境未配置 {missing}。"
                 "请先在部署环境中配置该密钥。"
             )
         self._store.set(target)
         return (
-            f"已切换研究模型到 {provider_label(target)}，下一次研究任务生效。\n"
-            "GLM 消耗智谱编码套餐额度（与编码工具共享 5 小时/每周上限）；"
-            "DeepSeek 走 Codex 研究代理，按量计费。"
+            f"已切换研究模型到 {provider_label(target)}，下一次研究任务生效。"
         )
 
 

@@ -8,6 +8,7 @@ from china_a_share import bootstrap
 from china_a_share.codex_agent import CodexFeishuAgentRuntime
 from china_a_share.config import Settings
 from china_a_share.feishu import (
+    FeishuEventError,
     FeishuResearchBot,
     MemoryConversationStore,
     build_feishu_quick_menu_card,
@@ -196,13 +197,15 @@ def test_controller_switch_persists_and_reports_status():
     store = MemoryLlmPreferenceStore()
     controller = LlmPreferenceController(glm_capable_settings(), store)
 
-    assert controller.status_line() == "DeepSeek（默认，Codex 研究代理）"
+    assert controller.status_line() == (
+        "DeepSeek（默认 · Codex 研究代理 · API 按量计费）"
+    )
     reply = controller.switch("GLM")
     assert "已切换研究模型" in reply
     assert store.get() == "glm"
     assert controller.current() == "glm"
     assert "GLM" in controller.status_line()
-    assert "切换模型 glm" in controller.status_reply()
+    assert "切换模型 <模型名>" in controller.status_reply()
 
 
 def test_controller_rejects_glm_without_zhipu_key():
@@ -213,7 +216,8 @@ def test_controller_rejects_glm_without_zhipu_key():
 
     reply = controller.switch("glm")
 
-    assert "ZAI_API_KEY" in reply
+    assert "zai_api_key" in reply
+    assert "无法切换" in reply
     assert store.get() is None
     assert controller.current() == "deepseek"
 
@@ -265,7 +269,7 @@ def message_payload(event_id, text):
     }
 
 
-def card_action_payload(action):
+def card_action_payload(action, form_value=None):
     return {
         "header": {
             "event_id": "card-event-model",
@@ -283,7 +287,7 @@ def card_action_payload(action):
                 "tag": "button",
                 "name": action,
                 "value": {"action": action},
-                "form_value": {},
+                "form_value": form_value or {},
             },
         },
     }
@@ -326,51 +330,126 @@ def test_bot_model_command_without_switcher_explains_configuration():
     assert "不可用" in sender.replies[0][1]
 
 
-def test_quick_menu_card_lists_model_buttons_and_status():
-    card = build_feishu_quick_menu_card(model_status="DeepSeek（默认，Codex 研究代理）")
+def test_quick_menu_card_uses_one_model_dropdown_form():
+    controller = LlmPreferenceController(
+        glm_capable_settings(), MemoryLlmPreferenceStore()
+    )
+    card = build_feishu_quick_menu_card(
+        model_status=controller.status_line(),
+        model_options=controller.dropdown_options(),
+    )
 
-    actions = [
+    forms = [
+        element for element in card["elements"] if element.get("tag") == "form"
+    ]
+    model_form = next(f for f in forms if f["name"] == "model_form")
+    menu = next(
         element
-        for element in card["elements"]
-        if element.get("tag") == "action"
+        for element in model_form["elements"]
+        if element["tag"] == "select_menu"
+    )
+    assert menu["name"] == "model"
+    assert [option["value"] for option in menu["options"]] == [
+        "deepseek",
+        "glm",
     ]
-    model_buttons = [
-        button["value"]["action"]
-        for element in actions
-        for button in element.get("actions", [])
-        if str(button["value"].get("action", "")).startswith("switch_model")
-    ]
-    assert model_buttons == ["switch_model_glm", "switch_model_deepseek"]
+    assert menu["options"][0]["text"]["content"] == "✅ DeepSeek"
+    assert menu["options"][1]["text"]["content"] == "GLM（智谱）"
+    submit = next(
+        element
+        for element in model_form["elements"]
+        if element["tag"] == "button"
+    )
+    assert submit["value"] == {"action": "switch_model"}
     status_text = next(
         element["text"]["content"]
         for element in card["elements"]
         if element.get("tag") == "div"
     )
+    assert "**当前研究模型**" in status_text
     assert "DeepSeek" in status_text
+    switch_buttons = [
+        button
+        for element in card["elements"]
+        if element.get("tag") == "action"
+        for button in element.get("actions", [])
+        if str(button["value"].get("action", "")).startswith("switch_model")
+    ]
+    assert switch_buttons == []
 
 
 def test_quick_menu_card_omits_status_without_switcher():
     card = build_feishu_quick_menu_card()
 
     assert all(
-        "**研究模型**" not in str(element) for element in card["elements"]
+        "**当前研究模型**" not in str(element) for element in card["elements"]
+    )
+    assert all(
+        form.get("name") != "model_form"
+        for form in card["elements"]
+        if form.get("tag") == "form"
     )
 
 
 @pytest.mark.parametrize(
-    "action, expected_prompt",
+    "selected, expected_prompt",
     [
-        ("switch_model_glm", "切换模型 glm"),
-        ("switch_model_deepseek", "切换模型 deepseek"),
+        ("glm", "切换模型 glm"),
+        ("deepseek", "切换模型 deepseek"),
     ],
 )
-def test_card_model_button_becomes_model_command(action, expected_prompt):
+def test_card_model_dropdown_submission_becomes_model_command(
+    selected, expected_prompt
+):
     bot, _ = build_model_command_bot(glm_capable_settings())
 
-    event = bot.parse_card_action(card_action_payload(action))
+    event = bot.parse_card_action(
+        card_action_payload("switch_model", form_value={"model": selected})
+    )
 
     assert event is not None
     assert event.prompt == expected_prompt
+
+
+def test_card_model_submission_requires_a_selection():
+    bot, _ = build_model_command_bot(glm_capable_settings())
+
+    with pytest.raises(FeishuEventError, match="Model selection is required"):
+        bot.parse_card_action(
+            card_action_payload("switch_model", form_value={})
+        )
+
+
+def test_registry_extension_adds_a_third_model_to_every_surface(monkeypatch):
+    """A new registry entry must reach the dropdown and command validation."""
+    import china_a_share.llm_preference as preference_module
+
+    monkeypatch.setattr(
+        preference_module,
+        "CHAT_MODEL_REGISTRY",
+        preference_module.CHAT_MODEL_REGISTRY
+        + (
+            preference_module.ChatModelOption(
+                provider="kimi",
+                label="Kimi（月之暗面）",
+                note="测试用第三模型",
+            ),
+        ),
+    )
+
+    settings = glm_capable_settings()
+    store = MemoryLlmPreferenceStore()
+    controller = preference_module.LlmPreferenceController(settings, store)
+
+    assert [value for value, _ in controller.dropdown_options()] == [
+        "deepseek",
+        "glm",
+        "kimi",
+    ]
+    reply = controller.switch("kimi")
+    assert "已切换研究模型" in reply
+    assert store.get() == "kimi"
+    assert "Kimi" in controller.status_line()
 
 
 def test_bootstrap_selects_runtime_by_preference():
@@ -474,5 +553,10 @@ def test_read_llm_preference_returns_none_without_bucket():
     assert read_llm_preference(Settings(tushare_token="t")) is None
 
 
-def test_allowed_providers_are_deepseek_and_glm():
-    assert ALLOWED_PROVIDERS == ("deepseek", "glm")
+def test_allowed_providers_derive_from_the_registry():
+    import china_a_share.llm_preference as preference_module
+
+    assert ALLOWED_PROVIDERS == tuple(
+        option.provider for option in preference_module.CHAT_MODEL_REGISTRY
+    )
+    assert set(ALLOWED_PROVIDERS) <= {"deepseek", "glm", "kimi"}
