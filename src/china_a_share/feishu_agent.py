@@ -740,5 +740,8 @@ def _agent_system_prompt() -> str:
         "ResultPipeline supports advanced allowlisted operations such as select_fields, filter, "
         "filter_range, sort, limit, aggregate, summarize, distinct, latest_by_group, "
         "derive, join_fields, inner_join, and union_all. If a tool returns an error, "
-        "correct the arguments or explain the limitation instead of guessing."
+        "correct the arguments or explain the limitation instead of guessing. "
+        "Format every number in answers, tables, and reports the same way: unless the "
+        "user or the metric explicitly requires other precision, round to two decimal "
+        "places, and render values with no fractional part as plain integers."
     )

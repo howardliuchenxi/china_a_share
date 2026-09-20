@@ -331,3 +331,12 @@ def test_live_feishu_agent_answers_one_historical_price_question():
 
     assert "600519.SH" in outcome.answer
     assert "2026" in outcome.answer
+
+
+def test_agent_system_prompt_requires_uniform_number_precision():
+    from china_a_share.feishu_agent import _agent_system_prompt
+
+    prompt = _agent_system_prompt()
+
+    assert "two decimal" in prompt
+    assert "integers" in prompt
