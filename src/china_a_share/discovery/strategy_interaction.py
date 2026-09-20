@@ -27,6 +27,7 @@ from china_a_share.discovery.strategy_scanner import (
     format_strategy_rules,
 )
 from china_a_share.discovery.strategy_store import StrategyStore
+from china_a_share.discovery.rule_compiler import RuleCompileResult, RuleCompiler
 
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,99 @@ def build_notice_card(
     }
 
 
+def build_rule_options_card(
+    draft: StrategyDraft,
+    spec: str,
+    candidates: list[str],
+    *,
+    error: str = "",
+) -> Dict[str, Any]:
+    """Offer candidate interpretations or guided re-entry for unclear rules."""
+    elements: list[Dict[str, Any]] = [
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": (
+                    f"你描述的条件：**{spec}**\n"
+                    + (f"无法直接解析：{error}\n" if error else "")
+                    + "你的意思是不是下面之一？"
+                ),
+            },
+        }
+    ]
+    if candidates:
+        for candidate in candidates:
+            elements.append(
+                {
+                    "tag": "action",
+                    "actions": [
+                        {
+                            "tag": "button",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": candidate[:20],
+                            },
+                            "value": {
+                                "action": "strategy_rules_candidate",
+                                "draft_id": draft.draft_id,
+                                "text": candidate,
+                            },
+                        }
+                    ],
+                }
+            )
+    else:
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        "暂时没有接近的候选。目前支持的条件："
+                        "回撤（窗口/阈值）、涨幅（窗口/下限/上限）、"
+                        "金叉（快线/慢线）、涨停（可选 窗口=N）。\n"
+                        f"标准写法示例：**{_RULES_EXAMPLE}**"
+                    ),
+                },
+            }
+        )
+    elements.append(
+        {
+            "tag": "note",
+            "elements": [
+                {
+                    "tag": "plain_text",
+                    "content": "都不对？回复「规则 + 你的补充描述」换种说法，或点下方取消。",
+                }
+            ],
+        }
+    )
+    elements.append(
+        {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "取消草稿"},
+                    "value": {
+                        "action": "strategy_draft_cancel",
+                        "draft_id": draft.draft_id,
+                    },
+                }
+            ],
+        }
+    )
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "orange",
+            "title": {"tag": "plain_text", "content": "条件解析"},
+        },
+        "elements": elements,
+    }
+
+
 def build_strategy_menu_card() -> Dict[str, Any]:
     """Return the strategy management menu shown inside the group chat."""
     return {
@@ -322,8 +416,9 @@ def build_draft_card(
                     "content": (
                         f"策略名称：**{draft.name}**\n"
                         f"建议方向：**{DIRECTION_LABELS.get(draft.direction or SignalDirection.BUY)}**\n"
-                        "请回复一条消息设置规则，多个规则用「；」分隔，"
-                        "数值可用百分比或小数：\n"
+                        "请回复一条消息设置规则，直接用一句话描述即可，例如：\n"
+                        "**规则 60天回撤超过30%，近10天横盘，MA5和MA10首次金叉**\n"
+                        "或使用标准写法（多个规则用「；」分隔）：\n"
                         f"**{_RULES_EXAMPLE}**\n"
                         f"{_RULES_TYPE_HINT}"
                     ),
@@ -515,10 +610,12 @@ class StrategyInteractionCoordinator:
         scanner: Optional[StrategyScanner] = None,
         *,
         clock: Optional[Callable[[], datetime]] = None,
+        compiler: Optional[RuleCompiler] = None,
     ) -> None:
         self._store = store
         self._scanner = scanner
         self._clock = clock or (lambda: datetime.now(SHANGHAI_TIME_ZONE))
+        self._compiler = compiler
 
     @property
     def scanner(self) -> Optional[StrategyScanner]:
@@ -590,6 +687,12 @@ class StrategyInteractionCoordinator:
             )
         if action_name == "strategy_draft_save":
             return self._save_draft(operator_open_id, str(value.get("draft_id", "")))
+        if action_name == "strategy_rules_candidate":
+            return self._apply_rules_candidate(
+                operator_open_id,
+                str(value.get("draft_id", "")),
+                str(value.get("text", "")),
+            )
         if action_name == "strategy_toggle":
             return self._toggle_strategy(
                 operator_open_id,
@@ -683,10 +786,40 @@ class StrategyInteractionCoordinator:
         try:
             rules = parse_rule_spec(spec)
         except RuleSpecError as exc:
-            return build_draft_card(
-                draft,
-                error=f"{exc} 示例：{_RULES_EXAMPLE}",
-            )
+            return self._compile_or_suggest(draft, spec, str(exc))
+        return self._store_rules(draft, rules)
+
+    def _compile_or_suggest(
+        self, draft: StrategyDraft, spec: str, error: str
+    ) -> Dict[str, Any]:
+        """Fall back from the strict DSL to LLM compilation or option buttons."""
+        compiled: Optional[RuleCompileResult] = None
+        if self._compiler is not None:
+            try:
+                compiled = self._compiler.compile(spec)
+            except Exception:
+                compiled = None
+        if compiled is not None and compiled.rules:
+            return self._store_rules(draft, compiled.rules)
+        candidates: list[str] = []
+        if compiled is not None and compiled.candidates:
+            # Only offer candidates that the deterministic parser accepts.
+            candidates = [
+                text
+                for text in compiled.candidates
+                if self._parses(text)
+            ]
+        return build_rule_options_card(draft, spec, candidates, error=error)
+
+    @staticmethod
+    def _parses(text: str) -> bool:
+        try:
+            parse_rule_spec(text)
+        except RuleSpecError:
+            return False
+        return True
+
+    def _store_rules(self, draft: StrategyDraft, rules: list) -> Dict[str, Any]:
         updated = draft.model_copy(
             update={
                 "rules": rules,
@@ -694,8 +827,23 @@ class StrategyInteractionCoordinator:
                 "updated_at": self._now(),
             }
         )
-        self._store.put_draft(updated, owner_open_id)
+        self._store.put_draft(updated, draft.owner_open_id)
         return build_draft_card(updated)
+
+    def _apply_rules_candidate(
+        self, owner_open_id: str, draft_id: str, text: str
+    ) -> Dict[str, Any]:
+        """Adopt one suggested interpretation chosen from the options card."""
+        draft = self._store.get_draft(draft_id, owner_open_id)
+        if draft is None:
+            return build_notice_card("策略配置", "草稿不存在或无权访问。")
+        if draft.state not in (DraftState.AWAITING_RULES, DraftState.READY):
+            return build_draft_card(draft, error="当前步骤不是设置规则。")
+        try:
+            rules = parse_rule_spec(text)
+        except RuleSpecError as exc:
+            return build_rule_options_card(draft, text, [], error=str(exc))
+        return self._store_rules(draft, rules)
 
     def _save_draft(self, owner_open_id: str, draft_id: str) -> Dict[str, Any]:
         draft = self._store.get_draft(draft_id, owner_open_id)
