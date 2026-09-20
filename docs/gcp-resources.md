@@ -4,7 +4,7 @@ This document is the source of truth for Google Cloud resources used by the
 A-Share Laboratory. It records live infrastructure, security boundaries, and
 expected cost impact without storing credential values.
 
-Last verified: **2026-09-19**
+Last verified: **2026-09-20**
 
 ## Project boundary
 
@@ -372,6 +372,18 @@ GitHub authorization.
 | Retry count | Scheduler default (5); the API returns 500 on any per-strategy failure so retries are at-least-once |
 | Expected cost impact | One authenticated POST per weekday while enabled; remains within the monthly free allowance for Scheduler jobs |
 
+| Setting | Value |
+| --- | --- |
+| Job | `china-a-share-keep-alive` |
+| Region | `asia-east2` |
+| Schedule | Every 5 minutes (`*/5 * * * *`, UTC) |
+| Target | GET `https://china-a-share-lab-1079739428171.asia-east2.run.app/api/health` |
+| Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` (OIDC token, audience set to the full route URL) |
+| State | Enabled; one verified manual run returned HTTP 200 in ~6 ms |
+| Retry count | Scheduler default; a missed ping is harmless because the next one arrives within five minutes |
+| Purpose | Keep a Cloud Run instance resident so Feishu card-action callbacks are answered inside Feishu's 3-second deadline; cold starts after scale-to-zero previously produced 3.2–6.2 s first responses and the client error toast |
+| Expected cost impact | 8,640 authenticated GETs per month at ~5 ms each under request-based billing (well under USD 0.10); with this job the project holds exactly three Scheduler jobs, the maximum of the monthly free allowance, so any fourth job would start incurring Scheduler charges |
+
 Google-managed Cloud Run, Cloud Build, Artifact Registry, Container Registry,
 and Pub/Sub service agents also exist. They are platform-managed identities and
 are not application runtime identities.
@@ -513,3 +525,4 @@ enforced by this repository. They must be reconciled here when observed.
 | 2026-09-20 | Deployed revision `china-a-share-lab-00262-j7f` through the main push trigger from `main@a4d45d1bd8f0207f9fd0a5067a2337c92ca77822` (merge of `codex/strategy-scanner-clean`); verified 100% traffic and public health. The release adds configurable technical-pattern strategy scanning with Feishu authoring cards, owner-isolated Cloud Storage persistence under the existing bucket's new `strategies/` prefix, an authenticated `POST /api/analysis/tasks/strategy:daily-scan` entry, and `send_chat_card` on the Feishu client. Resumed `china-a-share-strategy-daily-scan` and verified the scheduler's real OIDC invocation returns 200 (invalid bearer tokens return 401). No resource type, IAM boundary, lifecycle policy, or fixed cost changed; storage grows only with user-created strategy objects. |
 | 2026-09-20 | Deployed revision `china-a-share-lab-00263-9xj` through the main push trigger from `main@22a5c932dec5e42c60727b5ad82e987d8e348961` (merge of `codex/limit-up-rule`); verified 100% traffic, public health, and a manual scheduler invocation returning 200. The release adds the close-at-limit-up strategy rule: exchange-exact limit prices (half-up to the 0.01 tick) over nominal closes with board-aware ratios, optional 窗口=N, verified against real full-market Tushare data (82 close-at-limit stocks on 2026-09-18). No resource type, IAM boundary, lifecycle policy, or material cost changed. |
 
+| 2026-09-20 | Created Cloud Scheduler job `china-a-share-keep-alive` (asia-east2, `*/5 * * * *`, OIDC GET to `/api/health` as `china-a-share-scheduler@`) and verified a manual run returned 200 in ~6 ms. Rationale: request logs showed first Feishu card-action callback after each idle period cold-starting for 3.2–6.2 s, past Feishu's 3-second card-callback deadline, producing the client error toast while the action still executed. No IAM boundary, lifecycle policy, or Cloud Run setting changed; the project now holds exactly three Scheduler jobs (the monthly free-allowance maximum), and expected added spend is well under USD 0.10 per month from ~8,640 five-millisecond health requests. |
