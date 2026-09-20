@@ -260,17 +260,44 @@ def build_query_plan_system_prompt(
 
 
 class DeepSeekQueryPlanner:
-    """Convert natural language into a query plan using DeepSeek."""
+    """Convert natural language into a query plan using an OpenAI-compatible chat API.
 
-    def __init__(self, api_key: str, session: Optional[Any] = None) -> None:
-        """Store the required credential and an optional injectable HTTP session."""
+    The retry, normalization, and validation engine is provider neutral; the
+    constructor pins the endpoint, model escalation, and identity labels so
+    alternative chat providers (for example Zhipu GLM) reuse this engine by
+    overriding only those defaults.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        session: Optional[Any] = None,
+        *,
+        api_url: str = DEEPSEEK_API_URL,
+        model: str = DEEPSEEK_MODEL,
+        fallback_model: str = DEEPSEEK_FALLBACK_MODEL,
+        provider: str = DEEPSEEK_PLANNER_NAME,
+        label: str = "DeepSeek",
+    ) -> None:
+        """Store credentials plus the endpoint/model configuration to use."""
         self._api_key = api_key
         self._session = session if session is not None else requests.Session()
+        self._api_url = api_url
+        self._model = model
+        self._fallback_model = fallback_model
+        self._provider = provider
+        self._label = label
 
     @property
     def name(self) -> str:
         """Return the stable planner identifier exposed in analysis responses."""
-        return DEEPSEEK_PLANNER_NAME
+        return self._provider
+
+    def _model_for_attempt(self, attempt: int) -> str:
+        """Use the fallback model only for the final recovery attempts."""
+        if attempt >= DEEPSEEK_MAX_ATTEMPTS - 2:
+            return self._fallback_model
+        return self._model
 
     def plan(
         self,
@@ -321,7 +348,7 @@ class DeepSeekQueryPlanner:
         valid_candidates: list[QueryPlan] = []
         candidate_fingerprints: dict[str, int] = {}
         for attempt in range(DEEPSEEK_MAX_ATTEMPTS):
-            model = _planner_model_for_attempt(attempt)
+            model = self._model_for_attempt(attempt)
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.prompt},
@@ -362,7 +389,7 @@ class DeepSeekQueryPlanner:
                 logging.INFO,
                 "planner_model_attempt",
                 request_id=ANALYSIS_REQUEST_ID.get(),
-                provider="deepseek",
+                provider=self._provider,
                 model=model,
                 attempt=attempt + 1,
             )
@@ -375,7 +402,7 @@ class DeepSeekQueryPlanner:
                     logging.WARNING,
                     "planner_response_rejected",
                     request_id=ANALYSIS_REQUEST_ID.get(),
-                    provider="deepseek",
+                    provider=self._provider,
                     model=model,
                     attempt=attempt + 1,
                     reason=str(exc),
@@ -398,7 +425,7 @@ class DeepSeekQueryPlanner:
                 logging.INFO,
                 "planner_intent_normalized",
                 request_id=ANALYSIS_REQUEST_ID.get(),
-                provider="deepseek",
+                provider=self._provider,
                 model=model,
                 attempt=attempt + 1,
                 intent=(plan.intent.model_dump(mode="json") if plan.intent else None),
@@ -431,7 +458,7 @@ class DeepSeekQueryPlanner:
                         logging.INFO,
                         "planner_plan_validated",
                         request_id=ANALYSIS_REQUEST_ID.get(),
-                        provider="deepseek",
+                        provider=self._provider,
                         model=model,
                         attempt=attempt + 1,
                         pipeline=(
@@ -461,7 +488,7 @@ class DeepSeekQueryPlanner:
                             logging.INFO,
                             "planner_candidate_selected",
                             request_id=ANALYSIS_REQUEST_ID.get(),
-                            provider="deepseek",
+                            provider=self._provider,
                             model=model,
                             candidate_count=len(valid_candidates),
                             distinct_candidate_count=len(candidate_fingerprints),
@@ -485,7 +512,7 @@ class DeepSeekQueryPlanner:
                         logging.WARNING,
                         "planner_plan_rejected",
                         request_id=ANALYSIS_REQUEST_ID.get(),
-                        provider="deepseek",
+                        provider=self._provider,
                         model=model,
                         attempt=attempt + 1,
                         reason=str(exc),
@@ -503,7 +530,7 @@ class DeepSeekQueryPlanner:
                 logging.INFO,
                 "planner_candidate_selected",
                 request_id=ANALYSIS_REQUEST_ID.get(),
-                provider="deepseek",
+                provider=self._provider,
                 model=model,
                 candidate_count=len(valid_candidates),
                 distinct_candidate_count=len(candidate_fingerprints),
@@ -515,7 +542,7 @@ class DeepSeekQueryPlanner:
         raise PlannerError(
             source=self.name,
             message=(
-                "DeepSeek could not produce a valid query plan after "
+                f"{self._label} could not produce a valid query plan after "
                 f"{DEEPSEEK_MAX_ATTEMPTS} attempts: {last_error}"
             ),
         ) from last_error
@@ -791,7 +818,7 @@ class DeepSeekQueryPlanner:
         except ValueError as exc:
             raise PlannerError(
                 source=self.name,
-                message="DeepSeek returned a non-JSON response.",
+                message=f"{self._label} returned a non-JSON response.",
                 http_status=response.status_code,
                 raw_response={"text": response.text},
             ) from exc
@@ -800,7 +827,9 @@ class DeepSeekQueryPlanner:
             upstream_error = payload.get("error") or {}
             raise PlannerError(
                 source=self.name,
-                message=str(upstream_error.get("message") or "DeepSeek request failed."),
+                message=str(
+                    upstream_error.get("message") or f"{self._label} request failed."
+                ),
                 code=upstream_error.get("code"),
                 http_status=response.status_code,
                 raw_response=payload,
@@ -812,7 +841,7 @@ class DeepSeekQueryPlanner:
         if not content:
             raise PlannerError(
                 source=self.name,
-                message="DeepSeek returned an empty query plan.",
+                message=f"{self._label} returned an empty query plan.",
                 http_status=response.status_code,
                 raw_response=payload,
             )
@@ -821,8 +850,8 @@ class DeepSeekQueryPlanner:
             logging.INFO,
             "planner_raw_output",
             request_id=ANALYSIS_REQUEST_ID.get(),
-            provider="deepseek",
-            model=str(payload.get("model") or DEEPSEEK_MODEL),
+            provider=self._provider,
+            model=str(payload.get("model") or self._model),
             content=content,
         )
         try:
@@ -833,8 +862,9 @@ class DeepSeekQueryPlanner:
             raise PlannerError(
                 source=self.name,
                 message=(
-                    "DeepSeek returned a query plan that violates the contract: "
-                    f"invalid JSON at line {exc.lineno}, column {exc.colno}."
+                    f"{self._label} returned a query plan that violates the "
+                    f"contract: invalid JSON at line {exc.lineno}, column "
+                    f"{exc.colno}."
                 ),
                 http_status=response.status_code,
                 raw_response={"content": content},
@@ -851,8 +881,8 @@ class DeepSeekQueryPlanner:
             raise PlannerError(
                 source=self.name,
                 message=(
-                    "DeepSeek returned a query plan that violates the contract: "
-                    f"{details}"
+                    f"{self._label} returned a query plan that violates the "
+                    f"contract: {details}"
                 ),
                 http_status=response.status_code,
                 raw_response={
@@ -873,14 +903,14 @@ class DeepSeekQueryPlanner:
     def generate_text(self, prompt: str) -> str:
         """Generate arbitrary text using the underlying LLM."""
         payload = {
-            "model": DEEPSEEK_MODEL,
+            "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
             "max_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
         }
         try:
             response = self._session.post(
-                DEEPSEEK_API_URL,
+                self._api_url,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
@@ -898,7 +928,7 @@ class DeepSeekQueryPlanner:
         """Issue one planner request so the outer loop bounds total model calls."""
         try:
             return self._session.post(
-                DEEPSEEK_API_URL,
+                self._api_url,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",

@@ -501,7 +501,7 @@ class ResearchToolbox:
 
 
 class FeishuAgentRuntime:
-    """Run a bounded DeepSeek tool loop over audited market-data capabilities."""
+    """Run a bounded tool loop over audited market-data capabilities."""
 
     def __init__(
         self,
@@ -509,10 +509,24 @@ class FeishuAgentRuntime:
         provider: MarketDataProvider,
         *,
         session: Optional[requests.Session] = None,
+        api_url: str = DEEPSEEK_AGENT_URL,
+        model: str = DEEPSEEK_AGENT_MODEL,
+        fallback_model: str = DEEPSEEK_AGENT_FALLBACK_MODEL,
+        label: str = "DeepSeek",
     ) -> None:
         self._api_key = api_key
         self._provider = provider
         self._session = session or requests.Session()
+        self._api_url = api_url
+        self._model = model
+        self._fallback_model = fallback_model
+        self._label = label
+
+    def _model_for_round(self, round_index: int) -> str:
+        """Escalate only the final two tool rounds to the stronger model."""
+        if round_index >= MAX_AGENT_ROUNDS - 2:
+            return self._fallback_model
+        return self._model
 
     def run(
         self,
@@ -530,9 +544,9 @@ class FeishuAgentRuntime:
         messages.append({"role": "user", "content": request.prompt})
 
         for round_index in range(MAX_AGENT_ROUNDS):
-            model = _agent_model_for_round(round_index)
+            model = self._model_for_round(round_index)
             response = self._session.post(
-                DEEPSEEK_AGENT_URL,
+                self._api_url,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
@@ -549,7 +563,7 @@ class FeishuAgentRuntime:
             )
             if response.status_code >= 400:
                 raise RuntimeError(
-                    f"DeepSeek agent returned HTTP {response.status_code}: "
+                    f"{self._label} agent returned HTTP {response.status_code}: "
                     f"{response.text[:500]}"
                 )
             payload = response.json()
@@ -558,7 +572,9 @@ class FeishuAgentRuntime:
             if not tool_calls:
                 answer = str(message.get("content") or "").strip()
                 if not answer:
-                    raise RuntimeError("DeepSeek agent returned an empty answer.")
+                    raise RuntimeError(
+                        f"{self._label} agent returned an empty answer."
+                    )
                 return FeishuAgentOutcome(
                     answer=answer,
                     artifact_path=toolbox.artifact_path,
@@ -579,7 +595,9 @@ class FeishuAgentRuntime:
                         "content": json.dumps(result, ensure_ascii=False),
                     }
                 )
-        raise RuntimeError("DeepSeek agent exceeded the bounded tool-call limit.")
+        raise RuntimeError(
+            f"{self._label} agent exceeded the bounded tool-call limit."
+        )
 
 
 def build_research_workbook(

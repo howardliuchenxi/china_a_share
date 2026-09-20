@@ -21,6 +21,12 @@ class Settings:
     tushare_cache_bucket: str = ""
     # GLM is optional for text-only requests and required for screenshots.
     zai_api_key: str = ""
+    # Planning-provider switch: "deepseek" (default) or "glm" (Zhipu GLM).
+    llm_provider: str = "deepseek"
+    # Optional overrides for the GLM chat endpoint and model escalation.
+    glm_api_url: str = ""
+    glm_model: str = ""
+    glm_fallback_model: str = ""
     google_cloud_project: str = ""
     cloud_run_region: str = "asia-east2"
     analysis_job_name: str = "china-a-share-analysis-worker"
@@ -47,15 +53,28 @@ class Settings:
                 "TUSHARE_TOKEN is missing. Copy .env.example to .env and add "
                 "a valid Tushare token."
             )
-        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-        if not deepseek_api_key or deepseek_api_key == "your_deepseek_api_key_here":
+        llm_provider = os.getenv("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek"
+        if llm_provider not in {"deepseek", "glm"}:
             raise ConfigurationError(
-                "DEEPSEEK_API_KEY is missing. Add a valid DeepSeek API key to .env."
+                f"LLM_PROVIDER must be 'deepseek' or 'glm', got '{llm_provider}'."
             )
+        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
         tushare_cache_bucket = os.getenv("TUSHARE_CACHE_BUCKET", "").strip()
         zai_api_key = os.getenv("ZAI_API_KEY", "").strip()
         if zai_api_key == "your_zai_api_key_here":
             zai_api_key = ""
+        if llm_provider == "glm":
+            if not zai_api_key:
+                raise ConfigurationError(
+                    "ZAI_API_KEY is missing. LLM_PROVIDER=glm requires a Zhipu "
+                    "API key (the GLM Coding Plan key works via the coding "
+                    "endpoint)."
+                )
+        elif not deepseek_api_key or deepseek_api_key == "your_deepseek_api_key_here":
+            raise ConfigurationError(
+                "DEEPSEEK_API_KEY is missing. Add a valid DeepSeek API key to "
+                ".env or switch LLM_PROVIDER=glm with ZAI_API_KEY."
+            )
         google_cloud_project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
         cloud_run_region = os.getenv("CLOUD_RUN_REGION", "asia-east2").strip()
         analysis_job_name = os.getenv(
@@ -82,6 +101,10 @@ class Settings:
             deepseek_api_key=deepseek_api_key,
             tushare_cache_bucket=tushare_cache_bucket,
             zai_api_key=zai_api_key,
+            llm_provider=llm_provider,
+            glm_api_url=os.getenv("GLM_API_URL", "").strip(),
+            glm_model=os.getenv("GLM_MODEL", "").strip(),
+            glm_fallback_model=os.getenv("GLM_FALLBACK_MODEL", "").strip(),
             google_cloud_project=google_cloud_project,
             cloud_run_region=cloud_run_region,
             analysis_job_name=analysis_job_name,

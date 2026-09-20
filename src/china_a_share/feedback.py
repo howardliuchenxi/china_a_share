@@ -136,11 +136,16 @@ class DeepSeekUiFeedbackAssistant:
         session: Optional[requests.Session] = None,
         source_search: Optional[RepositorySourceSearch] = None,
         git_sha: str = "",
+        *,
+        api_url: str = DEEPSEEK_API_URL,
+        model: str = DEEPSEEK_MODEL,
     ) -> None:
         self._api_key = api_key
         self._session = session or requests.Session()
         self._source_search = source_search or RepositorySourceSearch.for_runtime()
         self._git_sha = git_sha
+        self._api_url = api_url
+        self._model = model
 
     def reply(self, request: UiFeedbackChatRequest) -> str:
         """Return one concise, actionable response grounded in the selected UI."""
@@ -178,13 +183,13 @@ class DeepSeekUiFeedbackAssistant:
             ],
         ]
         response = self._session.post(
-            DEEPSEEK_API_URL,
+            self._api_url,
             headers={
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": DEEPSEEK_MODEL,
+                "model": self._model,
                 "messages": messages,
                 "thinking": {"type": "disabled"},
                 "max_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,

@@ -33,6 +33,12 @@ from china_a_share.tasks import (
     CloudStorageAnalysisTaskStore,
 )
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
+from china_a_share.planners.glm import (
+    GLM_CODING_API_URL,
+    GLM_FALLBACK_MODEL,
+    GLM_MODEL,
+    GlmQueryPlanner,
+)
 from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
     TushareDataProvider,
@@ -49,10 +55,29 @@ from china_a_share.feishu_agent import (
 )
 
 
+def _glm_chat_config(settings: Settings) -> dict:
+    """Resolve GLM chat endpoint overrides once for every LLM call site."""
+    return {
+        "api_key": settings.zai_api_key,
+        "api_url": settings.glm_api_url or GLM_CODING_API_URL,
+        "model": settings.glm_model or GLM_MODEL,
+        "fallback_model": settings.glm_fallback_model or GLM_FALLBACK_MODEL,
+    }
+
+
 def create_analysis_service(settings: Settings) -> AnalysisService:
     """Assemble the configured planner, provider, cache, validator, and executor."""
     provider = _create_data_provider(settings)
-    planner = DeepSeekQueryPlanner(settings.deepseek_api_key)
+    if settings.llm_provider == "glm":
+        glm = _glm_chat_config(settings)
+        planner = GlmQueryPlanner(
+            glm["api_key"],
+            api_url=glm["api_url"],
+            model=glm["model"],
+            fallback_model=glm["fallback_model"],
+        )
+    else:
+        planner = DeepSeekQueryPlanner(settings.deepseek_api_key)
     validator = ASharePlanValidator(provider)
     executor = DataQueryExecutor(provider)
     vision_analyzer = (
@@ -136,10 +161,18 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
 
 def create_feishu_agent_runtime(settings: Settings) -> FeishuAgentRuntime:
     """Assemble the independent Feishu agent around read-only provider tools."""
-    return FeishuAgentRuntime(
-        settings.deepseek_api_key,
-        _create_feishu_data_provider(settings),
-    )
+    data_provider = _create_feishu_data_provider(settings)
+    if settings.llm_provider == "glm":
+        glm = _glm_chat_config(settings)
+        return FeishuAgentRuntime(
+            glm["api_key"],
+            data_provider,
+            api_url=glm["api_url"],
+            model=glm["model"],
+            fallback_model=glm["fallback_model"],
+            label="GLM",
+        )
+    return FeishuAgentRuntime(settings.deepseek_api_key, data_provider)
 
 
 def create_analysis_task_coordinator(
@@ -181,6 +214,21 @@ def create_ui_feedback_service(settings: Settings) -> UiFeedbackService:
             "UI feedback is disabled because required settings are missing: "
             + ", ".join(missing)
         )
+    if settings.llm_provider == "glm":
+        glm = _glm_chat_config(settings)
+        feedback_assistant: DeepSeekUiFeedbackAssistant = (
+            DeepSeekUiFeedbackAssistant(
+                glm["api_key"],
+                git_sha=settings.app_git_sha,
+                api_url=glm["api_url"],
+                model=glm["model"],
+            )
+        )
+    else:
+        feedback_assistant = DeepSeekUiFeedbackAssistant(
+            settings.deepseek_api_key,
+            git_sha=settings.app_git_sha,
+        )
     return UiFeedbackService(
         GoogleAdminVerifier(
             settings.google_oauth_client_id,
@@ -191,10 +239,7 @@ def create_ui_feedback_service(settings: Settings) -> UiFeedbackService:
             settings.github_fix_repo,
             settings.github_fix_token,
         ),
-        DeepSeekUiFeedbackAssistant(
-            settings.deepseek_api_key,
-            git_sha=settings.app_git_sha,
-        ),
+        feedback_assistant,
         google_client_id=settings.google_oauth_client_id,
         git_branch=settings.app_git_branch,
         git_sha=settings.app_git_sha,

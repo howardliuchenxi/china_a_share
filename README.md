@@ -123,6 +123,21 @@ TUSHARE_CACHE_BUCKET=your_private_cache_bucket
 The `.env` file is ignored by Git. Credentials are read by the backend and are
 never included in browser responses.
 
+### Switching the planning LLM to GLM
+
+Set `LLM_PROVIDER=glm` to route the query planner, the Feishu research agent,
+and the UI feedback assistant through Zhipu GLM instead of DeepSeek. The
+default GLM endpoint is the GLM Coding Plan endpoint
+(`https://open.bigmodel.cn/api/coding/paas/v4`), which consumes the
+subscription's included quota under its 5-hour and weekly caps and shares that
+quota with your coding tools. Set
+`GLM_API_URL=https://open.bigmodel.cn/api/paas/v4/chat/completions` to bill
+pay-as-you-go account balance instead. Model escalation defaults to
+`glm-5.3-flash` with `glm-5.3` for final recovery attempts; override with
+`GLM_MODEL` and `GLM_FALLBACK_MODEL`. When `LLM_PROVIDER=glm`, `ZAI_API_KEY`
+is required and `DEEPSEEK_API_KEY` becomes optional. Screenshot analysis
+always uses the pay-as-you-go GLM endpoint regardless of this switch.
+
 The web backend requires Cloud Storage access for persistent Tushare caching.
 For local runs, authenticate Application Default Credentials before starting
 the server:
