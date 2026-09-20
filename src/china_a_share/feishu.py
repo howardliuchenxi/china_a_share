@@ -851,7 +851,7 @@ class FeishuResearchBot:
                 raise FeishuEventError("Research prompt is required.")
         elif action_name == "switch_model":
             # The model selector is one dropdown form; its selection arrives
-            # as form_value keyed by the select_menu component name.
+            # as form_value keyed by the select_static component name.
             selected = str(
                 form_value.get("model") or "" if isinstance(form_value, dict) else ""
             ).strip()
@@ -1583,7 +1583,9 @@ def build_feishu_quick_menu_card(
                 "name": "model_form",
                 "elements": [
                     {
-                        "tag": "select_menu",
+                        # v1 card dropdown tag is select_static; the invalid
+                        # select_menu tag makes Feishu drop the whole form.
+                        "tag": "select_static",
                         "name": "model",
                         "placeholder": {
                             "tag": "plain_text",

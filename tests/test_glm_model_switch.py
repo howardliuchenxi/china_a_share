@@ -381,10 +381,16 @@ def test_quick_menu_card_uses_one_model_dropdown_form():
         element for element in card["elements"] if element.get("tag") == "form"
     ]
     model_form = next(f for f in forms if f["name"] == "model_form")
+    # Feishu v1 cards only accept select_static inside a form; any other
+    # dropdown tag makes the renderer drop the whole form.
     menu = next(
         element
         for element in model_form["elements"]
-        if element["tag"] == "select_menu"
+        if element["tag"] == "select_static"
+    )
+    assert all(
+        element["tag"] in {"select_static", "button"}
+        for element in model_form["elements"]
     )
     assert menu["name"] == "model"
     assert [option["value"] for option in menu["options"]] == [
