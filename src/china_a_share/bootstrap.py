@@ -75,6 +75,7 @@ from china_a_share.discovery.evolution_loop import EvolutionLoop
 from china_a_share.core.ports import AnalysisTaskStore
 from china_a_share.core.ports import MarketDataProvider
 from china_a_share.discovery.qfq_loader import QFQLoader
+from china_a_share.discovery.rule_compiler import LlmRuleCompiler
 from china_a_share.discovery.rule_engine import RuleEngine
 from china_a_share.discovery.strategy_interaction import StrategyInteractionCoordinator
 from china_a_share.discovery.strategy_scanner import StrategyScanner
@@ -122,9 +123,15 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
             store=strategy_store,
             sender=feishu_client,
         )
+        rule_compiler = None
+        if settings.deepseek_api_key:
+            rule_compiler = LlmRuleCompiler(
+                DeepSeekQueryPlanner(settings.deepseek_api_key).generate_text
+            )
         strategy_interaction = StrategyInteractionCoordinator(
             strategy_store,
             strategy_scanner,
+            compiler=rule_compiler,
         )
     return FeishuResearchBot(
         task_coordinator,
