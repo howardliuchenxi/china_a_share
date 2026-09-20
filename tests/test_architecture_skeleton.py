@@ -305,6 +305,20 @@ def test_limit_list_capability_audits_complete_market_reads(
             {"ts_code": "600519.SH", "period": "20251231", "type": "P"},
             "security",
         ),
+        ("moneyflow_ind_ths", {"trade_date": "20260918"}, "market_snapshot"),
+        ("moneyflow_cnt_ths", {"trade_date": "20260918"}, "market_snapshot"),
+        (
+            "moneyflow_ind_ths",
+            {"start_date": "20260901", "end_date": "20260918"},
+            "bounded_range",
+        ),
+        (
+            "ths_index",
+            {"exchange": "A", "type": "I"},
+            "taxonomy_by_exchange_type",
+        ),
+        ("ths_member", {"ts_code": "881121.TI"}, "board_members"),
+        ("ths_member", {"con_code": "002049.SZ"}, "security_boards"),
     ],
 )
 def test_common_market_data_capabilities_prove_paginated_reads(

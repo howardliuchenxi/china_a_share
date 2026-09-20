@@ -243,6 +243,53 @@ CORE_OPERATION_GUIDANCE = {
         "be derived from the documented buy and sell amount pairs when no direct net "
         "field exists."
     ),
+    "moneyflow_ind_ths": (
+        "Daily fund flow for the 90 THS (Tonghuashun) level-2 industries, the "
+        "canonical sub-sector monitoring taxonomy. Parameters: "
+        "trade_date=YYYYMMDD for all boards on one date, ts_code for one "
+        "board's history, or start_date with end_date. Fields: trade_date, "
+        "ts_code, pct_change, close, net_buy_amount, net_amount, lead_stock. "
+        "Field semantics verified against the THS data center: net_amount is "
+        "the net fund flow and is the ONLY field usable for net-flow rankings "
+        "or statements; net_buy_amount is the GROSS inflow despite its name "
+        "and must never be reported as net. Unit note: both amounts are in "
+        "CNY 100 million units (亿元) at integer precision, unlike the 万元 "
+        "units of security-level moneyflow; never mix the two conventions. "
+        "The endpoint returns board codes without names: join ths_index with "
+        "exchange='A' and type='I' on ts_code to resolve industry names and "
+        "constituent counts before any user-facing output. For fund-flow "
+        "change monitoring, compare adjacent trade dates on net_amount."
+    ),
+    "moneyflow_cnt_ths": (
+        "Daily fund flow for the roughly 390 THS concept boards, the finest "
+        "thematic monitoring layer beneath the level-2 industries. Parameters: "
+        "trade_date=YYYYMMDD, ts_code, or start_date with end_date. Fields: "
+        "trade_date, ts_code, name, pct_change, close, net_buy_amount, "
+        "net_amount, lead_stock. net_amount is the net fund flow and the only "
+        "ranking field for net inflow or outflow; net_buy_amount is the GROSS "
+        "inflow despite its name. Unit note: amounts are in CNY 100 million "
+        "units (亿元) at integer precision. Concepts overlap each other and "
+        "the industries, so constituent counts are not additive. Boards such "
+        "as 融资融券, 深股通, 沪股通, or index-inclusion labels are "
+        "market-attribute pools rather than themes; when ranking thematic "
+        "heat, separate them from or exclude them beside genuine theme boards."
+    ),
+    "ths_index": (
+        "THS board taxonomy directory used to resolve board codes into names "
+        "and constituent counts. Parameters: exchange='A' with type='N' for "
+        "concept boards or type='I' for industries (700xxx level-1, 881xxx "
+        "the 90 level-2 industries, 884xxx level-3), or ts_code for one "
+        "board. Fields: ts_code, name, count, exchange, list_date. "
+        "moneyflow_ind_ths returns level-2 codes without names and must be "
+        "joined to this directory before any user-facing ranking."
+    ),
+    "ths_member": (
+        "THS board membership: pass ts_code=<board code ending in .TI> for "
+        "one board's constituent stocks, or con_code=<stock> for the boards "
+        "one stock belongs to. Fields: ts_code, con_code, con_name. Use it "
+        "to attribute a stock to its THS level-2 industry or to drill into "
+        "a board's members after a fund-flow ranking."
+    ),
     "repurchase": (
         "A-share repurchase disclosures. Parameters include ann_date, start_date, "
         "end_date, and ts_code; full-market reads are supported. Common fields include "

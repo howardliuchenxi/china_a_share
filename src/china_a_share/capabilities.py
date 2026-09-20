@@ -314,6 +314,120 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
         page_size=6_000,
         unique_key=("ts_code", "trade_date"),
     ),
+    "moneyflow_ind_ths": ProviderOperationCapability(
+        operation="moneyflow_ind_ths",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=5_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "moneyflow_cnt_ths": ProviderOperationCapability(
+        operation="moneyflow_cnt_ths",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        page_size=5_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
+    "ths_index": ProviderOperationCapability(
+        operation="ths_index",
+        allowed_params=(
+            "ts_code",
+            "exchange",
+            "type",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="taxonomy_by_exchange_type",
+                required_params=("exchange", "type"),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="board_by_code",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        unique_key=("ts_code",),
+    ),
+    "ths_member": ProviderOperationCapability(
+        operation="ths_member",
+        allowed_params=(
+            "ts_code",
+            "con_code",
+            "is_new",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="board_members",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="security_boards",
+                required_params=("con_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+        ),
+        unique_key=("ts_code", "con_code"),
+    ),
     "weekly": ProviderOperationCapability(
         operation="weekly",
         allowed_params=(

@@ -238,11 +238,25 @@ GOLDEN_QUESTION_FAMILIES: List[Dict[str, Any]] = [
         "family": "industry_moneyflow",
         "tier": "supported",
         "delivery": "sync",
-        "operations": ["moneyflow_ind_ths"],
+        "operations": ["moneyflow_ind_ths", "ths_index"],
         "prompts": [
             "\u4eca\u5929\u51c0\u6d41\u5165\u6700\u591a\u7684\u884c\u4e1a",
             "\u6700\u8fd1\u4ea4\u6613\u65e5\u540c\u82b1\u987a\u884c\u4e1a\u8d44\u91d1\u6d41\u5411",
             "\u54ea\u4e2a\u884c\u4e1a\u4e3b\u529b\u8d44\u91d1\u51c0\u6d41\u51fa\u6700\u591a\uff1f",
+            "\u4eca\u5929\u540c\u82b1\u987a\u4e8c\u7ea7\u884c\u4e1a\u91cc\u8d44\u91d1\u51c0\u989d\u6700\u9ad8\u7684\u662f\u54ea\u4e2a",
+            "\u5bf9\u6bd4\u6700\u8fd1\u4e24\u4e2a\u4ea4\u6613\u65e5\u5404\u4e8c\u7ea7\u884c\u4e1a\u7684\u8d44\u91d1\u51c0\u989d\u53d8\u5316",
+            "\u534a\u5bfc\u4f53\u8fd9\u4e2a\u7ec6\u5206\u884c\u4e1a\u6700\u8fd1\u7684\u8d44\u91d1\u51c0\u6d41\u5165\u53d8\u5316",
+        ],
+    },
+    {
+        "family": "concept_moneyflow",
+        "tier": "supported",
+        "delivery": "sync",
+        "operations": ["moneyflow_cnt_ths"],
+        "prompts": [
+            "\u4eca\u5929\u8d44\u91d1\u51c0\u6d41\u5165\u6700\u591a\u7684\u6982\u5ff5\u677f\u5757",
+            "\u5b58\u50a8\u82af\u7247\u6982\u5ff5\u6700\u8fd1\u4e00\u5468\u7684\u8d44\u91d1\u6d41\u5411",
+            "\u54ea\u4e9b\u6982\u5ff5\u677f\u5757\u4eca\u5929\u4e3b\u529b\u8d44\u91d1\u51c0\u6d41\u51fa\u6700\u591a",
         ],
     },
     {
