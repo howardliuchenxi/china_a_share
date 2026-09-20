@@ -929,6 +929,15 @@ class FakeEndpointBot:
     def parse_card_action(self, payload):
         return {"action": payload["event"]["action"]["value"]["action"]}
 
+    def parse_strategy_card_action(self, payload):
+        action_name = payload["event"]["action"]["value"]["action"]
+        if action_name.startswith("strategy_"):
+            return {"strategy_action": action_name}
+        return None
+
+    def process_strategy_card_action(self, action):
+        self.processed.append(action)
+
     def process(self, event):
         self.processed.append(event)
 

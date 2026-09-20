@@ -1,0 +1,478 @@
+"""Tests for the Feishu strategy interaction layer and its bot integration."""
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from china_a_share.core.contracts import (
+    AnalysisTask,
+    AnalysisTaskStatus,
+    AnalysisTaskSubmission,
+)
+from china_a_share.discovery.strategy_interaction import (
+    RuleSpecError,
+    StrategyInteractionCoordinator,
+    build_strategy_menu_card,
+    parse_rule_spec,
+)
+from china_a_share.discovery.strategy_models import (
+    CumulativeReturnRule,
+    DraftState,
+    DrawdownRule,
+    FirstBullishMARule,
+    SignalDirection,
+)
+from china_a_share.discovery.strategy_store import MemoryStrategyStore
+from china_a_share.feishu import (
+    FeishuEventError,
+    FeishuMessageEvent,
+    FeishuResearchBot,
+    MemoryConversationStore,
+)
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+FIXED_NOW = datetime(2026, 9, 18, 15, 30, tzinfo=SHANGHAI)
+USER_RULES_TEXT = (
+    "回撤 窗口=60 阈值=30%；涨幅 窗口=10 下限=-10% 上限=10%；金叉 快线=5 慢线=10"
+)
+
+
+class FakeSender:
+    def __init__(self):
+        self.replies = []
+        self.cards = []
+
+    def reply(self, message_id, text):
+        self.replies.append((message_id, text))
+        return f"reply-{len(self.replies)}"
+
+    def update(self, message_id, text):
+        raise AssertionError("Unexpected message update")
+
+    def reply_card(self, message_id, card):
+        self.cards.append((message_id, card))
+        return f"card-{len(self.cards)}"
+
+
+class FakeTaskCoordinator:
+    def __init__(self):
+        self.requests = []
+
+    def submit(self, request, *, task_id=None):
+        self.requests.append(request)
+        now = datetime(2026, 9, 18, tzinfo=SHANGHAI)
+        task_id = task_id or f"{len(self.requests):032x}"
+        self.tasks = getattr(self, "tasks", {})
+        self.tasks[task_id] = AnalysisTask(
+            task_id=task_id,
+            status=AnalysisTaskStatus.QUEUED,
+            request=request,
+            created_at=now,
+            updated_at=now,
+        )
+        return AnalysisTaskSubmission(
+            task_id=task_id,
+            status=AnalysisTaskStatus.QUEUED,
+            status_url=f"/api/analysis/tasks/{task_id}",
+        )
+
+    def get(self, task_id):
+        return None
+
+
+class FakeScanner:
+    def __init__(self, failing=False):
+        self.calls = []
+        self.failing = failing
+
+    def run_manual_preview(self, owner_open_id, request_id):
+        self.calls.append((owner_open_id, request_id))
+        if self.failing:
+            raise RuntimeError("strategy preview failed")
+
+
+def build_interaction(scanner=None):
+    store = MemoryStrategyStore()
+    coordinator = StrategyInteractionCoordinator(
+        store,
+        scanner,
+        clock=lambda: FIXED_NOW,
+    )
+    return coordinator, store
+
+
+def card_text(card):
+    return str(card)
+
+
+def test_parse_rule_spec_supports_user_preset_rules():
+    rules = parse_rule_spec(USER_RULES_TEXT)
+    assert [type(rule) for rule in rules] == [
+        DrawdownRule,
+        CumulativeReturnRule,
+        FirstBullishMARule,
+    ]
+    assert rules[0].window == 60
+    assert rules[0].threshold == pytest.approx(0.30)
+    assert rules[1].window == 10
+    assert rules[1].min_return == pytest.approx(-0.10)
+    assert rules[1].max_return == pytest.approx(0.10)
+    assert rules[2].fast_window == 5
+    assert rules[2].slow_window == 10
+
+
+def test_parse_rule_spec_accepts_english_aliases_and_decimals():
+    rules = parse_rule_spec(
+        "drawdown window=60 threshold=0.3；return window=10 min=-0.1 max=0.1；ma fast=5 slow=10"
+    )
+    assert rules[0].threshold == pytest.approx(0.3)
+    assert rules[1].min_return == pytest.approx(-0.1)
+    assert rules[2].slow_window == 10
+
+
+@pytest.mark.parametrize(
+    "spec, expected_hint",
+    [
+        ("成交量 窗口=5", "回撤"),
+        ("回撤 窗口=60", "阈值"),
+        ("回撤 窗口=six 阈值=30%", "数值"),
+        ("回撤 窗口=60 阈值=30% 未知=1", "不支持参数"),
+        ("金叉 快线=10 慢线=5", "fast_window"),
+    ],
+)
+def test_parse_rule_spec_rejects_invalid_input_with_guidance(spec, expected_hint):
+    with pytest.raises(RuleSpecError) as exc_info:
+        parse_rule_spec(spec)
+    assert expected_hint in str(exc_info.value)
+
+
+def test_guided_draft_flow_saves_enabled_strategy():
+    coordinator, store = build_interaction()
+    create_card = coordinator.handle_message("ou_a", "oc_chat", "新建策略")
+    assert "策略名称" in card_text(create_card)
+
+    draft = store.list_drafts("ou_a")[0]
+    assert draft.state == DraftState.AWAITING_NAME
+
+    name_card = coordinator.handle_message("ou_a", "oc_chat", "策略名称 深度回撤首次转多")
+    assert "买入" in card_text(name_card) and "卖出" in card_text(name_card)
+    draft = store.get_draft(draft.draft_id, "ou_a")
+    assert draft.state == DraftState.AWAITING_DIRECTION
+    assert draft.name == "深度回撤首次转多"
+
+    direction_card = coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "sell"},
+    )
+    assert "规则" in card_text(direction_card)
+    draft = store.get_draft(draft.draft_id, "ou_a")
+    assert draft.state == DraftState.AWAITING_RULES
+    assert draft.direction == SignalDirection.SELL
+
+    ready_card = coordinator.handle_message("ou_a", "oc_chat", f"规则 {USER_RULES_TEXT}")
+    assert "保存策略" in card_text(ready_card)
+    draft = store.get_draft(draft.draft_id, "ou_a")
+    assert draft.state == DraftState.READY
+    assert len(draft.rules) == 3
+
+    saved_card = coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_save",
+        {"draft_id": draft.draft_id},
+    )
+    assert "已保存" in card_text(saved_card)
+
+    strategies = store.list_strategies("ou_a")
+    assert len(strategies) == 1
+    strategy = strategies[0]
+    assert strategy.name == "深度回撤首次转多"
+    assert strategy.direction == SignalDirection.SELL
+    assert strategy.enabled is True
+    assert strategy.notification_chat_id == "oc_chat"
+    assert len(strategy.rules) == 3
+    assert store.list_drafts("ou_a") == []
+
+
+def test_invalid_rules_keep_draft_state_and_guide_user():
+    coordinator, store = build_interaction()
+    coordinator.handle_message("ou_a", "oc_chat", "新建策略 深度回撤")
+    draft = store.list_drafts("ou_a")[0]
+    assert draft.state == DraftState.AWAITING_DIRECTION
+    coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+
+    error_card = coordinator.handle_message("ou_a", "oc_chat", "规则 回撤 阈值=30%")
+    assert "窗口" in card_text(error_card)
+    draft = store.get_draft(draft.draft_id, "ou_a")
+    assert draft.state == DraftState.AWAITING_RULES
+    assert draft.rules == []
+
+    ready_card = coordinator.handle_message("ou_a", "oc_chat", f"规则 {USER_RULES_TEXT}")
+    assert "保存策略" in card_text(ready_card)
+
+
+def test_draft_and_strategy_isolation_between_users():
+    coordinator, store = build_interaction()
+    coordinator.handle_message("ou_a", "oc_chat", "新建策略 甲的策略")
+    draft = store.list_drafts("ou_a")[0]
+    coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+    coordinator.handle_message("ou_a", "oc_chat", f"规则 {USER_RULES_TEXT}")
+
+    # User B must not reach user A's draft at any step.
+    denied_card = coordinator.handle_card_action(
+        "ou_b",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "sell"},
+    )
+    assert "无权访问" in card_text(denied_card)
+    denied_save = coordinator.handle_card_action(
+        "ou_b", "oc_chat", "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
+    assert "无权访问" in card_text(denied_save)
+
+    coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
+    strategy = store.list_strategies("ou_a")[0]
+
+    denied_toggle = coordinator.handle_card_action(
+        "ou_b",
+        "oc_chat",
+        "strategy_toggle",
+        {"strategy_id": strategy.id, "enabled": False},
+    )
+    assert "无权访问" in card_text(denied_toggle)
+    assert store.list_strategies("ou_b") == []
+    assert store.list_strategies("ou_a")[0].enabled is True
+
+
+def test_handles_prompt_matches_only_strategy_commands():
+    coordinator, _ = build_interaction()
+    for command in ("新建策略", "策略列表", "运行规则", "取消草稿", "策略菜单", "策略名称 X", "规则 回撤 窗口=5 阈值=10%"):
+        assert coordinator.handles_prompt(command) is True, command
+    for research_text in (
+        "帮我研究一下白酒板块近期的走势",
+        "新建会话",
+        "查看进度",
+        "执行回测：300开头、市值大于500亿",
+        "什么是MACD金叉",
+        "写一个策略回测报告",
+    ):
+        assert coordinator.handles_prompt(research_text) is False, research_text
+
+
+def test_run_all_runs_owner_enabled_strategies_once():
+    scanner = FakeScanner()
+    coordinator, store = build_interaction(scanner)
+    coordinator.handle_message("ou_a", "oc_chat", "新建策略 甲的策略")
+    draft = store.list_drafts("ou_a")[0]
+    coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+    coordinator.handle_message("ou_a", "oc_chat", f"规则 {USER_RULES_TEXT}")
+    coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
+
+    result = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_run_all", {}, request_id="req-1"
+    )
+    assert result is None
+    assert scanner.calls == [("ou_a", "req-1")]
+
+
+def test_run_all_reports_when_no_enabled_strategies_or_no_scanner():
+    scanner = FakeScanner()
+    coordinator, _ = build_interaction(scanner)
+    notice = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_run_all", {}, request_id="req-2"
+    )
+    assert "没有启用的策略" in card_text(notice)
+    assert scanner.calls == []
+
+    no_scanner_coordinator, store = build_interaction(None)
+    no_scanner_notice = no_scanner_coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_run_all", {}
+    )
+    assert "未配置" in card_text(no_scanner_notice)
+
+
+def test_toggle_and_delete_card_actions_refresh_list():
+    coordinator, store = build_interaction()
+    coordinator.handle_message("ou_a", "oc_chat", "新建策略 甲的策略")
+    draft = store.list_drafts("ou_a")[0]
+    coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+    coordinator.handle_message("ou_a", "oc_chat", f"规则 {USER_RULES_TEXT}")
+    coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
+    strategy = store.list_strategies("ou_a")[0]
+
+    disabled_card = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_toggle", {"strategy_id": strategy.id, "enabled": False}
+    )
+    assert "停用" in card_text(disabled_card)
+    assert store.list_strategies("ou_a")[0].enabled is False
+
+    list_card = coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_delete", {"strategy_id": strategy.id}
+    )
+    assert "还没有已保存的策略" in card_text(list_card)
+    assert store.list_strategies("ou_a") == []
+
+
+def test_menu_card_offers_create_list_and_run():
+    card = build_strategy_menu_card()
+    text = card_text(card)
+    assert "新建策略" in text and "策略列表" in text and "运行规则" in text
+
+
+def build_bot(interaction, allowed_open_ids=None):
+    sender = FakeSender()
+    task_coordinator = FakeTaskCoordinator()
+    bot = FeishuResearchBot(
+        task_coordinator,
+        sender,
+        MemoryConversationStore(),
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        allowed_open_ids=allowed_open_ids,
+        strategy_interaction=interaction,
+    )
+    return bot, sender, task_coordinator
+
+
+def message_event(prompt, sender_open_id="ou_a", event_id="evt-1"):
+    return FeishuMessageEvent(
+        event_id=event_id,
+        message_id="msg-1",
+        conversation_id=f"tenant:oc_chat:root:{sender_open_id}",
+        prompt=prompt,
+        sender_open_id=sender_open_id,
+        chat_id="oc_chat",
+    )
+
+
+def test_bot_routes_strategy_commands_and_leaves_research_untouched():
+    coordinator, _ = build_interaction()
+    bot, sender, task_coordinator = build_bot(interaction=coordinator)
+
+    bot.process(message_event("新建策略"))
+    assert len(sender.cards) == 1
+    assert "策略名称" in card_text(sender.cards[0][1])
+    assert task_coordinator.requests == []
+
+    bot.process(message_event("帮我研究白酒板块", event_id="evt-2"))
+    assert sender.cards == [(sender.cards[0][0], sender.cards[0][1])]
+    assert len(task_coordinator.requests) == 1
+
+
+def strategy_card_payload(action_name, value, *, operator="ou_a", event_id="evt-card-1"):
+    return {
+        "header": {
+            "token": "verification-token",
+            "event_type": "card.action.trigger",
+            "event_id": event_id,
+            "tenant_key": "tenant",
+        },
+        "event": {
+            "operator": {"open_id": operator},
+            "context": {
+                "open_chat_id": "oc_chat",
+                "open_message_id": "msg-card-1",
+            },
+            "action": {"value": {"action": action_name, **value}},
+        },
+    }
+
+
+def test_bot_parses_and_dedupes_strategy_card_actions():
+    coordinator, store = build_interaction()
+    bot, sender, _ = build_bot(interaction=coordinator)
+
+    action = bot.parse_strategy_card_action(
+        strategy_card_payload("strategy_create_draft", {})
+    )
+    assert action is not None
+    assert action.operator_open_id == "ou_a"
+    assert action.chat_id == "oc_chat"
+
+    bot.process_strategy_card_action(action)
+    assert len(sender.cards) == 1
+    assert store.list_drafts("ou_a")
+
+    # The same Feishu event id must not execute twice.
+    bot.process_strategy_card_action(action)
+    assert len(sender.cards) == 1
+
+
+def test_bot_strategy_card_actions_respect_open_id_allowlist():
+    coordinator, _ = build_interaction()
+    bot, _, _ = build_bot(interaction=coordinator, allowed_open_ids={"ou_a"})
+
+    with pytest.raises(FeishuEventError):
+        bot.parse_strategy_card_action(
+            strategy_card_payload("strategy_create_draft", {}, operator="ou_b")
+        )
+
+
+def test_bot_non_strategy_card_actions_fall_back_to_legacy_path():
+    coordinator, _ = build_interaction()
+    bot, _, _ = build_bot(interaction=coordinator)
+
+    action = bot.parse_strategy_card_action(
+        strategy_card_payload("new_session", {})
+    )
+    assert action is None
+
+    legacy = bot.parse_card_action(strategy_card_payload("new_session", {}))
+    assert legacy is not None
+    assert legacy.prompt == "新建会话"
+
+
+def test_bot_strategy_card_failure_replies_error_text():
+    scanner = FakeScanner(failing=True)
+    coordinator, store = build_interaction(scanner)
+    coordinator.handle_message("ou_a", "oc_chat", "新建策略 甲的策略")
+    draft = store.list_drafts("ou_a")[0]
+    coordinator.handle_card_action(
+        "ou_a",
+        "oc_chat",
+        "strategy_draft_direction",
+        {"draft_id": draft.draft_id, "direction": "buy"},
+    )
+    coordinator.handle_message("ou_a", "oc_chat", f"规则 {USER_RULES_TEXT}")
+    coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
+
+    bot, sender, _ = build_bot(interaction=coordinator)
+    action = bot.parse_strategy_card_action(
+        strategy_card_payload("strategy_run_all", {}, event_id="evt-run-1")
+    )
+    bot.process_strategy_card_action(action)
+    assert len(sender.replies) == 1
+    assert "策略操作失败" in sender.replies[0][1]

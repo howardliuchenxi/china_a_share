@@ -159,6 +159,39 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
         page_size=6_000,
         unique_key=("ts_code",),
     ),
+    "adj_factor": ProviderOperationCapability(
+        operation="adj_factor",
+        allowed_params=(
+            "ts_code",
+            "trade_date",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="market_snapshot",
+                required_params=("trade_date",),
+                execution_strategy="provider_query",
+                completeness_policy="paginate_until_short_page",
+            ),
+            ProviderQueryShape(
+                shape_id="bounded_range",
+                required_params=("start_date", "end_date"),
+                execution_strategy="exact_trade_date_fanout",
+                completeness_policy="all_open_dates_complete",
+            ),
+        ),
+        page_size=6_000,
+        unique_key=("ts_code", "trade_date"),
+    ),
     "daily": ProviderOperationCapability(
         operation="daily",
         allowed_params=(

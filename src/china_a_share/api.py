@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from typing import Literal, Optional, Union
 from uuid import uuid4
 
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
+
 from fastapi import (
     BackgroundTasks,
     FastAPI,
@@ -63,6 +66,7 @@ from .e2e_cases import (
 )
 from .observability import log_event
 from .tasks import AnalysisTaskCoordinator
+from .discovery.strategy_scanner import STRATEGY_SCAN_API_ROUTE
 from .feishu import FeishuEventError, FeishuResearchBot
 from .feishu_agent import FeishuAgentTask, research_visualization_token_hash
 
@@ -117,6 +121,47 @@ def _administrator_bearer_token(authorization: str) -> str:
             detail="Administrator authentication is required.",
         )
     return authorization[7:].strip()
+
+
+def _verify_strategy_scan_authorization(authorization: str) -> None:
+    """Accept the configured static scan token or one Google-issued identity token.
+
+    The static token is compared in constant time. When no static token is
+    configured, a Google-signed OIDC identity token is accepted when its
+    audience matches either the public app origin or the full scan route URL,
+    so Cloud Scheduler can call the entry point with its service-account
+    identity regardless of how the job audience was configured.
+    """
+    supplied = _administrator_bearer_token(authorization)
+    settings = Settings.from_env()
+    verified = False
+    if settings.strategy_scan_token:
+        verified = secrets.compare_digest(supplied, settings.strategy_scan_token)
+    if not verified and settings.public_app_url:
+        audiences = (
+            settings.public_app_url,
+            f"{settings.public_app_url}{STRATEGY_SCAN_API_ROUTE}",
+        )
+        for audience in audiences:
+            try:
+                id_info = google_id_token.verify_oauth2_token(
+                    supplied,
+                    google_auth_requests.Request(),
+                    audience,
+                )
+            except Exception:
+                continue
+            if str(id_info.get("iss", "")) in (
+                "https://accounts.google.com",
+                "accounts.google.com",
+            ):
+                verified = True
+                break
+    if not verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Strategy scan authentication is required.",
+        )
 
 
 def create_analysis_service() -> AnalysisService:
@@ -282,6 +327,18 @@ def create_app(
                 allow_missing=event_type == "card.action.trigger",
             )
             if event_type == "card.action.trigger":
+                strategy_action = bot.parse_strategy_card_action(payload)
+                if strategy_action is not None:
+                    background_tasks.add_task(
+                        bot.process_strategy_card_action,
+                        strategy_action,
+                    )
+                    return {
+                        "toast": {
+                            "type": "success",
+                            "content": "操作已提交",
+                        }
+                    }
                 event = bot.parse_card_action(payload)
                 if event is not None:
                     background_tasks.add_task(bot.process, event)
@@ -319,6 +376,49 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(exc),
             ) from exc
+
+    @application.post(STRATEGY_SCAN_API_ROUTE)
+    def trigger_strategy_daily_scan(
+        http_request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict:
+        """Run all enabled strategies once so the scheduler can retry failures."""
+        try:
+            _verify_strategy_scan_authorization(authorization)
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        try:
+            bot = get_feishu_research_bot()
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        scanner = bot.strategy_scanner
+        if scanner is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Strategy scanner is not configured.",
+            )
+        try:
+            scanner.run_daily_scan(http_request.state.request_id)
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "strategy_daily_scan_failed",
+                api_route=STRATEGY_SCAN_API_ROUTE,
+                request_id=http_request.state.request_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Strategy daily scan failed.",
+            ) from exc
+        return {"status": "completed"}
 
     def get_ui_feedback_service() -> UiFeedbackService:
         """Build the optional administrator workflow only when it is requested."""

@@ -38,6 +38,7 @@ from china_a_share.feishu_agent import (
     FeishuAgentRequest,
     FeishuAgentTask,
 )
+from china_a_share.discovery.strategy_interaction import StrategyInteractionCoordinator
 
 
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
@@ -558,6 +559,28 @@ class FeishuOpenApiClient:
             raise RuntimeError("Feishu card reply omitted the message ID.")
         return reply_message_id
 
+    def send_chat_card(self, chat_id: str, card: Dict[str, Any]) -> str:
+        """Send one new interactive card to a chat without a source message."""
+        token = self._tenant_access_token()
+        response = self._session.post(
+            f"{FEISHU_API_BASE_URL}/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "receive_id": chat_id,
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+            },
+            timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
+        )
+        self._raise_for_feishu_error(response, "chat card send")
+        sent_message_id = str(
+            ((response.json().get("data") or {}).get("message_id") or "")
+        ).strip()
+        if not sent_message_id:
+            raise RuntimeError("Feishu chat card send omitted the message ID.")
+        return sent_message_id
+
     def reply_file(self, message_id: str, path: "Path") -> None:
         """Upload one generated workbook and reply with the resulting file key."""
         token = self._tenant_access_token()
@@ -634,6 +657,20 @@ class FeishuMessageEvent:
     message_id: str
     conversation_id: str
     prompt: str
+    sender_open_id: str = ""
+    chat_id: str = ""
+
+
+@dataclass(frozen=True)
+class FeishuStrategyCardAction:
+    """Validated fields of one strategy card button click."""
+
+    event_id: str
+    message_id: str
+    chat_id: str
+    operator_open_id: str
+    action_name: str
+    value: Dict[str, Any]
 
 
 class FeishuResearchBot:
@@ -649,6 +686,7 @@ class FeishuResearchBot:
         encrypt_key: str,
         allowed_open_ids: Optional[set[str]] = None,
         agent_coordinator: Optional[FeishuAgentCoordinator] = None,
+        strategy_interaction: Optional[StrategyInteractionCoordinator] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
             raise FeishuConfigurationError(
@@ -661,6 +699,14 @@ class FeishuResearchBot:
         self._encrypt_key = encrypt_key
         self._allowed_open_ids = allowed_open_ids or set()
         self._agent_coordinator = agent_coordinator
+        self._strategy_interaction = strategy_interaction
+
+    @property
+    def strategy_scanner(self):
+        """Return the strategy scanner wired into the interaction layer, if any."""
+        if self._strategy_interaction is None:
+            return None
+        return self._strategy_interaction.scanner
 
     def verify_signature(
         self,
@@ -767,12 +813,78 @@ class FeishuResearchBot:
         conversation_id = ":".join(
             [str(header.get("tenant_key", "")), chat_id, thread_id, sender_id]
         )
-        return FeishuMessageEvent(event_id, message_id, conversation_id, prompt)
+        return FeishuMessageEvent(
+            event_id,
+            message_id,
+            conversation_id,
+            prompt,
+            sender_open_id=sender_id,
+            chat_id=chat_id,
+        )
 
     def parse_card_action(
         self, payload: Dict[str, Any]
     ) -> Optional[FeishuMessageEvent]:
         """Validate one card interaction and translate it to an existing command."""
+        context = self._extract_card_action_context(payload)
+        if context is None:
+            return None
+        event_id, chat_id, message_id, operator_id, action_name, form_value, value = (
+            context
+        )
+
+        if action_name == "submit_research":
+            prompt = str(
+                form_value.get("prompt") if isinstance(form_value, dict) else ""
+            ).strip()
+            if not prompt:
+                raise FeishuEventError("Research prompt is required.")
+        else:
+            prompt = {
+                "new_session": "新建会话",
+                "list_sessions": "会话列表",
+                "task_status": "查看进度",
+            }.get(action_name, "")
+        if not prompt:
+            return None
+
+        conversation_id = ":".join(
+            [str((payload.get("header") or {}).get("tenant_key") or ""), chat_id, "root", operator_id]
+        )
+        return FeishuMessageEvent(
+            event_id,
+            message_id,
+            conversation_id,
+            prompt,
+            sender_open_id=operator_id,
+            chat_id=chat_id,
+        )
+
+    def parse_strategy_card_action(
+        self, payload: Dict[str, Any]
+    ) -> Optional[FeishuStrategyCardAction]:
+        """Validate one strategy card interaction or return None for other actions."""
+        if self._strategy_interaction is None:
+            return None
+        context = self._extract_card_action_context(payload)
+        if context is None:
+            return None
+        event_id, chat_id, message_id, operator_id, action_name, _form_value, value = (
+            context
+        )
+        if not action_name.startswith("strategy_"):
+            return None
+        return FeishuStrategyCardAction(
+            event_id=event_id,
+            message_id=message_id,
+            chat_id=chat_id,
+            operator_open_id=operator_id,
+            action_name=action_name,
+            value=value if isinstance(value, dict) else {},
+        )
+
+    def _extract_card_action_context(self, payload: Dict[str, Any]):
+        """Validate one card callback and return its identifiers and action."""
         header = payload.get("header") or {}
         if header.get("token") != self._verification_token:
             raise FeishuEventError("Feishu callback verification token is invalid.")
@@ -794,25 +906,7 @@ class FeishuResearchBot:
         action_value = value.get("action") if isinstance(value, dict) else None
         action_name = str(action_value or action.get("name") or "").strip()
         form_value = action.get("form_value") or {}
-        if action_name == "submit_research":
-            prompt = str(
-                form_value.get("prompt") if isinstance(form_value, dict) else ""
-            ).strip()
-            if not prompt:
-                raise FeishuEventError("Research prompt is required.")
-        else:
-            prompt = {
-                "new_session": "新建会话",
-                "list_sessions": "会话列表",
-                "task_status": "查看进度",
-            }.get(action_name, "")
-        if not prompt:
-            return None
-
-        conversation_id = ":".join(
-            [str(header.get("tenant_key") or ""), chat_id, "root", operator_id]
-        )
-        return FeishuMessageEvent(event_id, message_id, conversation_id, prompt)
+        return event_id, chat_id, message_id, operator_id, action_name, form_value, value
 
     def verify_challenge(self, payload: Dict[str, Any]) -> str:
         """Validate and return one Feishu endpoint-verification challenge."""
@@ -828,8 +922,23 @@ class FeishuResearchBot:
         if not self._store.claim_event(event.event_id):
             return
         try:
-            if QUICK_MENU_COMMAND_PATTERN.match(event.prompt):
-                self._sender.reply_card(event.message_id, build_feishu_quick_menu_card())
+            if self._strategy_interaction is not None and self._strategy_interaction.handles_prompt(event.prompt):
+                card = self._strategy_interaction.handle_message(
+                    event.sender_open_id,
+                    event.chat_id,
+                    event.prompt,
+                    event.event_id,
+                )
+                if card is not None:
+                    self._sender.reply_card(event.message_id, card)
+                reply = None
+            elif QUICK_MENU_COMMAND_PATTERN.match(event.prompt):
+                self._sender.reply_card(
+                    event.message_id,
+                    build_feishu_quick_menu_card(
+                        include_strategy=self._strategy_interaction is not None
+                    ),
+                )
                 reply = None
             else:
                 combined_session = (
@@ -867,6 +976,38 @@ class FeishuResearchBot:
                 event.message_id,
                 "研究任务操作失败，请稍后重试。若问题持续，请联系管理员并提供"
                 f"事件编号 {event.event_id}。",
+            )
+
+    def process_strategy_card_action(self, action: FeishuStrategyCardAction) -> None:
+        """Execute one claimed strategy card click and reply with its card."""
+        if self._strategy_interaction is None:
+            return
+        if not self._store.claim_event(action.event_id):
+            return
+        try:
+            card = self._strategy_interaction.handle_card_action(
+                action.operator_open_id,
+                action.chat_id,
+                action.action_name,
+                action.value,
+                action.event_id,
+            )
+            if card is not None:
+                self._sender.reply_card(action.message_id, card)
+            self._store.complete_event(action.event_id)
+        except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                "feishu_strategy_action_failed",
+                event_id=action.event_id,
+                source="system",
+                exc_info=True,
+            )
+            self._sender.reply(
+                action.message_id,
+                "策略操作失败，请稍后重试。若问题持续，请联系管理员并提供"
+                f"事件编号 {action.event_id}。",
             )
 
     def _submit_reply(self, event: FeishuMessageEvent) -> Optional[str]:
@@ -1291,76 +1432,102 @@ def _format_analysis_response(response: AnalysisResponse) -> str:
     return "\n".join(lines)
 
 
-def build_feishu_quick_menu_card() -> Dict[str, Any]:
+def build_feishu_quick_menu_card(include_strategy: bool = False) -> Dict[str, Any]:
     """Return the interactive research form and common command shortcuts."""
+    elements: list[Dict[str, Any]] = [
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "输入研究问题，或者选择一个快捷操作。",
+            },
+        },
+        {
+            "tag": "form",
+            "name": "research_form",
+            "elements": [
+                {
+                    "tag": "input",
+                    "name": "prompt",
+                    "required": True,
+                    "max_length": 1_000,
+                    "placeholder": {
+                        "tag": "plain_text",
+                        "content": "例如：查询最近5个交易日涨幅最大的10只A股",
+                    },
+                },
+                {
+                    "tag": "button",
+                    "name": "submit_research",
+                    "type": "primary",
+                    "action_type": "form_submit",
+                    "text": {"tag": "plain_text", "content": "开始研究"},
+                    "value": {"action": "submit_research"},
+                },
+            ],
+        },
+        {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "新建会话"},
+                    "value": {"action": "new_session"},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "会话列表"},
+                    "value": {"action": "list_sessions"},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看进度"},
+                    "value": {"action": "task_status"},
+                },
+            ],
+        },
+    ]
+    if include_strategy:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "新建策略"},
+                        "value": {"action": "strategy_create_draft"},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "策略列表"},
+                        "value": {"action": "strategy_list"},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "运行规则"},
+                        "value": {"action": "strategy_run_all"},
+                    },
+                ],
+            }
+        )
+    elements.append(
+        {
+            "tag": "note",
+            "elements": [
+                {
+                    "tag": "plain_text",
+                    "content": "也可以继续直接 @A股研究助手 并输入问题。",
+                }
+            ],
+        }
+    )
     return {
         "config": {"wide_screen_mode": True},
         "header": {
             "template": "blue",
             "title": {"tag": "plain_text", "content": "A股研究助手"},
         },
-        "elements": [
-            {
-                "tag": "div",
-                "text": {
-                    "tag": "lark_md",
-                    "content": "输入研究问题，或者选择一个快捷操作。",
-                },
-            },
-            {
-                "tag": "form",
-                "name": "research_form",
-                "elements": [
-                    {
-                        "tag": "input",
-                        "name": "prompt",
-                        "required": True,
-                        "max_length": 1_000,
-                        "placeholder": {
-                            "tag": "plain_text",
-                            "content": "例如：查询最近5个交易日涨幅最大的10只A股",
-                        },
-                    },
-                    {
-                        "tag": "button",
-                        "name": "submit_research",
-                        "type": "primary",
-                        "action_type": "form_submit",
-                        "text": {"tag": "plain_text", "content": "开始研究"},
-                        "value": {"action": "submit_research"},
-                    },
-                ],
-            },
-            {
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "新建会话"},
-                        "value": {"action": "new_session"},
-                    },
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "会话列表"},
-                        "value": {"action": "list_sessions"},
-                    },
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "查看进度"},
-                        "value": {"action": "task_status"},
-                    },
-                ],
-            },
-            {
-                "tag": "note",
-                "elements": [
-                    {
-                        "tag": "plain_text",
-                        "content": "也可以继续直接 @A股研究助手 并输入问题。",
-                    }
-                ],
-            },
-        ],
+        "elements": elements,
     }
 
 

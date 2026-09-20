@@ -74,6 +74,11 @@ from china_a_share.discovery.evolution_loop import EvolutionLoop
 
 from china_a_share.core.ports import AnalysisTaskStore
 from china_a_share.core.ports import MarketDataProvider
+from china_a_share.discovery.qfq_loader import QFQLoader
+from china_a_share.discovery.rule_engine import RuleEngine
+from china_a_share.discovery.strategy_interaction import StrategyInteractionCoordinator
+from china_a_share.discovery.strategy_scanner import StrategyScanner
+from china_a_share.discovery.strategy_store import CloudStorageStrategyStore
 from china_a_share.providers.composite import CompositeMarketDataProvider
 from china_a_share.providers.us_market import (
     USMarketCacheExpirationPolicy,
@@ -105,14 +110,31 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         if isinstance(task_coordinator, AnalysisTaskCoordinator)
         else None
     )
+    feishu_client = FeishuOpenApiClient(
+        settings.feishu_app_id, settings.feishu_app_secret
+    )
+    strategy_interaction = None
+    if settings.tushare_cache_bucket:
+        strategy_store = CloudStorageStrategyStore(settings.tushare_cache_bucket)
+        strategy_scanner = StrategyScanner(
+            loader=QFQLoader(_create_data_provider(settings)),
+            engine=RuleEngine(),
+            store=strategy_store,
+            sender=feishu_client,
+        )
+        strategy_interaction = StrategyInteractionCoordinator(
+            strategy_store,
+            strategy_scanner,
+        )
     return FeishuResearchBot(
         task_coordinator,
-        FeishuOpenApiClient(settings.feishu_app_id, settings.feishu_app_secret),
+        feishu_client,
         CloudStorageConversationStore(settings.tushare_cache_bucket),
         verification_token=settings.feishu_verification_token,
         encrypt_key=settings.feishu_encrypt_key,
         allowed_open_ids=allowed_open_ids,
         agent_coordinator=agent_coordinator,
+        strategy_interaction=strategy_interaction,
     )
 
 
