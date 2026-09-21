@@ -669,3 +669,117 @@ def test_glm_runtime_translates_quota_errors_for_the_group():
     assert "额度已用完" in message
     assert "切换回 DeepSeek" in message
     assert "2026-09-21 07:39:52" in message
+
+
+def test_glm_runtime_aborts_early_on_stagnant_search_rounds():
+    toolbox = FakeToolbox()
+    spinning_round = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-spin",
+                            "type": "function",
+                            "function": {
+                                "name": "search_market_data",
+                                "arguments": '{"query": "daily"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    session = FakeSession([spinning_round] * 60)
+    runtime = GlmFeishuAgentRuntime(
+        base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        model="glm-5.3",
+        api_key="zai-key",
+        toolbox_factory=lambda artifact_dir, conversation_id: toolbox,
+        session=session,
+    )
+
+    with pytest.raises(RuntimeError, match="停留在检索/澄清阶段"):
+        runtime.run(
+            FeishuAgentRequest(
+                prompt="任意问题",
+                conversation_id="tenant:chat:root:user",
+                source_message_id="message-1",
+            ),
+            lambda stage, message: None,
+        )
+
+    # The loop stops at the stagnation limit, far below the hard cap.
+    from china_a_share.glm_agent import GLM_RUNTIME_STAGNATION_LIMIT
+
+    assert len(session.calls) == GLM_RUNTIME_STAGNATION_LIMIT
+
+
+def test_glm_runtime_resets_stagnation_after_real_work():
+    toolbox = FakeToolbox()
+
+    def round_with(tool_name):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"call-{tool_name}",
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": '{"query": "daily"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+
+    from china_a_share.glm_agent import GLM_RUNTIME_STAGNATION_LIMIT
+
+    # Half the stagnation budget in passive search, then real work, then more
+    # passive rounds, then the answer: must complete without aborting.
+    responses = (
+        [round_with("search_market_data")] * (GLM_RUNTIME_STAGNATION_LIMIT - 1)
+        + [round_with("query_market_data")]
+        + [round_with("search_market_data")] * (GLM_RUNTIME_STAGNATION_LIMIT - 1)
+        + [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "研究完成。",
+                        }
+                    }
+                ]
+            }
+        ]
+    )
+    session = FakeSession(responses)
+    runtime = GlmFeishuAgentRuntime(
+        base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        model="glm-5.3",
+        api_key="zai-key",
+        toolbox_factory=lambda artifact_dir, conversation_id: toolbox,
+        session=session,
+    )
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="任意问题",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        lambda stage, message: None,
+    )
+
+    assert outcome.answer == "研究完成。"

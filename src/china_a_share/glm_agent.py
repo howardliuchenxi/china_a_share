@@ -42,6 +42,11 @@ GLM_RUNTIME_TIMEOUT_SECONDS = 600
 GLM_RUNTIME_TIMEOUT_RETRIES = 1
 GLM_RUNTIME_MAX_ROUNDS = 60
 GLM_RUNTIME_MAX_OUTPUT_TOKENS = 16_000
+# Tools that never advance a study (catalog search or user clarification).
+# Consecutive rounds spent only on them mean the model is spinning, so the
+# loop aborts early instead of burning the full round budget.
+GLM_PASSIVE_TOOLS = frozenset({"search_market_data", "request_clarification"})
+GLM_RUNTIME_STAGNATION_LIMIT = 8
 GLM_RECOVERY_INSTRUCTIONS = (
     "Research loop discipline:\n"
     "- Plan before acting: decompose the question into the data you need, "
@@ -159,6 +164,7 @@ class GlmFeishuAgentRuntime:
                 {"role": "user", "content": _request_prompt(request)},
             ]
             answer = ""
+            stagnation_rounds = 0
             for round_index in range(GLM_RUNTIME_MAX_ROUNDS):
                 payload = self._post_with_retry(
                     {
@@ -180,6 +186,29 @@ class GlmFeishuAgentRuntime:
                 if not tool_calls:
                     answer = str(message.get("content") or "").strip()
                     break
+                tool_names = [
+                    str((tool_call.get("function") or {}).get("name") or "")
+                    for tool_call in tool_calls
+                ]
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "glm_agent_round",
+                    conversation_id=request.conversation_id,
+                    model=self._model,
+                    round=round_index + 1,
+                    tools=tool_names,
+                )
+                if all(name in GLM_PASSIVE_TOOLS for name in tool_names):
+                    stagnation_rounds += 1
+                else:
+                    stagnation_rounds = 0
+                if stagnation_rounds >= GLM_RUNTIME_STAGNATION_LIMIT:
+                    raise RuntimeError(
+                        "研究循环连续多轮停留在检索/澄清阶段没有实质进展，已提前"
+                        "终止。请把问题描述得更具体（给出代码、日期区间或指标"
+                        "定义），或切换回 DeepSeek 后重试。"
+                    )
                 # Reasoning fields are provider-specific; strip them so the
                 # accumulated history stays plain OpenAI-compatible.
                 history_message = {
