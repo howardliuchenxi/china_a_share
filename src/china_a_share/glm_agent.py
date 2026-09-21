@@ -40,7 +40,7 @@ GLM_RUNTIME_NAME = "glm"
 GLM_CHAT_PATH = "/chat/completions"
 GLM_RUNTIME_TIMEOUT_SECONDS = 600
 GLM_RUNTIME_TIMEOUT_RETRIES = 1
-GLM_RUNTIME_MAX_ROUNDS = 60
+GLM_RUNTIME_MAX_ROUNDS = 120
 GLM_RUNTIME_MAX_OUTPUT_TOKENS = 16_000
 # Tools that never advance a study (catalog search or user clarification).
 # Consecutive rounds spent only on them mean the model is spinning, so the

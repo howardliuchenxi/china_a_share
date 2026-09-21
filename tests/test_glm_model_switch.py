@@ -614,10 +614,10 @@ def test_glm_runtime_runs_bounded_tool_loop():
     )
 
 
-def test_glm_runtime_budgets_sixty_tool_rounds():
+def test_glm_runtime_budgets_adequate_tool_rounds():
     from china_a_share.glm_agent import GLM_RUNTIME_MAX_ROUNDS
 
-    assert GLM_RUNTIME_MAX_ROUNDS >= 60
+    assert GLM_RUNTIME_MAX_ROUNDS >= 120
 
 
 def test_read_llm_preference_returns_none_without_bucket():
