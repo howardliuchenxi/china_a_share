@@ -5667,6 +5667,24 @@ def test_planner_accepts_fixed_non_top10_float_retail_proxy():
     assert result.clarification_options == []
 
 
+def test_planner_disclosures_are_driven_by_the_transform_table(monkeypatch):
+    import china_a_share.planners.deepseek as deepseek_module
+
+    plan = make_daily_plan()
+    plan.feasibility = "supported"
+    plan.limitations = []
+    plan.queries[0].transform = "synthetic_approximation_trend"
+    monkeypatch.setitem(
+        deepseek_module.TRANSFORM_DISCLOSURES,
+        "synthetic_approximation_trend",
+        "Synthetic transform caveat.",
+    )
+
+    DeepSeekQueryPlanner._append_audited_disclosures(plan)
+
+    assert plan.limitations == ["Synthetic transform caveat."]
+
+
 def test_planner_removes_redundant_join_key_identity_mapping():
     plan = QueryPlan(
         interpretation="Join the latest shareholder disclosure to company names.",

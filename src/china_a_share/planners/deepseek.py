@@ -39,6 +39,9 @@ RETAIL_PROXY_DISCLOSURE = (
     "It includes retail holders and institutions outside the disclosed top ten "
     "and is not a verified individual-investor ownership percentage."
 )
+TRANSFORM_DISCLOSURES = {
+    "cr10_float_trend": RETAIL_PROXY_DISCLOSURE,
+}
 
 
 logger = logging.getLogger(__name__)
@@ -673,12 +676,10 @@ class DeepSeekQueryPlanner:
         if plan.feasibility != "supported":
             return
 
-        uses_retail_proxy = any(
-            query.transform == "cr10_float_trend"
-            for query in plan.queries
-        )
-        if uses_retail_proxy and RETAIL_PROXY_DISCLOSURE not in plan.limitations:
-            plan.limitations.append(RETAIL_PROXY_DISCLOSURE)
+        for query in plan.queries:
+            disclosure = TRANSFORM_DISCLOSURES.get(query.transform)
+            if disclosure is not None and disclosure not in plan.limitations:
+                plan.limitations.append(disclosure)
 
     @staticmethod
     def _normalize_join_field_mappings(plan: QueryPlan) -> None:

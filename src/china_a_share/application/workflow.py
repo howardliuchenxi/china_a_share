@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 import json
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -229,6 +229,24 @@ TRANSFORM_RESULT_FIELDS = {
         "period_return_by_ts_code"
     ]
     | {"ts_code"},
+}
+
+
+class TransformBehavior(NamedTuple):
+    """Execution properties a transform declares once instead of name-keyed branches."""
+
+    filters_before_transform: bool = False
+    bounds_end_date_to_completed_session: bool = False
+    full_market_range_reader: Optional[str] = None
+
+
+TRANSFORM_DEFAULT_BEHAVIOR = TransformBehavior()
+TRANSFORM_BEHAVIORS = {
+    "period_return_by_ts_code": TransformBehavior(
+        filters_before_transform=True,
+        bounds_end_date_to_completed_session=True,
+        full_market_range_reader="_execute_full_market_period_return",
+    ),
 }
 
 
@@ -1556,7 +1574,10 @@ class DataQueryExecutor:
                     request_id=request_id,
                     query_id=query.query_id,
                 )
-            if query.transform == "period_return_by_ts_code":
+            transform_behavior = TRANSFORM_BEHAVIORS.get(
+                query.transform, TRANSFORM_DEFAULT_BEHAVIOR
+            )
+            if transform_behavior.filters_before_transform:
                 frame = self._apply_tabular_transform(frame, query.transform)
                 frame = self._apply_filters(frame, query)
             else:
@@ -5684,8 +5705,11 @@ class AnalysisService:
         """Read a full range or only its boundary snapshots when sufficient."""
         start_date = datetime.strptime(query.params["start_date"], "%Y%m%d").date()
         end_date = datetime.strptime(query.params["end_date"], "%Y%m%d").date()
-        if query.transform == "period_return_by_ts_code":
-            return self._execute_full_market_period_return(
+        behavior = TRANSFORM_BEHAVIORS.get(
+            query.transform, TRANSFORM_DEFAULT_BEHAVIOR
+        )
+        if behavior.full_market_range_reader is not None:
+            return getattr(self, behavior.full_market_range_reader)(
                 query,
                 start_date=start_date,
                 end_date=end_date,
@@ -9926,7 +9950,9 @@ class AnalysisService:
                 query.params["trade_date"] = safe_snapshot
             if (
                 query.operation == "daily"
-                and query.transform == "period_return_by_ts_code"
+                and TRANSFORM_BEHAVIORS.get(
+                    query.transform, TRANSFORM_DEFAULT_BEHAVIOR
+                ).bounds_end_date_to_completed_session
                 and query.params.get("end_date", completed) > completed
             ):
                 query.params["end_date"] = completed
