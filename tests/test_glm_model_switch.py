@@ -631,3 +631,41 @@ def test_allowed_providers_derive_from_the_registry():
         option.provider for option in preference_module.CHAT_MODEL_REGISTRY
     )
     assert set(ALLOWED_PROVIDERS) <= {"deepseek", "glm", "kimi"}
+
+
+def test_glm_runtime_translates_quota_errors_for_the_group():
+    toolbox = FakeToolbox()
+    session = FakeSession(
+        [
+            {
+                "error": {
+                    "code": "1113",
+                    "message": (
+                        "已达到 5 小时的使用上限。您的限额将在 2026-09-21 07:39:52 重置。"
+                    ),
+                }
+            }
+        ]
+    )
+    runtime = GlmFeishuAgentRuntime(
+        base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        model="glm-5.3",
+        api_key="zai-key",
+        toolbox_factory=lambda artifact_dir, conversation_id: toolbox,
+        session=session,
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        runtime.run(
+            FeishuAgentRequest(
+                prompt="任意问题",
+                conversation_id="tenant:chat:root:user",
+                source_message_id="message-1",
+            ),
+            lambda stage, message: None,
+        )
+
+    message = str(excinfo.value)
+    assert "额度已用完" in message
+    assert "切换回 DeepSeek" in message
+    assert "2026-09-21 07:39:52" in message

@@ -66,6 +66,21 @@ GLM_RECOVERY_INSTRUCTIONS = (
 )
 
 
+GLM_QUOTA_ERROR_MARKERS = ("使用上限", "额度已", "quota", "insufficient")
+
+
+def _friendly_glm_error(error: Any) -> str:
+    """Translate provider errors into group-visible guidance."""
+    message = str(error.get("message") or error)
+    if any(marker in message for marker in GLM_QUOTA_ERROR_MARKERS):
+        return (
+            f"GLM 套餐额度已用完，本次研究中断（智谱返回：{message}）。"
+            "额度随 5 小时窗口自动恢复；如需立即继续，"
+            "请在快捷菜单切换回 DeepSeek 后重试。"
+        )
+    return f"GLM agent request failed: {message}"
+
+
 def _current_date_line() -> str:
     """Anchor relative dates to the real Shanghai trading calendar clock."""
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
@@ -159,9 +174,7 @@ class GlmFeishuAgentRuntime:
                 )
                 error = payload.get("error")
                 if error:
-                    raise RuntimeError(
-                        f"GLM agent request failed: {error.get('message') or error}"
-                    )
+                    raise RuntimeError(_friendly_glm_error(error))
                 message = ((payload.get("choices") or [{}])[0].get("message")) or {}
                 tool_calls = message.get("tool_calls") or []
                 if not tool_calls:
