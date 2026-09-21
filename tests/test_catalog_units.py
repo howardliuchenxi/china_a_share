@@ -11,6 +11,7 @@ import pandas as pd
 from china_a_share.feishu_agent import ResearchToolbox, _result_payload
 from china_a_share.glm_agent import GLM_RECOVERY_INSTRUCTIONS
 from china_a_share.core.contracts import QueryResult, QueryStatus
+from china_a_share.providers.eastmoney import EASTMONEY_OPERATION_GUIDANCE
 from china_a_share.registry import (
     FIELD_UNIT_NOTES,
     TushareOperationCatalog,
@@ -20,11 +21,15 @@ from china_a_share.registry import (
 
 def guidance_for(operation: str) -> str:
     catalog = TushareOperationCatalog()
-    return next(
-        item.description
-        for item in catalog.search("成交额")
-        if item.name == operation
+    tushare_guidance = next(
+        (
+            item.description
+            for item in catalog.search("成交额")
+            if item.name == operation
+        ),
+        "",
     )
+    return tushare_guidance or EASTMONEY_OPERATION_GUIDANCE.get(operation, "")
 
 
 def test_daily_guidance_documents_amount_and_volume_units():

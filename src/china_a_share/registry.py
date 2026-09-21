@@ -1,6 +1,8 @@
 """Read-only Tushare operation catalog exposed through neutral contracts."""
 
-from typing import Dict, Sequence, Set
+import re
+from datetime import date
+from typing import Any, Dict, Mapping, Optional, Sequence, Set, Tuple
 
 from .core.contracts import DataOperation
 
@@ -150,6 +152,15 @@ FIELD_UNIT_NOTES: Dict[str, Dict[str, str]] = {
         "amount": "ten thousands of CNY (万元)",
         "vol": "lots (手)",
     },
+    "broker_reports": {
+        "max_price": "CNY per share (元), broker target-price upper bound",
+        "min_price": "CNY per share (元), broker target-price lower bound",
+        "this_year_eps": "CNY per share (元), broker EPS forecast for this year",
+        "next_year_eps": "CNY per share (元), broker EPS forecast for next year",
+        "year_after_next_eps": (
+            "CNY per share (元), broker EPS forecast for the year after next"
+        ),
+    },
 }
 
 
@@ -161,6 +172,76 @@ def field_unit_notes_for(operation: str, fields) -> Dict[str, str]:
         field: notes[field]
         for field in field_names
         if field in notes
+    }
+
+
+# Disclosure-timestamp columns that expose dataset freshness to every model.
+# The first column present in one dataset supplies its recency note, so stale
+# event-triggered disclosures cannot silently pose as current data.
+DATA_RECENCY_DATE_FIELDS: Tuple[str, ...] = (
+    "ann_date",
+    "report_date",
+    "trade_date",
+    "float_date",
+    "ex_date",
+    "pay_date",
+    "record_date",
+    "end_date",
+)
+
+_DATE_DIGITS_PATTERN = re.compile(r"\D")
+
+
+def _normalize_compact_date(value: Any) -> Optional[str]:
+    """Return YYYYMMDD digits from one date-like cell value when identifiable."""
+    if value is None:
+        return None
+    digits = _DATE_DIGITS_PATTERN.sub("", str(value).strip())[:8]
+    if len(digits) != 8 or not digits.isdigit():
+        return None
+    try:
+        date(int(digits[:4]), int(digits[4:6]), int(digits[6:]))
+    except ValueError:
+        return None
+    return digits
+
+
+def data_recency_note(
+    columns,
+    rows,
+    as_of: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the newest record date in one dataset for model-visible freshness.
+
+    ``as_of`` is a caller-supplied YYYYMMDD (or ISO) reference date so the
+    computation stays clock-free and deterministic under test.
+    """
+    column_set = {str(column) for column in columns}
+    field = next(
+        (name for name in DATA_RECENCY_DATE_FIELDS if name in column_set),
+        None,
+    )
+    if field is None:
+        return None
+    latest = None
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        normalized = _normalize_compact_date(row.get(field))
+        if normalized is not None and (latest is None or normalized > latest):
+            latest = normalized
+    reference = _normalize_compact_date(as_of)
+    if latest is None or reference is None:
+        return None
+    age_days = (
+        date(int(reference[:4]), int(reference[4:6]), int(reference[6:]))
+        - date(int(latest[:4]), int(latest[4:6]), int(latest[6:]))
+    ).days
+    return {
+        "date_field": field,
+        "latest_record": f"{latest[:4]}-{latest[4:6]}-{latest[6:]}",
+        "as_of": f"{reference[:4]}-{reference[4:6]}-{reference[6:]}",
+        "age_days": age_days,
     }
 
 
@@ -360,13 +441,23 @@ CORE_OPERATION_GUIDANCE = {
         "net_profit_max, summary, and change_reason. Market-wide period screens "
         "should use a bounded start_date/end_date announcement window; the executor "
         "expands it into exact ann_date reads and filters the requested period. Avoid "
-        "full-universe ts_code fan-out when an announcement window can be bounded."
+        "full-universe ts_code fan-out when an announcement window can be bounded. "
+        "Recency note: guidance is event-triggered (业绩预告), so a company may have "
+        "no new record for quarters or years even while it keeps publishing periodic "
+        "reports. For questions about a company's recent situation or latest results, "
+        "retrieve the newest periodic reporting period through fina_indicator or "
+        "income first and treat old guidance as historical context with its "
+        "announcement date, never as the company's current state."
     ),
     "express": (
         "Earnings express reports. Parameters include ts_code, ann_date, start_date, "
         "end_date, and period. Common fields include ts_code, ann_date, end_date, "
         "revenue, operate_profit, total_profit, n_income, total_assets, diluted_eps, "
-        "diluted_roe, yoy_net_profit, bps, and perf_summary."
+        "diluted_roe, yoy_net_profit, bps, and perf_summary. "
+        "Recency note: express reports are event-triggered (业绩快报); an empty or "
+        "old result means no express was triggered, not that no recent results "
+        "exist. Prefer the newest periodic reporting period through fina_indicator "
+        "or income for current-result questions and cite disclosure dates."
     ),
     "fina_mainbz": (
         "Main business composition by ts_code and reporting period. Common fields "

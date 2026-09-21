@@ -96,6 +96,10 @@ from china_a_share.discovery.strategy_interaction import StrategyInteractionCoor
 from china_a_share.discovery.strategy_scanner import StrategyScanner
 from china_a_share.discovery.strategy_store import CloudStorageStrategyStore
 from china_a_share.providers.composite import CompositeMarketDataProvider
+from china_a_share.providers.eastmoney import (
+    EastmoneyCacheExpirationPolicy,
+    EastmoneyDataProvider,
+)
 from china_a_share.providers.us_market import (
     USMarketCacheExpirationPolicy,
     USMarketDataProvider,
@@ -363,10 +367,21 @@ def _create_data_provider(settings: Settings) -> TushareDataProvider:
 
 
 def _create_feishu_data_provider(settings: Settings) -> MarketDataProvider:
-    """Add optional U.S. capabilities without changing the A-share core workflow."""
+    """Add broker-report and optional U.S. capabilities to the A-share core."""
     tushare_provider = _create_data_provider(settings)
+    eastmoney_response_cache = LayeredDataResponseCache(
+        memory_store=MemoryDataCacheStore(
+            max_entries=DEFAULT_L1_MAX_ENTRIES,
+            max_bytes=DEFAULT_L1_MAX_BYTES,
+        ),
+        persistent_store=CloudStorageDataCacheStore(settings.tushare_cache_bucket),
+        expiration_policy=EastmoneyCacheExpirationPolicy(),
+    )
+    eastmoney_provider = EastmoneyDataProvider(eastmoney_response_cache)
     if not settings.massive_api_key and not settings.finnhub_api_key:
-        return tushare_provider
+        return CompositeMarketDataProvider(
+            (tushare_provider, eastmoney_provider)
+        )
     us_response_cache = LayeredDataResponseCache(
         memory_store=MemoryDataCacheStore(
             max_entries=DEFAULT_L1_MAX_ENTRIES,
@@ -380,4 +395,6 @@ def _create_feishu_data_provider(settings: Settings) -> MarketDataProvider:
         settings.finnhub_api_key,
         us_response_cache,
     )
-    return CompositeMarketDataProvider((tushare_provider, us_provider))
+    return CompositeMarketDataProvider(
+        (tushare_provider, us_provider, eastmoney_provider)
+    )

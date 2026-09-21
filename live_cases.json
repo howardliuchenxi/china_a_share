@@ -62,6 +62,21 @@
       "source": "reported_regression"
     },
     {
+      "id": "broker_reports-production-624da11d",
+      "name": "broker reports production regression 624da11d",
+      "family": "broker_reports",
+      "prompt": "你能查到宁德时代最近的研报观点吗？",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "broker_reports"
+      ],
+      "quality_invariants": [
+        "planned_operation_broker_reports"
+      ],
+      "source": "reported_regression"
+    },
+    {
       "id": "limit_up_list-01",
       "name": "limit_up_list 1",
       "family": "limit_up_list",

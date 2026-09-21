@@ -33,10 +33,12 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.observability import log_event
 from china_a_share.feishu_agent import (
+    FEISHU_MESSAGE_WITHDRAWN_CODE,
     FeishuAgentConversationTurn,
     FeishuAgentCoordinator,
     FeishuAgentRequest,
     FeishuAgentTask,
+    FeishuSourceMessageWithdrawnError,
 )
 from china_a_share.discovery.strategy_interaction import StrategyInteractionCoordinator
 
@@ -646,6 +648,13 @@ class FeishuOpenApiClient:
         detail = ""
         if code is not None or message:
             detail = f" code={code} message={message[:300]}"
+        if code == FEISHU_MESSAGE_WITHDRAWN_CODE:
+            # A withdrawn source message is a terminal delivery condition, not a
+            # transient failure; callers need to stop replying instead of retrying.
+            raise FeishuSourceMessageWithdrawnError(
+                f"Feishu {operation} rejected because the source message was "
+                f"withdrawn.{detail}"
+            )
         if response.status_code >= 400:
             raise RuntimeError(
                 f"Feishu {operation} failed with HTTP {response.status_code}.{detail}"

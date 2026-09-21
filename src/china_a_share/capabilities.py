@@ -665,6 +665,34 @@ PROVIDER_OPERATION_CAPABILITIES: Dict[str, ProviderOperationCapability] = {
         page_size=2_000,
         unique_key=("ts_code", "ann_date", "end_date", "type"),
     ),
+    "broker_reports": ProviderOperationCapability(
+        operation="broker_reports",
+        allowed_params=(
+            "ts_code",
+            "start_date",
+            "end_date",
+            *COMMON_PAGINATION_PARAMS,
+        ),
+        date_pair=("start_date", "end_date"),
+        query_shapes=(
+            ProviderQueryShape(
+                shape_id="bounded_security_range",
+                required_params=("ts_code", "start_date", "end_date"),
+                execution_strategy="provider_query",
+                completeness_policy="single_call_newest_first",
+            ),
+            ProviderQueryShape(
+                shape_id="security",
+                required_params=("ts_code",),
+                execution_strategy="provider_query",
+                # One call returns the newest reports first within a bounded
+                # page, so agents filter publication windows locally on the
+                # retained dataset instead of paginating upstream.
+                completeness_policy="single_call_newest_first",
+            ),
+        ),
+        unique_key=("ts_code", "report_date", "report_title", "org_name"),
+    ),
     "repurchase": ProviderOperationCapability(
         operation="repurchase",
         allowed_params=(

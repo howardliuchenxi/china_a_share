@@ -12,6 +12,7 @@ import tempfile
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Protocol
 from urllib.parse import urlencode
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,7 +25,7 @@ from china_a_share.core.contracts import (
     ServiceError,
 )
 from china_a_share.result_pipeline import ResultPipelineExecutor
-from china_a_share.registry import field_unit_notes_for
+from china_a_share.registry import data_recency_note, field_unit_notes_for
 from china_a_share.security_links import (
     is_security_code_column,
     security_quote_page_url,
@@ -39,6 +40,21 @@ MIN_COLUMN_NOTE_CHARACTERS = 8
 MAX_COLUMN_NOTE_CHARACTERS = 400
 MAX_VISUALIZATION_METHODOLOGY_CHARACTERS = 6_000
 logger = logging.getLogger(__name__)
+
+
+# Feishu application code 230011: the replied-to source message was withdrawn
+# by its author, so every further reply or file upload to it will keep failing.
+# Defined here because feishu.py imports its shared models from this module;
+# the Feishu client raises it and the coordinator consumes it.
+FEISHU_MESSAGE_WITHDRAWN_CODE = 230011
+
+
+class FeishuSourceMessageWithdrawnError(RuntimeError):
+    """Report that the source message being replied to no longer exists."""
+
+
+class _FeishuSourceWithdrawnCancellation(Exception):
+    """Abort one task whose triggering Feishu message was already withdrawn."""
 
 
 class FeishuAgentConversationTurn(BaseModel):
@@ -312,21 +328,33 @@ class FeishuAgentCoordinator:
         last_notified_progress: Optional[tuple[str, str]] = None
         progress_message_id: Optional[str] = None
         progress_update_count = 0
+        source_withdrawn = False
 
         def publish(message: str, *, terminal: bool = False) -> None:
-            nonlocal progress_message_id, progress_update_count
-            if progress_message_id is None:
-                progress_message_id = progress_sink.reply(
-                    task.request.source_message_id,
-                    message,
+            nonlocal progress_message_id, progress_update_count, source_withdrawn
+            if source_withdrawn:
+                return
+            try:
+                if progress_message_id is None:
+                    progress_message_id = progress_sink.reply(
+                        task.request.source_message_id,
+                        message,
+                    )
+                    return
+                # Feishu limits edits per message. Reserve the final permitted edit
+                # for the terminal answer or failure while retaining task state.
+                if not terminal and progress_update_count >= MAX_AGENT_PROGRESS_UPDATES:
+                    return
+                progress_sink.update(progress_message_id, message)
+                progress_update_count += 1
+            except FeishuSourceMessageWithdrawnError:
+                # Once the source message is withdrawn every later delivery to it
+                # fails too; stop attempting and let the run decide to continue
+                # or cancel based on how far it already progressed.
+                source_withdrawn = True
+                logger.info(
+                    "feishu_agent_source_message_withdrawn task_id=%s", task_id
                 )
-                return
-            # Feishu limits edits per message. Reserve the final permitted edit
-            # for the terminal answer or failure while retaining task state.
-            if not terminal and progress_update_count >= MAX_AGENT_PROGRESS_UPDATES:
-                return
-            progress_sink.update(progress_message_id, message)
-            progress_update_count += 1
 
         def report(stage: str, message: str) -> None:
             nonlocal last_notified_progress
@@ -346,6 +374,10 @@ class FeishuAgentCoordinator:
         task.error = None
         report("planning", "正在理解问题并选择研究工具…")
         try:
+            if source_withdrawn:
+                # The user withdrew the triggering message before any research
+                # started, so further work would bill the model invisibly.
+                raise _FeishuSourceWithdrawnCancellation()
             outcome = runtime.run(task.request, report)
             task.answer = outcome.answer
             task.artifact_name = (
@@ -421,6 +453,14 @@ class FeishuAgentCoordinator:
                         task.request.source_message_id,
                         outcome.artifact_path,
                     )
+                except FeishuSourceMessageWithdrawnError:
+                    # The answer text could not be delivered either once the
+                    # source message is withdrawn; keep success without noise.
+                    logger.info(
+                        "feishu_agent_artifact_delivery_skipped_withdrawn "
+                        "task_id=%s",
+                        task_id,
+                    )
                 except Exception:
                     # The research result remains valid when only the external
                     # attachment channel fails. Preserve success and keep the
@@ -440,6 +480,19 @@ class FeishuAgentCoordinator:
                         + "\n\n研究已完成，但附件发送失败。请稍后回复“重试”重新生成附件。",
                         terminal=True,
                     )
+        except _FeishuSourceWithdrawnCancellation:
+            logger.info(
+                "feishu_agent_cancelled_source_withdrawn task_id=%s", task_id
+            )
+            task.status = AnalysisTaskStatus.FAILED
+            task.stage = "cancelled"
+            task.progress_message = "提问消息已撤回，研究已取消。"
+            task.error = ServiceError(
+                source="system",
+                message="Feishu source message was withdrawn; task cancelled.",
+            )
+            task.updated_at = datetime.now(timezone.utc)
+            self._store.put(task)
         except Exception as exc:
             logger.exception("feishu_agent_execution_failed task_id=%s", task_id)
             task.status = AnalysisTaskStatus.FAILED
@@ -1161,7 +1214,10 @@ def _frame_to_result(
     )
 
 
-def _result_payload(result: QueryResult) -> Dict[str, Any]:
+def _result_payload(
+    result: QueryResult,
+    as_of: Optional[str] = None,
+) -> Dict[str, Any]:
     """Return bounded model-visible evidence while retaining the complete dataset."""
     payload = {
         "dataset_id": result.query_id,
@@ -1178,6 +1234,16 @@ def _result_payload(result: QueryResult) -> Dict[str, Any]:
     field_units = field_unit_notes_for(result.operation, result.columns)
     if field_units:
         payload["field_units"] = field_units
+    # Freshness travels the same way: the newest disclosure date in the dataset
+    # makes stale event-triggered records visible before they are quoted as
+    # current. Tests pin ``as_of`` explicitly; production uses Beijing's date.
+    recency = data_recency_note(
+        result.columns,
+        result.rows,
+        as_of or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d"),
+    )
+    if recency is not None:
+        payload["data_recency"] = recency
     return payload
 
 

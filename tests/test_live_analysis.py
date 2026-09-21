@@ -29,6 +29,11 @@ from china_a_share.core.contracts import (
     AnalysisStatus,
 )
 from china_a_share.planners.deepseek import DeepSeekQueryPlanner
+from china_a_share.providers.composite import CompositeMarketDataProvider
+from china_a_share.providers.eastmoney import (
+    EastmoneyCacheExpirationPolicy,
+    EastmoneyDataProvider,
+)
 from china_a_share.providers.tushare import (
     TushareCacheExpirationPolicy,
     TushareDataProvider,
@@ -60,8 +65,8 @@ class RecordingTaskDispatcher:
 
 
 @pytest.fixture(scope="module")
-def live_market_data_provider() -> TushareDataProvider:
-    """Build one real provider so live execution and independent checks share cache."""
+def live_market_data_provider():
+    """Build the real provider set so live cases mirror production routing."""
     settings = Settings.from_env()
     response_cache = LayeredDataResponseCache(
         memory_store=MemoryDataCacheStore(
@@ -72,10 +77,21 @@ def live_market_data_provider() -> TushareDataProvider:
         persistent_store=NoopDataCacheStore(),
         expiration_policy=TushareCacheExpirationPolicy(),
     )
-    return TushareDataProvider(
+    tushare_provider = TushareDataProvider(
         token=settings.tushare_token,
         response_cache=response_cache,
     )
+    eastmoney_provider = EastmoneyDataProvider(
+        LayeredDataResponseCache(
+            memory_store=MemoryDataCacheStore(
+                max_entries=DEFAULT_L1_MAX_ENTRIES,
+                max_bytes=DEFAULT_L1_MAX_BYTES,
+            ),
+            persistent_store=NoopDataCacheStore(),
+            expiration_policy=EastmoneyCacheExpirationPolicy(),
+        )
+    )
+    return CompositeMarketDataProvider((tushare_provider, eastmoney_provider))
 
 
 @pytest.fixture(scope="module")
@@ -151,6 +167,8 @@ def _assert_quality_invariants(
 
     if "native_limit_up_source" in invariants:
         assert "limit_list_d" in operations
+    if "planned_operation_broker_reports" in invariants:
+        assert "broker_reports" in operations
     if "consecutive_session_count" in invariants:
         expected_count = resolve_consecutive_session_count(prompt)
         assert expected_count is not None
