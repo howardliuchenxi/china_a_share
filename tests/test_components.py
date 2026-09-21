@@ -918,6 +918,85 @@ def test_security_name_resolution_uses_the_provider_catalog_for_any_company():
     assert AnalysisService._resolve_prompt_security_code(enriched) == "688981.SH"
 
 
+def test_security_name_resolution_covers_every_unambiguous_company():
+    provider = FakeMarketDataProvider(
+        frame=pd.DataFrame(),
+        stock_frame=pd.DataFrame(
+            [
+                {"ts_code": "300750.SZ", "symbol": "300750", "name": "宁德时代"},
+                {"ts_code": "002594.SZ", "symbol": "002594", "name": "比亚迪"},
+            ]
+        ),
+    )
+    service = AnalysisService(
+        Mock(),
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+
+    enriched = service._append_resolved_security_code(
+        "request-multi-security",
+        "比较宁德时代和比亚迪最近一个月的日均成交额",
+    )
+
+    assert "name=宁德时代" in enriched
+    assert "ts_code=300750.SZ" in enriched
+    assert "name=比亚迪" in enriched
+    assert "ts_code=002594.SZ" in enriched
+    assert AnalysisService._resolve_prompt_security_code(enriched) is None
+
+
+def test_security_name_resolution_keeps_only_the_most_specific_name():
+    provider = FakeMarketDataProvider(
+        frame=pd.DataFrame(),
+        stock_frame=pd.DataFrame(
+            [
+                {"ts_code": "600875.SH", "symbol": "600875", "name": "东方电气"},
+                {"ts_code": "000333.SZ", "symbol": "000333", "name": "东方"},
+            ]
+        ),
+    )
+    service = AnalysisService(
+        Mock(),
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+
+    enriched = service._append_resolved_security_code(
+        "request-specific-name",
+        "查询东方电气的市盈率",
+    )
+
+    assert "ts_code=600875.SH" in enriched
+    assert "name=东方\n" not in enriched
+    assert AnalysisService._resolve_prompt_security_code(enriched) == "600875.SH"
+
+
+def test_security_name_resolution_skips_names_mapped_to_several_codes():
+    provider = FakeMarketDataProvider(
+        frame=pd.DataFrame(),
+        stock_frame=pd.DataFrame(
+            [
+                {"ts_code": "600000.SH", "symbol": "600000", "name": "同名股份"},
+                {"ts_code": "000001.SZ", "symbol": "000001", "name": "同名股份"},
+            ]
+        ),
+    )
+    service = AnalysisService(
+        Mock(),
+        provider,
+        ASharePlanValidator(provider),
+        DataQueryExecutor(provider),
+    )
+    prompt = "查询同名股份的最新收盘价"
+
+    enriched = service._append_resolved_security_code("request-ambiguous", prompt)
+
+    assert enriched == prompt
+
+
 def test_dividend_rejects_non_native_provider_parameters():
     validator = ASharePlanValidator(FakeMarketDataProvider())
 
@@ -951,7 +1030,10 @@ def test_planner_parses_deepseek_json_plan():
     assert "Preserve every numeric value" in system_prompt
     assert "rolling_sum" in system_prompt
     assert "match_source" in system_prompt
-    assert "\u4e2d\u56fd\u5e73\u5b89 is 601318.SH" in system_prompt
+    assert "authoritative ts_code for the named security" in system_prompt
+    assert "exact full-name match on the name field" in system_prompt
+    assert "601318" not in system_prompt
+    assert "600519" not in system_prompt
     assert "full-market request as a fan-out template" in system_prompt
     assert "return separate query results unless" in system_prompt
     assert "Security classification constraints" in system_prompt

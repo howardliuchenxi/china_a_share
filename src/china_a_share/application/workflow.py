@@ -9694,7 +9694,7 @@ class AnalysisService:
         return f"{prompt}\n\n" + "\n".join(context)
 
     def _append_resolved_security_code(self, request_id: str, prompt: str) -> str:
-        """Append a trusted code when one listed security name is explicit."""
+        """Append a trusted code block for every unambiguous listed name."""
         if (
             re.search(r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)", prompt.upper())
             or not self._provider.supports("stock_basic")
@@ -9742,33 +9742,69 @@ class AnalysisService:
                 matches.append((len(english_alias), english_alias, code))
         if not matches:
             return prompt
-        longest_length = max(length for length, _, _ in matches)
-        longest_matches = {
-            (name, code)
-            for length, name, code in matches
-            if length == longest_length
-        }
-        if len(longest_matches) != 1:
-            raise ValueError("The security name is ambiguous in the listed-stock catalog.")
-        name, code = longest_matches.pop()
-        return (
-            f"{prompt}\n{TRUSTED_SECURITY_START}\n"
-            f"name={name}\nts_code={code}\n{TRUSTED_SECURITY_END}"
+        matched_texts = [text.casefold() for _, text, _ in matches]
+        # A listed name that is contained in another matched name is the same
+        # mention resolved less specifically; keep only the maximal mentions.
+        maximal_matches = [
+            (length, text, code)
+            for length, text, code in matches
+            if not any(
+                text.casefold() != other and text.casefold() in other
+                for other in matched_texts
+            )
+        ]
+        codes_by_text = {}
+        for _, text, code in maximal_matches:
+            codes_by_text.setdefault(text.casefold(), set()).add(code)
+        resolved_securities = []
+        seen_codes = set()
+        for _, text, code in sorted(
+            maximal_matches,
+            key=lambda item: (-item[0], item[1]),
+        ):
+            # One mention text mapping to several codes cannot be resolved
+            # locally; leave it to the planner instead of guessing.
+            if len(codes_by_text[text.casefold()]) != 1 or code in seen_codes:
+                continue
+            resolved_securities.append((text, code))
+            seen_codes.add(code)
+        if not resolved_securities:
+            return prompt
+        blocks = "\n".join(
+            f"{TRUSTED_SECURITY_START}\nname={name}\nts_code={code}\n"
+            f"{TRUSTED_SECURITY_END}"
+            for name, code in resolved_securities
         )
+        return f"{prompt}\n{blocks}"
 
     @staticmethod
     def _resolve_prompt_security_code(prompt: str) -> Optional[str]:
-        """Return an explicit or trusted catalog-resolved security code."""
-        code_match = re.search(r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)", prompt.upper())
+        """Return an explicit code, or the code when one trusted name resolved."""
+        trusted_codes = {
+            match.group(1)
+            for match in re.finditer(
+                rf"{re.escape(TRUSTED_SECURITY_START)}.*?ts_code="
+                rf"(\d{{6}}\.(?:SH|SZ|BJ)).*?{re.escape(TRUSTED_SECURITY_END)}",
+                prompt,
+                re.DOTALL,
+            )
+        }
+        # Codes inside trusted blocks are resolutions, not user-typed codes;
+        # only a code outside those blocks counts as explicit.
+        prompt_without_blocks = re.sub(
+            rf"{re.escape(TRUSTED_SECURITY_START)}.*?{re.escape(TRUSTED_SECURITY_END)}",
+            " ",
+            prompt,
+            flags=re.DOTALL,
+        )
+        code_match = re.search(
+            r"(?<!\d)\d{6}\.(?:SH|SZ|BJ)", prompt_without_blocks.upper()
+        )
         if code_match is not None:
             return code_match.group(0)
-        trusted_match = re.search(
-            rf"{re.escape(TRUSTED_SECURITY_START)}.*?ts_code="
-            rf"(\d{{6}}\.(?:SH|SZ|BJ)).*?{re.escape(TRUSTED_SECURITY_END)}",
-            prompt,
-            re.DOTALL,
-        )
-        return trusted_match.group(1) if trusted_match is not None else None
+        if len(trusted_codes) == 1:
+            return trusted_codes.pop()
+        return None
 
     def _latest_completed_trading_date(
         self,
