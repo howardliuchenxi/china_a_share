@@ -5,9 +5,10 @@
 - After discussing and agreeing on an approach, continue directly through
   contracts, implementation, targeted validation, and handoff in one task.
 - Do not split work into mandatory Phase 1, Phase 2, or Phase 3 approval gates.
-- For non-trivial changes, state the relevant assumptions and a concise
-  technical strategy before editing, then proceed without waiting for another
-  confirmation.
+- For non-trivial changes, complete the initial alignment required by the
+  global instructions (assumptions, concise technical strategy,
+  disagreements, and the user's go-ahead) before editing. After that
+  alignment, proceed without waiting for further confirmation.
 - Pause only when a missing user decision would materially change the result,
   additional authority is required, or the next action is destructive or
   otherwise high risk.
@@ -94,3 +95,12 @@
   version numbers are allowed.
 - If a resource was changed manually outside Codex, reconcile the inventory the
   next time that change is observed.
+
+## Cross-tool handoff ledger（跨工具交接账本）
+
+- `HANDOFF.md` 是本仓库所有 AI 工具（ZCode / Codex / Claude / Gemini 等）共用的交接账本。
+- **开工时**：先读 `HANDOFF.md` 最上方的最新条目，恢复上下文后再动手。
+- **收尾时**（或每完成一个有意义的工作单元）：在账本最上方追加一条
+  `## [YYYY-MM-DD · 工具名] 标题`，用 3–8 行写清：做了什么、关键决定及原因、遗留与下一步。
+- 新条目永远加在 DECISIONS 区下方（文件最上方的「## DECISIONS」是固定架构决策区，不参与滚动）；条目超过 8 条时把最旧的压缩合并。详细快照放在条目下方或归档区。
+- 账本只记状态与结论，**绝不写入密钥、token、凭据值**。
