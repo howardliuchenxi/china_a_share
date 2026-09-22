@@ -12,6 +12,7 @@ from china_a_share.config import Settings
 from china_a_share.core.contracts import AnalysisTaskStatus, QueryResult, QueryStatus
 from china_a_share.feishu_agent import (
     FeishuAgentCoordinator,
+    FeishuAgentConversationTurn,
     FeishuAgentOutcome,
     FeishuAgentRequest,
     FeishuAgentTask,
@@ -922,6 +923,39 @@ def test_live_feishu_agent_answers_reported_thirty_day_return_ranking():
     assert "只返回前 20 行" not in outcome.answer
     assert re.search(r"\b\d{6}\.(?:SH|SZ|BJ)\b", outcome.answer)
     assert "%" in outcome.answer
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
+)
+def test_live_feishu_agent_resolves_bare_menu_number_from_history():
+    """A bare menu reply must resolve through the retained prior turn."""
+    runtime = create_feishu_agent_runtime(Settings.from_env())
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="2",
+            conversation_id="live:feishu:agent:reported-menu-selection",
+            source_message_id="live-reported-menu-selection",
+            conversation=[
+                FeishuAgentConversationTurn(
+                    prompt="研究对象为A股所有股票",
+                    answer=(
+                        "已记录研究范围为A股全部股票。请问接下来您希望对这批股票"
+                        "进行哪类分析？回复序号选择：1 涨跌表现统计 2 财务指标统计"
+                        " 3 估值水平统计。"
+                    ),
+                )
+            ],
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert "没有历史上下文" not in outcome.answer
+    assert "无法确定" not in outcome.answer
+    assert "财务" in outcome.answer
 
 
 @pytest.mark.live

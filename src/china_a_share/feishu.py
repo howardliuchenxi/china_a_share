@@ -828,9 +828,14 @@ class FeishuResearchBot:
         event_id = str(header.get("event_id", "")).strip()
         if not chat_id or not message_id or not event_id or not sender_id:
             raise FeishuEventError("Feishu callback omitted required identifiers.")
-        thread_id = str(message.get("thread_id") or message.get("root_id") or "root")
+        # Topic groups stamp a stable thread_id on every message, so it can safely
+        # partition conversations there. root_id only encodes reply linkage in
+        # ordinary chats: a user answering the bot's previous message via a quoted
+        # reply must stay in the same conversation bucket, or follow-ups such as a
+        # bare menu number arrive with no recorded history.
+        topic_id = str(message.get("thread_id") or "root")
         conversation_id = ":".join(
-            [str(header.get("tenant_key", "")), chat_id, thread_id, sender_id]
+            [str(header.get("tenant_key", "")), chat_id, topic_id, sender_id]
         )
         return FeishuMessageEvent(
             event_id,

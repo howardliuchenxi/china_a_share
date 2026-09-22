@@ -206,7 +206,19 @@ def message_payload(
     text="<at user_id=\"bot\">Bot</at> 统计二连板",
     *,
     mentions=None,
+    root_id=None,
+    thread_id="thread-1",
 ):
+    message = {
+        "message_id": f"message-{event_id}",
+        "chat_id": "chat-1",
+        "thread_id": thread_id,
+        "message_type": "text",
+        "content": json.dumps({"text": text}, ensure_ascii=False),
+        "mentions": mentions or [],
+    }
+    if root_id is not None:
+        message["root_id"] = root_id
     return {
         "header": {
             "event_id": event_id,
@@ -216,14 +228,7 @@ def message_payload(
         },
         "event": {
             "sender": {"sender_id": {"open_id": "user-1"}},
-            "message": {
-                "message_id": f"message-{event_id}",
-                "chat_id": "chat-1",
-                "thread_id": "thread-1",
-                "message_type": "text",
-                "content": json.dumps({"text": text}, ensure_ascii=False),
-                "mentions": mentions or [],
-            },
+            "message": message,
         },
     }
 
@@ -322,6 +327,58 @@ def test_message_event_removes_bot_mention_and_isolates_conversation():
     assert event is not None
     assert event.prompt == "统计二连板"
     assert event.conversation_id == "tenant-1:chat-1:thread-1:user-1"
+
+
+def test_quoted_reply_keeps_direct_message_conversation_identity():
+    """Ordinary-chat replies (root_id) must not fork the conversation bucket."""
+    bot, _, _, _ = build_bot(allowed_open_ids={"user-1"})
+
+    direct = bot.parse_event(
+        message_payload("event-direct", "研究对象为A股所有股票", thread_id=None)
+    )
+    quoted_reply = bot.parse_event(
+        message_payload(
+            "event-reply",
+            "2",
+            thread_id=None,
+            root_id="bot-answer-message-1",
+        )
+    )
+    direct_follow_up = bot.parse_event(
+        message_payload("event-direct-2", "3", thread_id=None)
+    )
+
+    assert direct is not None
+    assert quoted_reply is not None
+    assert direct_follow_up is not None
+    assert quoted_reply.conversation_id == direct.conversation_id
+    assert direct_follow_up.conversation_id == direct.conversation_id
+
+
+def test_topic_group_threads_still_partition_conversation_identity():
+    """Topic-group thread_id remains a durable partition across replies."""
+    bot, _, _, _ = build_bot(allowed_open_ids={"user-1"})
+
+    first_topic = bot.parse_event(
+        message_payload("event-topic-1", "话题一提问", thread_id="topic-1")
+    )
+    first_topic_reply = bot.parse_event(
+        message_payload(
+            "event-topic-1-reply",
+            "追问",
+            thread_id="topic-1",
+            root_id="bot-answer-topic-1",
+        )
+    )
+    second_topic = bot.parse_event(
+        message_payload("event-topic-2", "话题二提问", thread_id="topic-2")
+    )
+
+    assert first_topic is not None
+    assert first_topic_reply is not None
+    assert second_topic is not None
+    assert first_topic_reply.conversation_id == first_topic.conversation_id
+    assert second_topic.conversation_id != first_topic.conversation_id
 
 
 def test_message_event_removes_structured_mention_placeholder_before_commands():
@@ -581,6 +638,58 @@ def test_agent_bot_supports_named_sessions_and_parallel_submissions():
     assert submitted_tasks[0].request.conversation_name == "银行研究"
     assert submitted_tasks[1].request.conversation_name == "银行研究"
     assert ":session:" in submitted_tasks[0].request.conversation_id
+
+
+def test_agent_follow_up_by_quoting_bot_answer_keeps_history():
+    """Answering the bot's menu by replying to it must retain prior turns."""
+    task_store = MemoryAnalysisTaskStore()
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.task_ids = []
+
+        def dispatch(self, task_id):
+            self.task_ids.append(task_id)
+
+    agent_coordinator = FeishuAgentCoordinator(task_store, RecordingDispatcher())
+    bot = FeishuResearchBot(
+        agent_coordinator,
+        FakeSender(),
+        MemoryConversationStore(),
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        agent_coordinator=agent_coordinator,
+    )
+
+    first = bot.parse_event(
+        message_payload("event-agent-1", "研究对象为A股所有股票", thread_id=None)
+    )
+    assert first is not None
+    bot.process(first)
+    first_task_id = bot._task_id_for_event("event-agent-1")
+    first_task = task_store.get(first_task_id)
+    first_task.status = AnalysisTaskStatus.SUCCEEDED
+    first_task.answer = "已记录研究范围为A股全部股票。回复序号选择分析类型：1 涨跌分布 2 财务指标统计。"
+    task_store.put(first_task)
+
+    follow_up = bot.parse_event(
+        message_payload(
+            "event-agent-2",
+            "2",
+            thread_id=None,
+            root_id="bot-answer-message-event-agent-1",
+        )
+    )
+    assert follow_up is not None
+    bot.process(follow_up)
+
+    follow_up_task = task_store.get(bot._task_id_for_event("event-agent-2"))
+    assert follow_up_task is not None
+    assert follow_up_task.request.prompt == "2"
+    assert [turn.prompt for turn in follow_up_task.request.conversation] == [
+        "研究对象为A股所有股票"
+    ]
+    assert "财务指标统计" in follow_up_task.request.conversation[0].answer
 
 
 def test_agent_bot_creates_backend_session_and_submits_combined_prompt():
