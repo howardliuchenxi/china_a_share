@@ -12,6 +12,7 @@ from china_a_share import bootstrap
 from china_a_share.api import create_app
 from china_a_share.config import Settings
 from china_a_share.core.contracts import (
+    MAX_ANALYSIS_PROMPT_LENGTH,
     AnalysisRequest,
     AnalysisResponse,
     AnalysisStatus,
@@ -567,6 +568,68 @@ def test_status_records_completed_context_for_follow_up_submission():
     assert service.requests[1].conversation[0].interpretation == (
         "Analyze August 2026 limit-up stocks."
     )
+
+
+def test_processing_accepts_prompt_beyond_record_cap_and_replays_context():
+    long_prompt = "请研究以下名单的近期表现：" + "、".join(f"股票{i}" for i in range(600))
+    assert 1_000 < len(long_prompt) < MAX_ANALYSIS_PROMPT_LENGTH
+    bot, service, sender, store = build_bot()
+    event = bot.parse_event(message_payload("event-1", long_prompt))
+    assert event is not None
+
+    bot.process(event)
+
+    task_id = bot._task_id_for_event("event-1")
+    assert "研究任务已受理" in sender.replies[0][1]
+    assert service.requests[0].prompt == long_prompt
+    assert store.get_latest_task(event.conversation_id).prompt == long_prompt
+
+    completed = service.tasks[task_id]
+    completed.status = AnalysisTaskStatus.SUCCEEDED
+    completed.response = AnalysisResponse(
+        request_id=task_id,
+        planner="test-planner",
+        data_provider="test-provider",
+        status=AnalysisStatus.SUCCESS,
+        plan=QueryPlan(
+            interpretation="Analyze the requested watchlist.",
+            queries=[
+                DataQuery(
+                    query_id="watchlist",
+                    operation="daily",
+                    purpose="Retrieve the requested watchlist prices.",
+                )
+            ],
+        ),
+    )
+    status_event = bot.parse_event(message_payload("event-2", "查看进度"))
+    follow_up = bot.parse_event(message_payload("event-3", "只看涨幅前二十"))
+    assert status_event is not None
+    assert follow_up is not None
+    bot.process(status_event)
+    bot.process(follow_up)
+
+    assert "状态：已完成" in sender.replies[1][1]
+    assert len(service.requests[1].conversation) == 1
+    assert service.requests[1].conversation[0].prompt == long_prompt
+
+
+def test_processing_rejects_over_limit_prompt_with_actionable_reply():
+    over_limit = "研" * (MAX_ANALYSIS_PROMPT_LENGTH + 1)
+    bot, service, sender, _ = build_bot()
+    event = bot.parse_event(message_payload("event-1", over_limit))
+    assert event is not None
+
+    bot.process(event)
+
+    assert service.requests == []
+    assert "问题过长" in sender.replies[0][1]
+    assert str(MAX_ANALYSIS_PROMPT_LENGTH) in sender.replies[0][1]
+
+    later = bot.parse_event(message_payload("event-2", "统计二连板"))
+    assert later is not None
+    bot.process(later)
+    assert "研究任务已受理" in sender.replies[1][1]
 
 
 def test_retry_creates_new_task_only_after_failure():

@@ -15,6 +15,7 @@ from typing import Dict, Optional, Union
 from uuid import uuid4
 
 import google.auth
+import requests
 from google.api_core.retry import Retry
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
@@ -47,6 +48,9 @@ STORAGE_WRITE_RETRY = Retry(
     deadline=STORAGE_RETRY_DEADLINE_SECONDS,
 )
 DISCOVERY_TASK_STALE_AFTER = timedelta(minutes=30)
+DISPATCH_MAX_ATTEMPTS = 4
+DISPATCH_RETRY_BACKOFF_SECONDS = 0.5
+DISPATCH_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 logger = logging.getLogger(__name__)
 
 
@@ -352,30 +356,57 @@ class CloudRunJobDispatcher:
         self._session = session
 
     def dispatch(self, task_id: str) -> None:
-        """Start one job execution with only the task identifier overridden."""
-        response = self._session.post(
-            self._url,
-            json={
-                "overrides": {
-                    "containerOverrides": [
-                        {
-                            "env": [
+        """Start one job execution with only the task identifier overridden.
+
+        Transport failures and server-side statuses are retried with backoff:
+        keep-alive connections to run.googleapis.com are occasionally reset
+        between dispatches, and one transient reset must not fail the whole
+        Feishu turn. A retry can only fire after a response was never
+        received, so in the rare case where the first request still started
+        an execution the worker sees a duplicate dispatch; the task store
+        treats concurrent runs of one task id as duplicated replies rather
+        than corruption, which is the accepted residual cost.
+        """
+        last_failure: Optional[BaseException] = None
+        for attempt in range(DISPATCH_MAX_ATTEMPTS):
+            try:
+                response = self._session.post(
+                    self._url,
+                    json={
+                        "overrides": {
+                            "containerOverrides": [
                                 {
-                                    "name": "ANALYSIS_TASK_ID",
-                                    "value": task_id,
+                                    "env": [
+                                        {
+                                            "name": "ANALYSIS_TASK_ID",
+                                            "value": task_id,
+                                        }
+                                    ]
                                 }
                             ]
                         }
-                    ]
-                }
-            },
-            timeout=30,
-        )
-        if response.status_code >= 400:
-            raise RuntimeError(
-                "Cloud Run Job dispatch failed with HTTP "
-                f"{response.status_code}: {response.text[:500]}"
-            )
+                    },
+                    timeout=30,
+                )
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                last_failure = exc
+            else:
+                if response.status_code < 400:
+                    return
+                if response.status_code not in DISPATCH_RETRYABLE_STATUS_CODES:
+                    raise RuntimeError(
+                        "Cloud Run Job dispatch failed with HTTP "
+                        f"{response.status_code}: {response.text[:500]}"
+                    )
+                last_failure = RuntimeError(
+                    "Cloud Run Job dispatch failed with HTTP "
+                    f"{response.status_code}: {response.text[:500]}"
+                )
+            time.sleep(DISPATCH_RETRY_BACKOFF_SECONDS * (2**attempt))
+        raise RuntimeError(
+            "Cloud Run Job dispatch failed after "
+            f"{DISPATCH_MAX_ATTEMPTS} attempts: {last_failure}"
+        ) from last_failure
 
 
 class AnalysisTaskCoordinator:

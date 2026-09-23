@@ -18,6 +18,7 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
 from china_a_share.core.contracts import (
+    MAX_ANALYSIS_PROMPT_LENGTH,
     AnalysisTaskStatus,
     QueryResult,
     QueryStatus,
@@ -62,7 +63,7 @@ class FeishuAgentConversationTurn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prompt: str = Field(min_length=1, max_length=4_000)
+    prompt: str = Field(min_length=1, max_length=MAX_ANALYSIS_PROMPT_LENGTH)
     answer: str = Field(min_length=1, max_length=12_000)
 
 
@@ -71,7 +72,7 @@ class FeishuAgentRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prompt: str = Field(min_length=1, max_length=4_000)
+    prompt: str = Field(min_length=1, max_length=MAX_ANALYSIS_PROMPT_LENGTH)
     conversation_id: str = Field(min_length=1)
     conversation_name: str = Field(
         default="默认会话",

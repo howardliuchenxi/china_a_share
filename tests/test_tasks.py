@@ -231,6 +231,91 @@ def test_cloud_run_dispatcher_sends_only_task_id_override():
     }
 
 
+class FakeTransientSession:
+    """Programmable session replaying outcomes per attempt."""
+
+    def __init__(self, outcomes):
+        self._outcomes = outcomes
+        self.calls = 0
+
+    def post(self, url, **kwargs):
+        outcome = self._outcomes[min(self.calls, len(self._outcomes) - 1)]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _dispatcher_with(outcomes, monkeypatch):
+    import china_a_share.tasks as tasks_module
+
+    monkeypatch.setattr(tasks_module, "DISPATCH_RETRY_BACKOFF_SECONDS", 0.0)
+    session = FakeTransientSession(outcomes)
+    return (
+        CloudRunJobDispatcher("project", "region", "worker", session=session),
+        session,
+    )
+
+
+def test_cloud_run_dispatcher_retries_transient_connection_error(monkeypatch):
+    import requests
+
+    dispatcher, session = _dispatcher_with(
+        [
+            requests.exceptions.ConnectionError("remote disconnected"),
+            requests.exceptions.ConnectionError("remote disconnected"),
+            FakeHttpResponse(),
+        ],
+        monkeypatch,
+    )
+
+    dispatcher.dispatch("task-123")
+
+    assert session.calls == 3
+
+
+def test_cloud_run_dispatcher_retries_server_error_status(monkeypatch):
+    class ServerError:
+        status_code = 503
+        text = "backend unavailable"
+
+    dispatcher, session = _dispatcher_with(
+        [ServerError(), FakeHttpResponse()],
+        monkeypatch,
+    )
+
+    dispatcher.dispatch("task-123")
+
+    assert session.calls == 2
+
+
+def test_cloud_run_dispatcher_raises_after_exhausting_retries(monkeypatch):
+    import requests
+
+    dispatcher, session = _dispatcher_with(
+        [requests.exceptions.ConnectionError("remote disconnected")],
+        monkeypatch,
+    )
+
+    with pytest.raises(RuntimeError, match="after 4 attempts"):
+        dispatcher.dispatch("task-123")
+
+    assert session.calls == 4
+
+
+def test_cloud_run_dispatcher_does_not_retry_client_error(monkeypatch):
+    class ClientError:
+        status_code = 409
+        text = "job is not ready"
+
+    dispatcher, session = _dispatcher_with([ClientError()], monkeypatch)
+
+    with pytest.raises(RuntimeError, match="HTTP 409"):
+        dispatcher.dispatch("task-123")
+
+    assert session.calls == 1
+
+
 def test_memory_store_returns_isolated_task_copies():
     store = MemoryAnalysisTaskStore()
     now = datetime.now(timezone.utc)

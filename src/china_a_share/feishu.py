@@ -23,6 +23,7 @@ from google.cloud import storage
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from china_a_share.core.contracts import (
+    MAX_ANALYSIS_PROMPT_LENGTH,
     AnalysisConversationTurn,
     AnalysisRequest,
     AnalysisResponse,
@@ -104,7 +105,7 @@ class FeishuConversationTurn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prompt: str = Field(min_length=1, max_length=1_000)
+    prompt: str = Field(min_length=1, max_length=MAX_ANALYSIS_PROMPT_LENGTH)
     interpretation: Optional[str] = Field(default=None, min_length=1, max_length=1_000)
     answer: Optional[str] = Field(default=None, min_length=1, max_length=12_000)
 
@@ -147,7 +148,7 @@ class FeishuTaskRecord(BaseModel):
     )
     prompt: str = Field(
         min_length=1,
-        max_length=1_000,
+        max_length=MAX_ANALYSIS_PROMPT_LENGTH,
         description="Exact research prompt submitted for the task.",
     )
     retry_of_task_id: Optional[str] = Field(
@@ -972,6 +973,18 @@ class FeishuResearchBot:
     def process(self, event: FeishuMessageEvent) -> None:
         """Submit or inspect one durable research task from a claimed event."""
         if not self._store.claim_event(event.event_id):
+            return
+        if len(event.prompt) > MAX_ANALYSIS_PROMPT_LENGTH:
+            # Every downstream request and record model caps the prompt at
+            # MAX_ANALYSIS_PROMPT_LENGTH; rejecting here keeps the user inside
+            # one shared contract instead of failing mid-submission after the
+            # worker task was already dispatched.
+            self._sender.reply(
+                event.message_id,
+                f"问题过长（当前 {len(event.prompt)} 字，上限 "
+                f"{MAX_ANALYSIS_PROMPT_LENGTH} 字），请精简后重发。",
+            )
+            self._store.complete_event(event.event_id)
             return
         try:
             if self._strategy_interaction is not None and self._strategy_interaction.handles_prompt(event.prompt):

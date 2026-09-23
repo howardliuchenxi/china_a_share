@@ -181,7 +181,7 @@ class AnalysisConversationTurn(BaseModel):
 
     prompt: str = Field(
         min_length=1,
-        max_length=1_000,
+        max_length=MAX_ANALYSIS_PROMPT_LENGTH,
         description="Exact user request from one preceding analysis turn.",
     )
     interpretation: str = Field(
