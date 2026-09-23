@@ -1,0 +1,120 @@
+# 研究执行检查点
+
+> 自动追加，每阶段一条；中断后从最后完成阶段续跑。
+
+- [2026-09-23 11:11:49] S0 panel: {"rows": 10795532, "codes": 5467, "dates": 2630, "first": "20151201", "last": "20260923"}
+- [2026-09-23 11:12:38] S1 E1: {"raw_events": 13772, "valid_labels": 12094, "positive_rate": 0.1296}
+- [2026-09-23 11:12:38] S1 E1_EXT: {"raw_events": 8390, "valid_labels": 7346, "positive_rate": 0.1281}
+- [2026-09-23 11:12:38] S1 E2: {"raw_events": 57178, "valid_labels": 50428, "positive_rate": 0.1466}
+- [2026-09-23 11:19:50] S0 panel: {"rows": 10795532, "codes": 5467, "dates": 2630, "first": "20151201", "last": "20260923"}
+- [2026-09-23 11:20:38] S1 E1: {"raw_events": 13772, "valid_labels": 12094, "positive_rate": 0.1296}
+- [2026-09-23 11:20:38] S1 E1_EXT: {"raw_events": 8390, "valid_labels": 7346, "positive_rate": 0.1281}
+- [2026-09-23 11:20:38] S1 E2: {"raw_events": 57178, "valid_labels": 50428, "positive_rate": 0.1466}
+- [2026-09-23 11:22:10] S2 candidate rows: {"rows": 343541}
+- [2026-09-23 11:29:19] S2 factor matrix: {"rows": 343541, "factors": 63}
+- [2026-09-23 11:29:21] S2 dedup: {"kept": 35, "dropped": 28}
+- [2026-09-23 11:38:35] S0 panel: {"rows": 10795532, "codes": 5467, "dates": 2630, "first": "20151201", "last": "20260923"}
+- [2026-09-23 11:39:24] S1 E1: {"raw_events": 13772, "valid_labels": 12094, "positive_rate": 0.1296}
+- [2026-09-23 11:39:24] S1 E1_EXT: {"raw_events": 8390, "valid_labels": 7346, "positive_rate": 0.1281}
+- [2026-09-23 11:39:24] S1 E2: {"raw_events": 57178, "valid_labels": 50428, "positive_rate": 0.1466}
+- [2026-09-23 11:40:56] S2 candidate rows: {"rows": 343541}
+- [2026-09-23 11:48:15] S2 factor matrix: {"rows": 343541, "factors": 63}
+- [2026-09-23 11:58:58] S0 panel: {"rows": 10795532, "codes": 5467, "dates": 2630, "first": "20151201", "last": "20260923"}
+- [2026-09-23 11:59:47] S1 E1: {"raw_events": 13772, "valid_labels": 12094, "positive_rate": 0.1296}
+- [2026-09-23 11:59:47] S1 E1_EXT: {"raw_events": 8390, "valid_labels": 7346, "positive_rate": 0.1281}
+- [2026-09-23 11:59:47] S1 E2: {"raw_events": 57178, "valid_labels": 50428, "positive_rate": 0.1466}
+- [2026-09-23 12:01:20] S2 candidate rows: {"rows": 343541}
+- [2026-09-23 12:01:20] S2 factor matrix (cached): {"rows": 343541, "factors": 62}
+- [2026-09-23 12:08:42] S0 panel: {"rows": 10795532, "codes": 5467, "dates": 2630, "first": "20151201", "last": "20260923"}
+- [2026-09-23 12:09:30] S1 E1: {"raw_events": 13772, "valid_labels": 12094, "positive_rate": 0.1296}
+- [2026-09-23 12:09:30] S1 E1_EXT: {"raw_events": 8390, "valid_labels": 7346, "positive_rate": 0.1281}
+- [2026-09-23 12:09:30] S1 E2: {"raw_events": 57178, "valid_labels": 50428, "positive_rate": 0.1466}
+- [2026-09-23 12:11:01] S2 candidate rows: {"rows": 343541}
+- [2026-09-23 12:11:01] S2 factor matrix (cached): {"rows": 343541, "factors": 62}
+- [2026-09-23 12:11:05] S2 dedup: {"kept": 35, "dropped": 28}
+- [2026-09-23 12:11:19] S4 null 1/20: {"max_oos_lift": 1.1845, "secs": 13}
+- [2026-09-23 12:11:31] S4 null 2/20: {"max_oos_lift": 1.1913, "secs": 13}
+- [2026-09-23 12:11:44] S4 null 3/20: {"max_oos_lift": 1.4829, "secs": 13}
+- [2026-09-23 12:11:57] S4 null 4/20: {"max_oos_lift": 1.2536, "secs": 13}
+- [2026-09-23 12:12:10] S4 null 5/20: {"max_oos_lift": 1.3653, "secs": 13}
+- [2026-09-23 12:12:23] S4 null 6/20: {"max_oos_lift": 1.6678, "secs": 13}
+- [2026-09-23 12:12:35] S4 null 7/20: {"max_oos_lift": 1.293, "secs": 13}
+- [2026-09-23 12:12:48] S4 null 8/20: {"max_oos_lift": 1.5126, "secs": 13}
+- [2026-09-23 12:13:01] S4 null 9/20: {"max_oos_lift": 1.5832, "secs": 13}
+- [2026-09-23 12:13:14] S4 null 10/20: {"max_oos_lift": 1.2189, "secs": 13}
+- [2026-09-23 12:13:27] S4 null 11/20: {"max_oos_lift": 1.4089, "secs": 13}
+- [2026-09-23 12:13:39] S4 null 12/20: {"max_oos_lift": 1.5818, "secs": 13}
+- [2026-09-23 12:13:52] S4 null 13/20: {"max_oos_lift": 1.2187, "secs": 13}
+- [2026-09-23 12:14:05] S4 null 14/20: {"max_oos_lift": 1.4659, "secs": 12}
+- [2026-09-23 12:14:17] S4 null 15/20: {"max_oos_lift": 1.5958, "secs": 13}
+- [2026-09-23 12:14:30] S4 null 16/20: {"max_oos_lift": 2.4537, "secs": 13}
+- [2026-09-23 12:14:43] S4 null 17/20: {"max_oos_lift": 1.6322, "secs": 13}
+- [2026-09-23 12:14:56] S4 null 18/20: {"max_oos_lift": 1.708, "secs": 13}
+- [2026-09-23 12:15:09] S4 null 19/20: {"max_oos_lift": 1.1657, "secs": 13}
+- [2026-09-23 12:15:21] S4 null 20/20: {"max_oos_lift": 1.4891, "secs": 13}
+- [2026-09-23 12:15:21] S4 null distribution: {"null_95": 1.7453, "completed_runs": 20}
+- [2026-09-23 12:15:47] S3/S4 E1: {"is_events": 8119, "oos_events": 3975, "is_positive": 1156, "oos_positive": 629, "candidates": 382, "survivors": 0}
+- [2026-09-23 12:26:34] S0 panel: {"rows": 10795532, "codes": 5467, "dates": 2630, "first": "20151201", "last": "20260923"}
+- [2026-09-23 12:27:22] S1 E1: {"raw_events": 13772, "valid_labels": 12094, "positive_rate": 0.1296}
+- [2026-09-23 12:27:22] S1 E1_EXT: {"raw_events": 8390, "valid_labels": 7346, "positive_rate": 0.1281}
+- [2026-09-23 12:27:22] S1 E2: {"raw_events": 57178, "valid_labels": 50428, "positive_rate": 0.1466}
+- [2026-09-23 12:28:54] S2 candidate rows: {"rows": 343541}
+- [2026-09-23 12:28:54] S2 factor matrix (cached): {"rows": 343541, "factors": 63}
+- [2026-09-23 12:28:56] S2 dedup: {"kept": 35, "dropped": 28}
+- [2026-09-23 12:29:09] S4 null 1/20: {"max_oos_lift": 1.1845, "secs": 13}
+- [2026-09-23 12:29:22] S4 null 2/20: {"max_oos_lift": 1.1913, "secs": 13}
+- [2026-09-23 12:29:35] S4 null 3/20: {"max_oos_lift": 1.4829, "secs": 13}
+- [2026-09-23 12:29:48] S4 null 4/20: {"max_oos_lift": 1.2536, "secs": 13}
+- [2026-09-23 12:30:01] S4 null 5/20: {"max_oos_lift": 1.3653, "secs": 13}
+- [2026-09-23 12:30:14] S4 null 6/20: {"max_oos_lift": 1.6678, "secs": 13}
+- [2026-09-23 12:30:26] S4 null 7/20: {"max_oos_lift": 1.293, "secs": 13}
+- [2026-09-23 12:30:39] S4 null 8/20: {"max_oos_lift": 1.5126, "secs": 13}
+- [2026-09-23 12:30:52] S4 null 9/20: {"max_oos_lift": 1.5832, "secs": 13}
+- [2026-09-23 12:31:05] S4 null 10/20: {"max_oos_lift": 1.2189, "secs": 13}
+- [2026-09-23 12:31:17] S4 null 11/20: {"max_oos_lift": 1.4089, "secs": 13}
+- [2026-09-23 12:31:30] S4 null 12/20: {"max_oos_lift": 1.5818, "secs": 13}
+- [2026-09-23 12:31:43] S4 null 13/20: {"max_oos_lift": 1.2187, "secs": 13}
+- [2026-09-23 12:31:55] S4 null 14/20: {"max_oos_lift": 1.4659, "secs": 13}
+- [2026-09-23 12:32:08] S4 null 15/20: {"max_oos_lift": 1.5958, "secs": 13}
+- [2026-09-23 12:32:21] S4 null 16/20: {"max_oos_lift": 2.4537, "secs": 13}
+- [2026-09-23 12:32:33] S4 null 17/20: {"max_oos_lift": 1.6322, "secs": 12}
+- [2026-09-23 12:32:46] S4 null 18/20: {"max_oos_lift": 1.708, "secs": 13}
+- [2026-09-23 12:32:59] S4 null 19/20: {"max_oos_lift": 1.1657, "secs": 13}
+- [2026-09-23 12:33:12] S4 null 20/20: {"max_oos_lift": 1.4891, "secs": 13}
+- [2026-09-23 12:33:12] S4 null distribution: {"null_95": 1.7453, "completed_runs": 20}
+- [2026-09-23 12:33:37] S3/S4 E1: {"is_events": 8119, "oos_events": 3975, "is_positive": 1156, "oos_positive": 629, "candidates": 382, "survivors": 0}
+- [2026-09-23 12:33:57] S3/S4 E1_EXT: {"is_events": 5186, "oos_events": 2160, "is_positive": 741, "oos_positive": 334, "candidates": 378, "survivors": 0}
+- [2026-09-23 12:35:08] S3/S4 E2: {"is_events": 34363, "oos_events": 16065, "is_positive": 5815, "oos_positive": 2565, "candidates": 384, "survivors": 0}
+- [2026-09-23 12:35:13] S4 done: {"survivors_total": 0, "elapsed_min": 10.6}
+- [2026-09-23 12:51:55] S0 panel: {"rows": 10795532, "codes": 5467, "dates": 2630, "first": "20151201", "last": "20260923"}
+- [2026-09-23 12:52:43] S1 E1: {"raw_events": 13772, "valid_labels": 12094, "positive_rate": 0.1296}
+- [2026-09-23 12:52:43] S1 E1_EXT: {"raw_events": 8390, "valid_labels": 7346, "positive_rate": 0.1281}
+- [2026-09-23 12:52:43] S1 E2: {"raw_events": 57178, "valid_labels": 50428, "positive_rate": 0.1466}
+- [2026-09-23 12:54:16] S2 candidate rows: {"rows": 343541}
+- [2026-09-23 12:54:16] S2 factor matrix (cached): {"rows": 343541, "factors": 63}
+- [2026-09-23 12:54:18] S2 dedup: {"kept": 35, "dropped": 28}
+- [2026-09-23 12:54:31] S4 null 1/20: {"max_oos_lift": 1.2127, "secs": 13}
+- [2026-09-23 12:54:44] S4 null 2/20: {"max_oos_lift": 1.1913, "secs": 13}
+- [2026-09-23 12:54:57] S4 null 3/20: {"max_oos_lift": 1.4829, "secs": 13}
+- [2026-09-23 12:55:10] S4 null 4/20: {"max_oos_lift": 1.2536, "secs": 13}
+- [2026-09-23 12:55:23] S4 null 5/20: {"max_oos_lift": 1.3653, "secs": 13}
+- [2026-09-23 12:55:36] S4 null 6/20: {"max_oos_lift": 1.6678, "secs": 13}
+- [2026-09-23 12:55:49] S4 null 7/20: {"max_oos_lift": 1.293, "secs": 13}
+- [2026-09-23 12:56:02] S4 null 8/20: {"max_oos_lift": 1.5126, "secs": 13}
+- [2026-09-23 12:56:15] S4 null 9/20: {"max_oos_lift": 1.5832, "secs": 13}
+- [2026-09-23 12:56:27] S4 null 10/20: {"max_oos_lift": 1.2896, "secs": 13}
+- [2026-09-23 12:56:40] S4 null 11/20: {"max_oos_lift": 1.4089, "secs": 13}
+- [2026-09-23 12:56:53] S4 null 12/20: {"max_oos_lift": 1.5818, "secs": 13}
+- [2026-09-23 12:57:06] S4 null 13/20: {"max_oos_lift": 1.2629, "secs": 13}
+- [2026-09-23 12:57:19] S4 null 14/20: {"max_oos_lift": 1.4659, "secs": 13}
+- [2026-09-23 12:57:32] S4 null 15/20: {"max_oos_lift": 1.5958, "secs": 13}
+- [2026-09-23 12:57:45] S4 null 16/20: {"max_oos_lift": 2.4537, "secs": 13}
+- [2026-09-23 12:57:58] S4 null 17/20: {"max_oos_lift": 1.6322, "secs": 13}
+- [2026-09-23 12:58:11] S4 null 18/20: {"max_oos_lift": 1.708, "secs": 13}
+- [2026-09-23 12:58:24] S4 null 19/20: {"max_oos_lift": 1.2079, "secs": 13}
+- [2026-09-23 12:58:37] S4 null 20/20: {"max_oos_lift": 1.4891, "secs": 13}
+- [2026-09-23 12:58:37] S4 null distribution: {"null_95": 1.7453, "completed_runs": 20}
+- [2026-09-23 12:59:02] S3/S4 E1: {"is_events": 8119, "oos_events": 3975, "is_positive": 1156, "oos_positive": 629, "candidates": 378, "survivors": 0}
+- [2026-09-23 12:59:20] S3/S4 E1_EXT: {"is_events": 5186, "oos_events": 2160, "is_positive": 741, "oos_positive": 334, "candidates": 360, "survivors": 0}
+- [2026-09-23 13:00:29] S3/S4 E2: {"is_events": 34363, "oos_events": 16065, "is_positive": 5815, "oos_positive": 2565, "candidates": 379, "survivors": 0}
+- [2026-09-23 13:00:34] S4 done: {"survivors_total": 0, "elapsed_min": 10.6}
