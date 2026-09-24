@@ -118,3 +118,29 @@
 - [2026-09-23 12:59:20] S3/S4 E1_EXT: {"is_events": 5186, "oos_events": 2160, "is_positive": 741, "oos_positive": 334, "candidates": 360, "survivors": 0}
 - [2026-09-23 13:00:29] S3/S4 E2: {"is_events": 34363, "oos_events": 16065, "is_positive": 5815, "oos_positive": 2565, "candidates": 379, "survivors": 0}
 - [2026-09-23 13:00:34] S4 done: {"survivors_total": 0, "elapsed_min": 10.6}
+- [2026-09-24 12:08:10] S6b dedup v2: {"kept": 44, "dropped": 29}
+- [2026-09-24 12:10:27] S4 null 1/20: {"max_oos_lift": 1.1845, "secs": 15}
+- [2026-09-24 12:10:40] S4 null 2/20: {"max_oos_lift": 1.2753, "secs": 14}
+- [2026-09-24 12:10:54] S4 null 3/20: {"max_oos_lift": 1.4829, "secs": 14}
+- [2026-09-24 12:11:07] S4 null 4/20: {"max_oos_lift": 1.2397, "secs": 13}
+- [2026-09-24 12:11:21] S4 null 5/20: {"max_oos_lift": 1.3653, "secs": 13}
+- [2026-09-24 12:11:34] S4 null 6/20: {"max_oos_lift": 1.6678, "secs": 13}
+- [2026-09-24 12:11:48] S4 null 7/20: {"max_oos_lift": 1.293, "secs": 14}
+- [2026-09-24 12:12:01] S4 null 8/20: {"max_oos_lift": 1.5126, "secs": 13}
+- [2026-09-24 12:12:14] S4 null 9/20: {"max_oos_lift": 1.607, "secs": 13}
+- [2026-09-24 12:12:28] S4 null 10/20: {"max_oos_lift": 2.1375, "secs": 13}
+- [2026-09-24 12:12:41] S4 null 11/20: {"max_oos_lift": 1.4089, "secs": 13}
+- [2026-09-24 12:12:54] S4 null 12/20: {"max_oos_lift": 2.1228, "secs": 13}
+- [2026-09-24 12:13:07] S4 null 13/20: {"max_oos_lift": 1.1486, "secs": 13}
+- [2026-09-24 12:13:20] S4 null 14/20: {"max_oos_lift": 1.4659, "secs": 13}
+- [2026-09-24 12:13:34] S4 null 15/20: {"max_oos_lift": 1.8759, "secs": 13}
+- [2026-09-24 12:13:48] S4 null 16/20: {"max_oos_lift": 2.4537, "secs": 14}
+- [2026-09-24 12:14:01] S4 null 17/20: {"max_oos_lift": 1.7471, "secs": 13}
+- [2026-09-24 12:14:14] S4 null 18/20: {"max_oos_lift": 1.708, "secs": 13}
+- [2026-09-24 12:14:27] S4 null 19/20: {"max_oos_lift": 1.4683, "secs": 13}
+- [2026-09-24 12:14:41] S4 null 20/20: {"max_oos_lift": 1.4891, "secs": 13}
+- [2026-09-24 12:14:41] S4 null v2: {"null_95": 2.1533}
+- [2026-09-24 12:15:09] S7b E1 v2: {"is_events": 8119, "oos_events": 3975, "is_positive": 1156, "oos_positive": 629, "candidates": 455, "survivors": 0}
+- [2026-09-24 12:15:29] S7b E1_EXT v2: {"is_events": 5186, "oos_events": 2160, "is_positive": 741, "oos_positive": 334, "candidates": 433, "survivors": 0}
+- [2026-09-24 12:16:49] S7b E2 v2: {"is_events": 34363, "oos_events": 16065, "is_positive": 5815, "oos_positive": 2565, "candidates": 448, "survivors": 0}
+- [2026-09-24 12:16:49] S7b done: {"elapsed_min": 8.7, "new_factor_hits": {"E1": 47, "E1_EXT": 33, "E2": 32}}
