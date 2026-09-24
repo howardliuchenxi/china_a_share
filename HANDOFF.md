@@ -11,6 +11,14 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-23 · Codex] Freeze and replay flexible natural-language strategies
+
+- Replaced lossy fixed-type suggestion buttons with compilation through the validated general `QueryPlan`; saved strategies now retain the exact source text, interpretation, immutable plan, anchor date, and SHA-256 fingerprint.
+- Daily execution and date-range trials replay the confirmed plan with date rebinding only, use the exchange calendar, preserve audit columns, and never ask the model to reinterpret the saved rule.
+- Added `试算规则 [name] YYYY-MM-DD 至 YYYY-MM-DD` and `删除规则 <name or id>` while retaining per-row delete actions; ambiguous duplicate names fail visibly instead of guessing.
+- Added both reported prompts to the live regression catalog and local regression coverage. Targeted tests: 62 passed; frontend build passed. Full suite: 947 passed / 133 skipped with one pre-existing nondeterministic concurrent-call ordering assertion; both affected tests pass alone.
+- The real paid DeepSeek/Tushare replay was not run because external transmission was not authorized in this session; no cloud deployment was triggered manually.
+
 ## [2026-09-23 · ZCode] 飞书「研究任务操作失败」事件修复：dispatch 有界重试 + prompt 长度契约统一
 
 - 线上报错事件 b3570598cabe31ad51c7357f9590ff02：`CloudRunJobDispatcher.dispatch` 对 run.googleapis.com 的单次 POST 被 `RemoteDisconnected` 打断（keep-alive 连接被回收），无重试直接把用户请求打失败；用户 3 分钟后重发自愈（task c214bb59…，原话「请将 1、2、3 建议依次都执行」）。30 天内同族失败 3 起，另两起：09-20 超长 prompt 撞 `FeishuTaskRecord.prompt` 1000 上限（任务已派发后才炸，事件-任务关联记录丢失）；09-14 research_chat `calendar` 遮蔽（main 上已被他人修复为 `trading_calendar`，无需再动）。

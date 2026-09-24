@@ -77,6 +77,37 @@
       "source": "reported_regression"
     },
     {
+      "id": "flexible-strategy-industry-limit-up-production-20260923",
+      "name": "flexible strategy industry limit-up production regression",
+      "family": "flexible_strategy_plan",
+      "prompt": "找到同一个行业涨停股数量大于等于5只，或者大于10%（个股数量少于20只的行业）同时大于等于2只，间隔在10个交易日以内，取最晚一日为触发日。给我列出其中的涨停股名字、涨停日期、涨幅、市值、是否st",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "limit_list_d",
+        "stock_basic",
+        "daily_basic",
+        "stock_st"
+      ],
+      "quality_invariants": [
+        "native_limit_up_source"
+      ],
+      "source": "reported_regression"
+    },
+    {
+      "id": "flexible-strategy-drawdown-production-20260923",
+      "name": "flexible strategy drawdown production regression",
+      "family": "flexible_strategy_plan",
+      "prompt": "我在A中搜索，在最近10个交易日中（截止9.22）只出现过一次收盘涨幅超过5%的股票，然后在这些股票中，寻找最新的收盘价第一次回撤到大涨当日盘中最低价1.03倍以下 或者 大涨当日的前一日收盘价1.03倍以下 的 股票，然后在这些股票中找出 大涨日的最高价 大于 当日收盘时 20日线值和60日线值的 股票，给出列表，大涨回撤列表",
+      "expected_feasibility": "supported",
+      "tier": "supported",
+      "operations": [
+        "daily"
+      ],
+      "quality_invariants": [],
+      "source": "reported_regression"
+    },
+    {
       "id": "limit_up_list-01",
       "name": "limit_up_list 1",
       "family": "limit_up_list",

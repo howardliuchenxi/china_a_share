@@ -2077,6 +2077,24 @@ class AnalysisService:
         """Return an isolated runtime manifest for the active provider and code."""
         return copy.deepcopy(self._capability_manifest)
 
+    def trading_dates(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        request_id: str,
+        api_route: str,
+    ) -> List[date]:
+        """Return validated open-market dates for reusable strategy replays."""
+        if end_date < start_date:
+            raise ValueError("Trading-date range end must not precede start.")
+        return self._trading_dates(
+            start_date,
+            end_date,
+            request_id=request_id,
+            api_route=api_route,
+        )
+
     @staticmethod
     def _log_termination(
         request_id: str,

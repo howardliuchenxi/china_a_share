@@ -6,12 +6,17 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 
+from china_a_share.core.contracts import AnalysisResponse, QueryPlan, QueryResult
 from china_a_share.discovery.strategy_models import (
+    CompiledStrategyRule,
     DrawdownRule,
     SignalDirection,
     StrategyConfig,
 )
-from china_a_share.discovery.strategy_scanner import StrategyScanner
+from china_a_share.discovery.strategy_scanner import (
+    FROZEN_PLAN_EXECUTION_PROMPT,
+    StrategyScanner,
+)
 from china_a_share.discovery.strategy_store import MemoryStrategyStore
 
 
@@ -85,6 +90,67 @@ class CountingStore(MemoryStrategyStore):
         return super().is_notification_sent(*args, **kwargs)
 
 
+class FakePlanService:
+    """Execute the confirmed plan without interpreting the source text again."""
+
+    def __init__(self) -> None:
+        self.requests = []
+        self.calendar_calls = []
+
+    def trading_dates(
+        self,
+        start_date,
+        end_date,
+        *,
+        request_id,
+        api_route,
+    ):
+        self.calendar_calls.append((start_date, end_date, request_id, api_route))
+        return [
+            start_date.fromordinal(ordinal)
+            for ordinal in range(start_date.toordinal(), end_date.toordinal() + 1)
+            if start_date.fromordinal(ordinal).weekday() < 5
+        ]
+
+    def analyze(
+        self,
+        request_id,
+        request,
+        *,
+        api_route,
+        progress_callback,
+    ):
+        self.requests.append((request_id, request, api_route, progress_callback))
+        plan = request.confirmed_plan
+        target_date = plan.queries[0].params["end_date"]
+        result_id = plan.answer_contract.result_query_id
+        return AnalysisResponse(
+            request_id=request_id,
+            planner="fake-planner",
+            data_provider="fake-provider",
+            status="success",
+            plan=plan,
+            results=[
+                QueryResult(
+                    query_id=result_id,
+                    provider="fake-provider",
+                    operation="daily",
+                    status="success",
+                    columns=["ts_code", "signal_date", "audit_value"],
+                    rows=[
+                        {
+                            "ts_code": "000001.SZ",
+                            "signal_date": target_date,
+                            "audit_value": 1.03,
+                        }
+                    ],
+                    row_count=1,
+                    completeness="complete",
+                )
+            ],
+        )
+
+
 def make_strategy(
     strategy_id: str,
     owner: str = "owner-1",
@@ -105,13 +171,56 @@ def make_strategy(
     )
 
 
-def scanner(loader, engine, store, sender):
+def make_compiled_strategy(strategy_id: str = "compiled") -> StrategyConfig:
+    now = datetime(2026, 9, 18, 8, 0, tzinfo=SHANGHAI)
+    plan = QueryPlan.model_validate(
+        {
+            "interpretation": "Execute a frozen multi-stage event screen.",
+            "queries": [
+                {
+                    "query_id": "result",
+                    "operation": "daily",
+                    "params": {"start_date": "20260901", "end_date": "20260918"},
+                    "fields": ["ts_code", "trade_date", "close"],
+                    "purpose": "Load the source rows.",
+                }
+            ],
+            "answer_contract": {
+                "result_query_id": "result",
+                "result_kind": "table",
+                "outputs": [
+                    {"field": "ts_code", "description": "Security code."},
+                    {"field": "signal_date", "description": "Signal date."},
+                    {"field": "audit_value", "description": "Auditable threshold."},
+                ],
+            },
+        }
+    )
+    return StrategyConfig(
+        id=strategy_id,
+        name="Flexible strategy",
+        direction=SignalDirection.BUY,
+        compiled_rule=CompiledStrategyRule.create(
+            source_text="Run the complete flexible rule.",
+            plan=plan,
+            anchor_date="20260918",
+        ),
+        creator_open_id="owner-1",
+        enabled=True,
+        notification_chat_id="chat-compiled",
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def scanner(loader, engine, store, sender, analysis_service=None):
     return StrategyScanner(
         loader,
         engine,
         store,
         sender,
         clock=lambda: datetime(2026, 9, 18, 16, 30, tzinfo=SHANGHAI),
+        analysis_service=analysis_service,
     )
 
 
@@ -324,3 +433,100 @@ def test_scheduled_non_trading_day_is_no_op() -> None:
     ).run_daily_scan("request-9")
 
     assert sender.cards == []
+
+
+def test_compiled_strategy_executes_frozen_plan_and_preserves_audit_columns() -> None:
+    strategy = make_compiled_strategy()
+    store = MemoryStrategyStore()
+    store.put_strategy(strategy, strategy.creator_open_id)
+    sender = FakeSender()
+    service = FakePlanService()
+
+    scanner(
+        FakeLoader(),
+        FakeEngine({}),
+        store,
+        sender,
+        analysis_service=service,
+    ).run_daily_scan("request-compiled")
+
+    assert len(service.requests) == 1
+    request = service.requests[0][1]
+    assert request.confirmed_plan is not None
+    assert request.prompt == FROZEN_PLAN_EXECUTION_PROMPT
+    assert request.confirmed_plan.queries[0].params["end_date"] == SIGNAL_DATE
+    content = card_content(sender.cards[0][1])
+    assert "000001.SZ" in content
+    assert "audit_value=1.03" in content
+    assert strategy.compiled_rule.plan_fingerprint[:12] in content
+
+
+def test_trial_replays_each_weekday_with_its_own_observation_cutoff() -> None:
+    strategy = make_compiled_strategy("trial")
+    sender = FakeSender()
+    service = FakePlanService()
+
+    scanner(
+        FakeLoader(),
+        FakeEngine({}),
+        MemoryStrategyStore(),
+        sender,
+        analysis_service=service,
+    ).run_trial(
+        strategy,
+        "20260918",
+        "20260922",
+        "request-trial",
+    )
+
+    target_dates = [
+        call[1].confirmed_plan.queries[0].params["end_date"]
+        for call in service.requests
+    ]
+    assert target_dates == ["20260918", "20260921", "20260922"]
+    assert service.calendar_calls[0][:2] == (
+        datetime(2026, 9, 18).date(),
+        datetime(2026, 9, 22).date(),
+    )
+    for target_date, call in zip(target_dates, service.requests):
+        params = call[1].confirmed_plan.queries[0].params
+        assert params["end_date"] == target_date
+        assert params["start_date"] <= target_date
+    content = card_content(sender.cards[0][1])
+    assert "总命中行数：** 3" in content
+    assert "trial_date=20260918" in content
+
+
+def test_trial_rejects_ranges_longer_than_bounded_replay_window() -> None:
+    with pytest.raises(ValueError, match="31"):
+        scanner(
+            FakeLoader(),
+            FakeEngine({}),
+            MemoryStrategyStore(),
+            FakeSender(),
+            analysis_service=FakePlanService(),
+        ).run_trial(
+            make_compiled_strategy("too-long"),
+            "20260101",
+            "20260922",
+            "request-too-long",
+        )
+
+
+def test_trial_accepts_exactly_the_bounded_replay_window() -> None:
+    sender = FakeSender()
+
+    scanner(
+        FakeLoader(),
+        FakeEngine({}),
+        MemoryStrategyStore(),
+        sender,
+        analysis_service=FakePlanService(),
+    ).run_trial(
+        make_compiled_strategy("at-limit"),
+        "20260901",
+        "20261001",
+        "request-at-limit",
+    )
+
+    assert len(sender.cards) == 1

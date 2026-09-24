@@ -988,11 +988,27 @@ class FeishuResearchBot:
             return
         try:
             if self._strategy_interaction is not None and self._strategy_interaction.handles_prompt(event.prompt):
+                strategy_conversation: list[AnalysisConversationTurn] = []
+                if self._agent_coordinator is not None:
+                    active_conversation_id = self._active_agent_conversation_id(
+                        event.conversation_id
+                    )
+                    strategy_conversation = [
+                        AnalysisConversationTurn(
+                            prompt=turn.prompt,
+                            interpretation=(turn.answer or turn.interpretation or "")[:1000],
+                        )
+                        for turn in self._completed_agent_conversation(
+                            active_conversation_id
+                        )[-3:]
+                        if turn.answer or turn.interpretation
+                    ]
                 card = self._strategy_interaction.handle_message(
                     event.sender_open_id,
                     event.chat_id,
                     event.prompt,
                     event.event_id,
+                    conversation=strategy_conversation,
                 )
                 if card is not None:
                     self._sender.reply_card(event.message_id, card)

@@ -11,7 +11,10 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from china_a_share.core.contracts import AnalysisConversationTurn
+
 from china_a_share.discovery.strategy_models import (
+    CompiledStrategyRule,
     CumulativeReturnRule,
     DraftState,
     DrawdownRule,
@@ -37,6 +40,8 @@ STRATEGY_MENU_COMMAND_PATTERN = re.compile(r"^(?:策略菜单|策略)$")
 STRATEGY_CREATE_COMMAND_PATTERN = re.compile(r"^新建策略(?:\s+(?P<name>.+))?$")
 STRATEGY_LIST_COMMAND_PATTERN = re.compile(r"^策略列表$")
 STRATEGY_RUN_COMMAND_PATTERN = re.compile(r"^运行规则$")
+STRATEGY_DELETE_COMMAND_PATTERN = re.compile(r"^删除规则\s+(?P<target>.+)$")
+STRATEGY_TRIAL_COMMAND_PATTERN = re.compile(r"^试算规则(?:\s+(?P<body>.+))?$")
 STRATEGY_CANCEL_DRAFT_COMMAND_PATTERN = re.compile(r"^取消草稿$")
 STRATEGY_NAME_COMMAND_PATTERN = re.compile(r"^策略名称\s+(?P<name>.+)$")
 STRATEGY_RULES_COMMAND_PATTERN = re.compile(r"^规则\s+(?P<spec>.+)$")
@@ -46,6 +51,8 @@ STRATEGY_COMMAND_PATTERNS = (
     STRATEGY_CREATE_COMMAND_PATTERN,
     STRATEGY_LIST_COMMAND_PATTERN,
     STRATEGY_RUN_COMMAND_PATTERN,
+    STRATEGY_DELETE_COMMAND_PATTERN,
+    STRATEGY_TRIAL_COMMAND_PATTERN,
     STRATEGY_CANCEL_DRAFT_COMMAND_PATTERN,
     STRATEGY_NAME_COMMAND_PATTERN,
     STRATEGY_RULES_COMMAND_PATTERN,
@@ -56,12 +63,10 @@ DIRECTION_LABELS = {
     SignalDirection.SELL: "卖出",
 }
 
-_RULES_EXAMPLE = (
-    "规则 回撤 窗口=60 阈值=30%；涨幅 窗口=10 下限=-10% 上限=10%；金叉 快线=5 慢线=10；涨停"
-)
-_RULES_TYPE_HINT = (
-    "规则类型：回撤（窗口/阈值）、涨幅（窗口/下限/上限）、金叉（快线/慢线）、"
-    "涨停（无需参数，可选 窗口=N 表示近 N 日内出现过涨停）。"
+_TRIAL_DATE_PATTERN = re.compile(
+    r"^(?:(?P<name>.+?)\s+)?"
+    r"(?P<start>\d{4}(?:-?\d{2}){2})\s*(?:至|到|~|～|-)\s*"
+    r"(?P<end>\d{4}(?:-?\d{2}){2})$"
 )
 
 
@@ -214,14 +219,30 @@ def build_notice_card(
     }
 
 
-def build_rule_options_card(
+def build_rule_issue_card(
     draft: StrategyDraft,
     spec: str,
-    candidates: list[str],
     *,
-    error: str = "",
+    local_error: str = "",
+    clarification_options: Optional[list[str]] = None,
+    limitations: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
-    """Offer candidate interpretations or guided re-entry for unclear rules."""
+    """Explain the exact unresolved contract without offering lossy guesses."""
+    clarification_options = clarification_options or []
+    limitations = limitations or []
+    details: list[str] = []
+    if local_error and not local_error.startswith("不支持的规则类型"):
+        details.append(f"**输入校验：** {local_error}")
+    if clarification_options:
+        details.append("**需要你明确的内容：**")
+        details.extend(f"- {item}" for item in clarification_options)
+    if limitations:
+        details.append("**当前无法执行的具体原因：**")
+        details.extend(f"- {item}" for item in limitations)
+    if not details:
+        details.append(
+            "规则编译服务暂时不可用或没有生成完整计划，请稍后原样重试。"
+        )
     elements: list[Dict[str, Any]] = [
         {
             "tag": "div",
@@ -229,55 +250,18 @@ def build_rule_options_card(
                 "tag": "lark_md",
                 "content": (
                     f"你描述的条件：**{spec}**\n"
-                    + (f"无法直接解析：{error}\n" if error else "")
-                    + "你的意思是不是下面之一？"
+                    + "\n".join(details)
                 ),
             },
         }
     ]
-    if candidates:
-        for candidate in candidates:
-            elements.append(
-                {
-                    "tag": "action",
-                    "actions": [
-                        {
-                            "tag": "button",
-                            "text": {
-                                "tag": "plain_text",
-                                "content": candidate[:20],
-                            },
-                            "value": {
-                                "action": "strategy_rules_candidate",
-                                "draft_id": draft.draft_id,
-                                "text": candidate,
-                            },
-                        }
-                    ],
-                }
-            )
-    else:
-        elements.append(
-            {
-                "tag": "div",
-                "text": {
-                    "tag": "lark_md",
-                    "content": (
-                        "暂时没有接近的候选。目前支持的条件："
-                        "回撤（窗口/阈值）、涨幅（窗口/下限/上限）、"
-                        "金叉（快线/慢线）、涨停（可选 窗口=N）。\n"
-                        f"标准写法示例：**{_RULES_EXAMPLE}**"
-                    ),
-                },
-            }
-        )
     elements.append(
         {
             "tag": "note",
             "elements": [
                 {
                     "tag": "plain_text",
-                    "content": "都不对？回复「规则 + 你的补充描述」换种说法，或点下方取消。",
+                    "content": "补充后回复「规则 + 完整规则原文」，系统会重新生成并校验整份计划。",
                 }
             ],
         }
@@ -301,7 +285,7 @@ def build_rule_options_card(
         "config": {"wide_screen_mode": True},
         "header": {
             "template": "orange",
-            "title": {"tag": "plain_text", "content": "条件解析"},
+            "title": {"tag": "plain_text", "content": "规则需要补充"},
         },
         "elements": elements,
     }
@@ -419,10 +403,8 @@ def build_draft_card(
                         f"策略名称：**{draft.name}**\n"
                         f"建议方向：**{DIRECTION_LABELS.get(draft.direction or SignalDirection.BUY)}**\n"
                         "请回复一条消息设置规则，直接用一句话描述即可，例如：\n"
-                        "**规则 60天回撤超过30%，近10天横盘，MA5和MA10首次金叉**\n"
-                        "或使用标准写法（多个规则用「；」分隔）：\n"
-                        f"**{_RULES_EXAMPLE}**\n"
-                        f"{_RULES_TYPE_HINT}"
+                        "**规则 在指定股票池内依次筛选事件次数、首次回撤和均线条件，并输出审计字段**\n"
+                        "系统会把整句话编译成通用计算计划，不需要从固定类型中选择。"
                     ),
                 },
             }
@@ -436,7 +418,8 @@ def build_draft_card(
                     "content": (
                         f"策略名称：**{draft.name}**\n"
                         f"建议方向：**{DIRECTION_LABELS.get(draft.direction or SignalDirection.BUY)}**\n"
-                        f"**规则：**\n{format_strategy_rules(draft_strategy_view(draft))}"
+                        f"**规则：**\n{format_strategy_rules(draft_strategy_view(draft))}\n\n"
+                        "保存前可回复：**试算规则 2026-09-01 至 2026-09-22**"
                     ),
                 },
             }
@@ -490,6 +473,7 @@ def draft_strategy_view(draft: StrategyDraft) -> StrategyConfig:
         name=draft.name or "未命名策略",
         direction=draft.direction or SignalDirection.BUY,
         rules=draft.rules,
+        compiled_rule=draft.compiled_rule,
         creator_open_id=draft.owner_open_id,
         enabled=False,
         notification_chat_id=draft.chat_id,
@@ -503,7 +487,14 @@ def build_strategy_list_card(strategies: list[StrategyConfig]) -> Dict[str, Any]
     elements: list[Dict[str, Any]] = [
         {
             "tag": "div",
-            "text": {"tag": "lark_md", "content": "您已保存的策略："},
+            "text": {
+                "tag": "lark_md",
+                "content": (
+                    "您已保存的策略：\n"
+                    "区间试算：**试算规则 规则名称 YYYY-MM-DD 至 YYYY-MM-DD**\n"
+                    "文本删除：**删除规则 规则名称或规则标识**"
+                ),
+            },
         }
     ]
     for strategy in strategies:
@@ -516,6 +507,7 @@ def build_strategy_list_card(strategies: list[StrategyConfig]) -> Dict[str, Any]
                     "tag": "lark_md",
                     "content": (
                         f"**{strategy.name}**（{DIRECTION_LABELS[strategy.direction]}，{status}）\n"
+                        f"规则标识：`{strategy.id}`\n"
                         f"{format_strategy_rules(strategy)}"
                     ),
                 },
@@ -592,7 +584,9 @@ def build_strategy_saved_card(strategy: StrategyConfig) -> Dict[str, Any]:
                     "tag": "lark_md",
                     "content": (
                         f"策略 **{strategy.name}** 已保存并启用，"
-                        "每日扫描完成后会自动推送结果卡片。"
+                        "每日扫描完成后会自动推送结果卡片。\n"
+                        "可回复：**试算规则 "
+                        f"{strategy.name} YYYY-MM-DD 至 YYYY-MM-DD**"
                     ),
                 },
             },
@@ -646,6 +640,7 @@ class StrategyInteractionCoordinator:
         chat_id: str,
         prompt: str,
         request_id: str = "",
+        conversation: Optional[list[AnalysisConversationTurn]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Handle one strategy text command and return the reply card."""
         text = prompt.strip()
@@ -659,6 +654,19 @@ class StrategyInteractionCoordinator:
             return self._list_card(sender_open_id)
         if STRATEGY_RUN_COMMAND_PATTERN.match(text):
             return self._run_all(sender_open_id, request_id)
+        delete = STRATEGY_DELETE_COMMAND_PATTERN.match(text)
+        if delete is not None:
+            return self._delete_strategy_by_target(
+                sender_open_id,
+                delete.group("target").strip(),
+            )
+        trial = STRATEGY_TRIAL_COMMAND_PATTERN.match(text)
+        if trial is not None:
+            return self._run_trial(
+                sender_open_id,
+                (trial.group("body") or "").strip(),
+                request_id,
+            )
         if STRATEGY_CANCEL_DRAFT_COMMAND_PATTERN.match(text):
             return self._cancel_latest_draft(sender_open_id)
         name = STRATEGY_NAME_COMMAND_PATTERN.match(text)
@@ -666,7 +674,11 @@ class StrategyInteractionCoordinator:
             return self._apply_name(sender_open_id, name.group("name").strip())
         rules = STRATEGY_RULES_COMMAND_PATTERN.match(text)
         if rules is not None:
-            return self._apply_rules(sender_open_id, rules.group("spec").strip())
+            return self._apply_rules(
+                sender_open_id,
+                rules.group("spec").strip(),
+                conversation=conversation,
+            )
         return build_notice_card("策略助手", "未识别的策略指令。")
 
     def handle_card_action(
@@ -704,12 +716,6 @@ class StrategyInteractionCoordinator:
             )
         if action_name == "strategy_draft_save":
             return self._save_draft(operator_open_id, str(value.get("draft_id", "")))
-        if action_name == "strategy_rules_candidate":
-            return self._apply_rules_candidate(
-                operator_open_id,
-                str(value.get("draft_id", "")),
-                str(value.get("text", "")),
-            )
         if action_name == "strategy_toggle":
             return self._toggle_strategy(
                 operator_open_id,
@@ -792,7 +798,13 @@ class StrategyInteractionCoordinator:
         self._store.put_draft(updated, owner_open_id)
         return build_draft_card(updated)
 
-    def _apply_rules(self, owner_open_id: str, spec: str) -> Dict[str, Any]:
+    def _apply_rules(
+        self,
+        owner_open_id: str,
+        spec: str,
+        *,
+        conversation: Optional[list[AnalysisConversationTurn]] = None,
+    ) -> Dict[str, Any]:
         draft = self._latest_draft(owner_open_id)
         if draft is None:
             return build_notice_card(
@@ -803,43 +815,46 @@ class StrategyInteractionCoordinator:
         try:
             rules = parse_rule_spec(spec)
         except RuleSpecError as exc:
-            return self._compile_or_suggest(draft, spec, str(exc))
+            return self._compile_or_suggest(
+                draft,
+                spec,
+                str(exc),
+                conversation=conversation,
+            )
         return self._store_rules(draft, rules)
 
     def _compile_or_suggest(
-        self, draft: StrategyDraft, spec: str, error: str
+        self,
+        draft: StrategyDraft,
+        spec: str,
+        local_error: str,
+        *,
+        conversation: Optional[list[AnalysisConversationTurn]],
     ) -> Dict[str, Any]:
-        """Fall back from the strict DSL to LLM compilation or option buttons."""
+        """Fall back from the legacy shorthand parser to general plan compilation."""
         compiled: Optional[RuleCompileResult] = None
         if self._compiler is not None:
             try:
-                compiled = self._compiler.compile(spec)
+                compiled = self._compiler.compile(spec, conversation=conversation)
             except Exception:
                 compiled = None
-        if compiled is not None and compiled.rules:
-            return self._store_rules(draft, compiled.rules)
-        candidates: list[str] = []
-        if compiled is not None and compiled.candidates:
-            # Only offer candidates that the deterministic parser accepts.
-            candidates = [
-                text
-                for text in compiled.candidates
-                if self._parses(text)
-            ]
-        return build_rule_options_card(draft, spec, candidates, error=error)
+        if compiled is not None and compiled.compiled_rule is not None:
+            return self._store_compiled_rule(draft, compiled.compiled_rule)
+        return build_rule_issue_card(
+            draft,
+            spec,
+            local_error=local_error,
+            clarification_options=(
+                compiled.clarification_options if compiled is not None else []
+            ),
+            limitations=(compiled.limitations if compiled is not None else []),
+        )
 
-    @staticmethod
-    def _parses(text: str) -> bool:
-        try:
-            parse_rule_spec(text)
-        except RuleSpecError:
-            return False
-        return True
-
-    def _store_rules(self, draft: StrategyDraft, rules: list) -> Dict[str, Any]:
+    def _store_rules(self, draft: StrategyDraft, rules: list[Rule]) -> Dict[str, Any]:
         updated = draft.model_copy(
             update={
                 "rules": rules,
+                "compiled_rule": None,
                 "state": DraftState.READY,
                 "updated_at": self._now(),
             }
@@ -847,20 +862,22 @@ class StrategyInteractionCoordinator:
         self._store.put_draft(updated, draft.owner_open_id)
         return build_draft_card(updated)
 
-    def _apply_rules_candidate(
-        self, owner_open_id: str, draft_id: str, text: str
+    def _store_compiled_rule(
+        self,
+        draft: StrategyDraft,
+        compiled_rule: CompiledStrategyRule,
     ) -> Dict[str, Any]:
-        """Adopt one suggested interpretation chosen from the options card."""
-        draft = self._store.get_draft(draft_id, owner_open_id)
-        if draft is None:
-            return build_notice_card("策略配置", "草稿不存在或无权访问。")
-        if draft.state not in (DraftState.AWAITING_RULES, DraftState.READY):
-            return build_draft_card(draft, error="当前步骤不是设置规则。")
-        try:
-            rules = parse_rule_spec(text)
-        except RuleSpecError as exc:
-            return build_rule_options_card(draft, text, [], error=str(exc))
-        return self._store_rules(draft, rules)
+        """Persist one validated general plan in the active draft."""
+        updated = draft.model_copy(
+            update={
+                "rules": [],
+                "compiled_rule": compiled_rule,
+                "state": DraftState.READY,
+                "updated_at": self._now(),
+            }
+        )
+        self._store.put_draft(updated, draft.owner_open_id)
+        return build_draft_card(updated)
 
     def _save_draft(self, owner_open_id: str, draft_id: str) -> Dict[str, Any]:
         draft = self._store.get_draft(draft_id, owner_open_id)
@@ -876,6 +893,7 @@ class StrategyInteractionCoordinator:
             name=draft.name,
             direction=draft.direction,
             rules=draft.rules,
+            compiled_rule=draft.compiled_rule,
             creator_open_id=owner_open_id,
             enabled=True,
             notification_chat_id=draft.chat_id,
@@ -927,7 +945,87 @@ class StrategyInteractionCoordinator:
         if strategy is None:
             return build_notice_card("策略列表", "策略不存在或无权访问。")
         self._store.delete_strategy(strategy_id, owner_open_id)
-        return self._list_card(owner_open_id)
+        return build_notice_card(
+            "规则已删除",
+            f"已删除规则 **{strategy.name}**（`{strategy.id}`）。",
+            template="green",
+        )
+
+    def _delete_strategy_by_target(
+        self, owner_open_id: str, target: str
+    ) -> Dict[str, Any]:
+        """Delete one owned strategy by exact identifier or unique exact name."""
+        strategies = self._store.list_strategies(owner_open_id)
+        direct = next((strategy for strategy in strategies if strategy.id == target), None)
+        if direct is not None:
+            return self._delete_strategy(owner_open_id, direct.id)
+        matches = [
+            strategy
+            for strategy in strategies
+            if strategy.name == target
+        ]
+        if len(matches) == 1:
+            return self._delete_strategy(owner_open_id, matches[0].id)
+        if not matches:
+            return build_notice_card("删除规则", "没有找到同名或同标识的规则。")
+        identities = "\n".join(
+            f"- {strategy.name}：`{strategy.id}`" for strategy in matches
+        )
+        return build_notice_card(
+            "删除规则",
+            "存在多条同名规则，请使用精确标识删除：\n" + identities,
+            template="orange",
+        )
+
+    def _run_trial(
+        self,
+        owner_open_id: str,
+        body: str,
+        request_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Run a named saved rule or the latest draft over one explicit range."""
+        if self._scanner is None:
+            return build_notice_card("规则试算", "策略扫描器未配置，无法试算。")
+        match = _TRIAL_DATE_PATTERN.match(body)
+        if match is None:
+            return build_notice_card(
+                "规则试算",
+                "格式：试算规则 [规则名称] YYYY-MM-DD 至 YYYY-MM-DD",
+            )
+        start_date = match.group("start").replace("-", "")
+        end_date = match.group("end").replace("-", "")
+        name = (match.group("name") or "").strip()
+        strategy: Optional[StrategyConfig] = None
+        if name:
+            matches = [
+                item
+                for item in self._store.list_strategies(owner_open_id)
+                if item.name == name or item.id == name
+            ]
+            if len(matches) != 1:
+                return build_notice_card(
+                    "规则试算",
+                    "规则名称不存在或不唯一，请从「策略列表」复制精确规则标识。",
+                )
+            strategy = matches[0]
+        else:
+            draft = self._latest_draft(owner_open_id)
+            if draft is None or draft.compiled_rule is None:
+                return build_notice_card(
+                    "规则试算",
+                    "当前没有已编译的规则草稿，请提供已保存规则名称。",
+                )
+            strategy = draft_strategy_view(draft)
+        try:
+            self._scanner.run_trial(
+                strategy,
+                start_date,
+                end_date,
+                request_id or "trial",
+            )
+        except ValueError as exc:
+            return build_notice_card("规则试算", str(exc), template="orange")
+        return None
 
     def _run_all(self, owner_open_id: str, request_id: str) -> Optional[Dict[str, Any]]:
         if self._scanner is None:

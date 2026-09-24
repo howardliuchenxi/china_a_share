@@ -9,6 +9,7 @@ from china_a_share.core.contracts import (
     AnalysisTask,
     AnalysisTaskStatus,
     AnalysisTaskSubmission,
+    QueryPlan,
 )
 from china_a_share.discovery.strategy_interaction import (
     RuleSpecError,
@@ -17,6 +18,7 @@ from china_a_share.discovery.strategy_interaction import (
     parse_rule_spec,
 )
 from china_a_share.discovery.strategy_models import (
+    CompiledStrategyRule,
     CumulativeReturnRule,
     DraftState,
     DrawdownRule,
@@ -94,15 +96,24 @@ class FakeScanner:
         if self.failing:
             raise RuntimeError("strategy preview failed")
 
+    def run_trial(self, strategy, start_date, end_date, request_id):
+        self.calls.append(
+            ("trial", strategy.id, start_date, end_date, request_id)
+        )
+        if self.failing:
+            raise RuntimeError("strategy trial failed")
+
 
 class FakeCompiler:
     def __init__(self, result=None, raising=False):
         self.result = result
         self.raising = raising
         self.calls = []
+        self.conversations = []
 
-    def compile(self, text):
+    def compile(self, text, conversation=None):
         self.calls.append(text)
+        self.conversations.append(conversation or [])
         if self.raising:
             raise RuntimeError("compiler exploded")
         return self.result
@@ -117,6 +128,35 @@ def build_interaction(scanner=None, compiler=None):
         compiler=compiler,
     )
     return coordinator, store
+
+
+def compiled_rule(source_text="多阶段自然语言规则"):
+    plan = QueryPlan.model_validate(
+        {
+            "interpretation": "Execute the complete multi-stage screening rule.",
+            "queries": [
+                {
+                    "query_id": "result",
+                    "operation": "daily",
+                    "params": {"start_date": "20260901", "end_date": "20260922"},
+                    "fields": ["ts_code", "trade_date", "close"],
+                    "purpose": "Load the source rows.",
+                }
+            ],
+            "answer_contract": {
+                "result_query_id": "result",
+                "result_kind": "table",
+                "outputs": [
+                    {"field": "ts_code", "description": "Security code."}
+                ],
+            },
+        }
+    )
+    return CompiledStrategyRule.create(
+        source_text=source_text,
+        plan=plan,
+        anchor_date="20260922",
+    )
 
 
 def seed_draft_at_rules_step(coordinator, store, owner="ou_a", name="策略甲"):
@@ -350,7 +390,17 @@ def test_draft_and_strategy_isolation_between_users():
 
 def test_handles_prompt_matches_only_strategy_commands():
     coordinator, _ = build_interaction()
-    for command in ("新建策略", "策略列表", "运行规则", "取消草稿", "策略菜单", "策略名称 X", "规则 回撤 窗口=5 阈值=10%"):
+    for command in (
+        "新建策略",
+        "策略列表",
+        "运行规则",
+        "删除规则 大涨回撤列表",
+        "试算规则 大涨回撤列表 2026-09-01 至 2026-09-22",
+        "取消草稿",
+        "策略菜单",
+        "策略名称 X",
+        "规则 回撤 窗口=5 阈值=10%",
+    ):
         assert coordinator.handles_prompt(command) is True, command
     for research_text in (
         "帮我研究一下白酒板块近期的走势",
@@ -424,11 +474,84 @@ def test_toggle_and_delete_card_actions_refresh_list():
     assert "停用" in card_text(disabled_card)
     assert store.list_strategies("ou_a")[0].enabled is False
 
-    list_card = coordinator.handle_card_action(
+    deleted_card = coordinator.handle_card_action(
         "ou_a", "oc_chat", "strategy_delete", {"strategy_id": strategy.id}
     )
-    assert "还没有已保存的策略" in card_text(list_card)
+    assert "已删除规则" in card_text(deleted_card)
+    assert strategy.id in card_text(deleted_card)
     assert store.list_strategies("ou_a") == []
+
+
+def test_delete_rule_command_accepts_unique_name_and_exact_identifier():
+    coordinator, store = build_interaction()
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "待删除规则")
+    first = store.list_strategies("ou_a")[0]
+
+    by_name = coordinator.handle_message(
+        "ou_a", "oc_chat", "删除规则 待删除规则"
+    )
+    assert first.id in card_text(by_name)
+    assert store.list_strategies("ou_a") == []
+
+    save_strategy_via_draft(coordinator, store, "ou_a", "oc_chat", "另一条规则")
+    second = store.list_strategies("ou_a")[0]
+    by_id = coordinator.handle_message(
+        "ou_a", "oc_chat", f"删除规则 {second.id}"
+    )
+    assert "已删除" in card_text(by_id)
+    assert store.list_strategies("ou_a") == []
+
+
+def test_trial_command_runs_latest_compiled_draft_with_explicit_range():
+    from china_a_share.discovery.rule_compiler import RuleCompileResult
+
+    scanner = FakeScanner()
+    compiler = FakeCompiler(
+        result=RuleCompileResult(compiled_rule=compiled_rule())
+    )
+    coordinator, store = build_interaction(scanner, compiler)
+    draft = seed_draft_at_rules_step(coordinator, store, name="大涨回撤列表")
+    coordinator.handle_message("ou_a", "oc_chat", "规则 灵活的多阶段筛选")
+
+    response = coordinator.handle_message(
+        "ou_a",
+        "oc_chat",
+        "试算规则 2026-09-01 至 2026-09-22",
+        request_id="trial-1",
+    )
+
+    assert response is None
+    assert scanner.calls == [
+        ("trial", draft.draft_id, "20260901", "20260922", "trial-1")
+    ]
+
+
+def test_trial_command_runs_saved_rule_by_name():
+    from china_a_share.discovery.rule_compiler import RuleCompileResult
+
+    scanner = FakeScanner()
+    compiler = FakeCompiler(
+        result=RuleCompileResult(compiled_rule=compiled_rule())
+    )
+    coordinator, store = build_interaction(scanner, compiler)
+    draft = seed_draft_at_rules_step(coordinator, store, name="大涨回撤列表")
+    coordinator.handle_message("ou_a", "oc_chat", "规则 灵活的多阶段筛选")
+    coordinator.handle_card_action(
+        "ou_a", "oc_chat", "strategy_draft_save", {"draft_id": draft.draft_id}
+    )
+    saved = store.list_strategies("ou_a")[0]
+
+    response = coordinator.handle_message(
+        "ou_a",
+        "oc_chat",
+        "试算规则 大涨回撤列表 2026-09-15 至 2026-09-22",
+        request_id="trial-2",
+    )
+
+    assert response is None
+    assert scanner.calls == [
+        ("trial", saved.id, "20260915", "20260922", "trial-2")
+    ]
 
 
 def test_natural_language_rules_compile_to_validated_rules():
@@ -436,7 +559,7 @@ def test_natural_language_rules_compile_to_validated_rules():
 
     compiler = FakeCompiler(
         result=RuleCompileResult(
-            rules=[LimitUpRule(window=1)],
+            compiled_rule=compiled_rule("60天内跌掉三成后横盘，今天涨停"),
         )
     )
     coordinator, store = build_interaction(compiler=compiler)
@@ -449,15 +572,53 @@ def test_natural_language_rules_compile_to_validated_rules():
     assert compiler.calls == ["60天内跌掉三成后横盘，今天涨停"]
     draft = store.list_drafts("ou_a")[0]
     assert draft.state == DraftState.READY
-    assert draft.rules == [LimitUpRule(window=1)]
+    assert draft.rules == []
+    assert draft.compiled_rule is not None
+    assert draft.compiled_rule.source_text == "60天内跌掉三成后横盘，今天涨停"
 
 
-def test_unclear_rules_return_candidate_option_buttons():
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        (
+            "找到同一个行业涨停股数量大于等于5只，或者大于10%"
+            "（个股数量少于20只的行业）同时大于等于2只，间隔在10个交易日以内，"
+            "取最晚一日为触发日。给我列出其中的涨停股名字、涨停日期、涨幅、市值、是否st"
+        ),
+        (
+            "我在A中搜索，在最近10个交易日中（截止9.22）只出现过一次收盘涨幅超过5%的股票，"
+            "然后在这些股票中，寻找最新的收盘价第一次回撤到大涨当日盘中最低价1.03倍以下"
+            "或者大涨当日的前一日收盘价1.03倍以下的股票，然后在这些股票中找出大涨日的最高价"
+            "大于当日收盘时20日线值和60日线值的股票，给出列表，大涨回撤列表"
+        ),
+    ],
+)
+def test_reported_complex_rules_are_preserved_as_one_frozen_plan(prompt):
+    from china_a_share.discovery.rule_compiler import RuleCompileResult
+
+    compiler = FakeCompiler(
+        result=RuleCompileResult(compiled_rule=compiled_rule(prompt))
+    )
+    coordinator, store = build_interaction(compiler=compiler)
+    seed_draft_at_rules_step(coordinator, store)
+
+    card = coordinator.handle_message("ou_a", "oc_chat", f"规则 {prompt}")
+
+    assert "保存策略" in card_text(card)
+    assert "你的意思是不是下面之一" not in card_text(card)
+    stored = store.list_drafts("ou_a")[0].compiled_rule
+    assert stored is not None
+    assert stored.source_text == prompt
+    assert compiler.calls == [prompt]
+
+
+def test_unclear_rules_explain_ambiguity_without_candidate_option_buttons():
     from china_a_share.discovery.rule_compiler import RuleCompileResult
 
     compiler = FakeCompiler(
         result=RuleCompileResult(
-            candidates=["涨停", "涨停 窗口=3", "这不是有效DSL"],
+            clarification_options=["请明确股票集合A的构成。"],
+            limitations=["当前对话没有定义集合A。"],
         )
     )
     coordinator, store = build_interaction(compiler=compiler)
@@ -465,58 +626,36 @@ def test_unclear_rules_return_candidate_option_buttons():
 
     card = coordinator.handle_message("ou_a", "oc_chat", "规则 最近交易日涨停")
     text = card_text(card)
-    # Only the two DSL-parseable candidates become buttons; the junk one is dropped.
-    assert "涨停 窗口=3" in text
-    assert "这不是有效DSL" not in text
-    assert "补充描述" in text
-    # The draft itself is unchanged and still waiting for rules.
+    assert "请明确股票集合A" in text
+    assert "当前对话没有定义集合A" in text
+    assert "你的意思是不是下面之一" not in text
+    assert not any(
+        value.get("action") == "strategy_rules_candidate"
+        for value in button_values(card)
+    )
     assert store.get_draft(draft.draft_id, "ou_a").state == DraftState.AWAITING_RULES
 
-    adopted = coordinator.handle_card_action(
-        "ou_a",
-        "oc_chat",
-        "strategy_rules_candidate",
-        {"draft_id": draft.draft_id, "text": "涨停 窗口=3"},
-    )
-    assert "保存策略" in card_text(adopted)
-    updated = store.get_draft(draft.draft_id, "ou_a")
-    assert updated.state == DraftState.READY
-    assert updated.rules == [LimitUpRule(window=3)]
 
-
-def test_candidate_action_is_denied_for_other_users():
-    coordinator, store = build_interaction()
-    draft = seed_draft_at_rules_step(coordinator, store)
-
-    denied = coordinator.handle_card_action(
-        "ou_b",
-        "oc_chat",
-        "strategy_rules_candidate",
-        {"draft_id": draft.draft_id, "text": "涨停"},
-    )
-    assert "无权访问" in card_text(denied)
-
-
-def test_uncompilable_rules_show_supported_vocabulary():
+def test_uncompilable_rules_report_failure_without_fixed_vocabulary():
     compiler = FakeCompiler(result=None)
     coordinator, store = build_interaction(compiler=compiler)
     seed_draft_at_rules_step(coordinator, store)
 
     card = coordinator.handle_message("ou_a", "oc_chat", "规则 成交量放大十倍")
     text = card_text(card)
-    assert "暂时没有接近的候选" in text
-    assert "回撤" in text and "金叉" in text and "涨停" in text
-    assert "补充描述" in text
+    assert "暂时不可用" in text
+    assert "支持的类型" not in text
+    assert "你的意思是不是下面之一" not in text
     assert store.list_drafts("ou_a")[0].state == DraftState.AWAITING_RULES
 
 
-def test_compiler_failure_falls_back_to_options_card():
+def test_compiler_failure_falls_back_to_precise_issue_card():
     compiler = FakeCompiler(raising=True)
     coordinator, store = build_interaction(compiler=compiler)
     seed_draft_at_rules_step(coordinator, store)
 
     card = coordinator.handle_message("ou_a", "oc_chat", "规则 回撤 阈值=30%")
-    assert "条件解析" in card_text(card)
+    assert "规则需要补充" in card_text(card)
     assert store.list_drafts("ou_a")[0].state == DraftState.AWAITING_RULES
 
 
