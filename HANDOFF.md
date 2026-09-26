@@ -11,6 +11,13 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-26 · ZCode] 修复分层时序模型判断逻辑：条件日期绑定 + 倒推锚定纪律
+
+- 生产反馈（2026-09-26 群内，GCS task 423056c1…）：用户定义 v2.3 分层模型后问「603823，在8.10这一天 属于哪一层」，agent 两处逻辑错误——①拿查询日 L1 准入条件（当日 PE 超段上限）否决整条历史链条（把准入条件当持续在册条件，与「每层条件只限该层当日」冲突）；②默默执行「下穿当日须 cond 成立」的同日自相矛盾条件（cond 含 MA5>MA20，下穿即 MA5<MA20 → L5 恒空）而不上抛。
+- 修复（通用纪律，非特例）：`_developer_instructions` 新增 staged temporal models 段（glm_agent import 同一函数自动生效）——①每层准入条件只在该层自身事件日测试，查询日未过早期层准入不得推翻既有链（除非模型明示每日重筛）；②判断某日所属层级＝倒推锚定：定位该日前最近一次转移、只在该转移自己的日期用当日 as-of 数据验证；③条款同日矛盾/互斥读法必须编号选项+推荐默认上抛，字面读法下恒空的层必须显式标记；④长链进 sandbox 逐日重放。措辞领域无关（测试负向断言锁住无 A 股词汇），符合 D-2026-09-20 提示词解耦决策。
+- 回归：test_feishu_agent.py 新增 live 用例（v2.3 总本逐字作对话历史 + 生产原句 prompt），断言失败签名（唯一阻断点/即被剔除）消失、必须倒推锚定或澄清菜单、执行时必须暴露同日矛盾；真 DeepSeek/Tushare 5 分 52 秒跑通。test_codex_agent.py 锁纪律锚点文本。
+- 遗留：自发现同类错误的「探针框架/影子巡检」与一键反馈闭环本次未做（用户明确本次仅修此问题）；答案证据化+机械校验是后续更强的形态。
+
 ## [2026-09-23 · Codex] Freeze and replay flexible natural-language strategies
 
 - Replaced lossy fixed-type suggestion buttons with compilation through the validated general `QueryPlan`; saved strategies now retain the exact source text, interpretation, immutable plan, anchor date, and SHA-256 fingerprint.

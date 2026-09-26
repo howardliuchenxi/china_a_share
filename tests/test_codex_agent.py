@@ -9,6 +9,7 @@ from china_a_share.codex_agent import (
     CODEX_TURN_TIMEOUT_SECONDS,
     CodexFeishuAgentRuntime,
     _build_research_visualization,
+    _developer_instructions,
     _normalize_token_usage,
     _run_turn_with_progress,
     _safe_artifact_filename_stem,
@@ -35,6 +36,28 @@ class FakeSandbox:
 
 class FakeApprovalMode:
     deny_all = "deny-all"
+
+
+def test_developer_instructions_bind_staged_model_conditions_to_their_own_dates():
+    """Reported regression: level-judgment queries re-tested earlier stages'
+    entry conditions against the query date and silently executed a stage
+    condition that contradicts its own trigger day, instead of anchoring
+    backward and surfacing the contradiction."""
+    instructions = _developer_instructions()
+
+    assert "date-bound evaluation" in instructions
+    assert "own occurrence date" in instructions
+    assert "anchor backward" in instructions
+    assert "most recent transition on or before that date" in instructions
+    assert "each date's own as-of data" in instructions
+    assert "same-day contradictions" in instructions
+    assert "cannot hold on its own trigger day by construction" in instructions
+    assert "numbered interpretation choices" in instructions
+    assert "permanently empty" in instructions
+    assert "day by day in the Python sandbox" in instructions
+    # The discipline stays generic: no market-domain vocabulary creeps in.
+    for domain_token in ("市盈率", "均线", "下穿", "MA5", "PE"):
+        assert domain_token not in instructions
 
 
 def test_codex_turn_timeout_is_six_hours_and_interrupts_the_turn(monkeypatch):
