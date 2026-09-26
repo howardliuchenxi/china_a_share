@@ -23,8 +23,7 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, Response
 
 from .application.workflow import (
     BACKGROUND_TASK_REQUIRED_ERROR_CODE,
@@ -71,12 +70,6 @@ from .feishu import FeishuEventError, FeishuResearchBot
 from .feishu_agent import FeishuAgentTask, research_visualization_token_hash
 
 
-FRONTEND_DIST = Path(
-    os.getenv(
-        "FRONTEND_DIST",
-        str(Path(__file__).resolve().parents[2] / "frontend" / "dist"),
-    )
-)
 ANALYSIS_API_ROUTE = "/api/analysis"
 ANALYSIS_TASK_API_ROUTE = "/api/analysis/tasks"
 HEALTH_API_ROUTE = "/api/health"
@@ -88,9 +81,6 @@ UI_FEEDBACK_CHAT_API_ROUTE = "/api/ui-feedback/chat"
 LIVE_CASES_API_ROUTE = "/api/e2e-cases"
 FEISHU_EVENTS_API_ROUTE = "/api/integrations/feishu/events"
 RESEARCH_VISUALIZATION_API_ROUTE = "/api/research/visualizations"
-RESEARCH_PAGE_ROUTE = "/research"
-ANALYSIS_PAGE_ROUTE = "/analysis"
-BASIC_PAGE_ROUTE = "/basic"
 MONITORED_API_ROUTES = {
     ANALYSIS_API_ROUTE,
     HEALTH_API_ROUTE,
@@ -956,42 +946,6 @@ def create_app(
                     error=ServiceError(source="system", message=str(exc)),
                 ).model_dump(mode="json"),
             )
-
-    if FRONTEND_DIST.is_dir():
-        @application.get("/", include_in_schema=False)
-        def redirect_to_analysis() -> RedirectResponse:
-            """Redirect the site root to the primary analysis page."""
-            return RedirectResponse(
-                url=ANALYSIS_PAGE_ROUTE,
-                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            )
-
-        @application.get(BASIC_PAGE_ROUTE, include_in_schema=False)
-        def redirect_basic_to_analysis() -> RedirectResponse:
-            """Redirect the legacy basic-data path to the unified page."""
-            return RedirectResponse(
-                url=ANALYSIS_PAGE_ROUTE,
-                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            )
-
-        @application.get(ANALYSIS_PAGE_ROUTE, include_in_schema=False)
-        def frontend_page() -> FileResponse:
-            """Serve the unified frontend entry point."""
-            return FileResponse(FRONTEND_DIST / "index.html")
-
-        @application.get(
-            f"{RESEARCH_PAGE_ROUTE}/{{task_id}}",
-            include_in_schema=False,
-        )
-        def research_visualization_page(task_id: str) -> FileResponse:
-            """Serve the viewer shell without exposing protected research data."""
-            return FileResponse(FRONTEND_DIST / "index.html")
-
-        application.mount(
-            "/",
-            StaticFiles(directory=FRONTEND_DIST, html=True),
-            name="frontend",
-        )
 
     return application
 

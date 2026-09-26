@@ -50,8 +50,8 @@ CLOUDSDK_PYTHON := $(shell \
 
 help:
 	printf '%s\n' \
-		'make check   Build the frontend; backend release tests are temporarily disabled.' \
-		'make full-check  Build the frontend and run every backend test.' \
+		'make check   Release gate; backend release tests are temporarily disabled by operator request.' \
+		'make full-check  Run every backend test.' \
 		'make install-hooks  Enable the repository-managed Git hooks.' \
 		'make live-check  Run paid live cases only with ALLOW_PAID_LIVE_TESTS=1.' \
 		'make pre-push  Run the complete local release gate.' \
@@ -60,12 +60,10 @@ help:
 		'make release Merge the current branch into main, then deploy that exact commit.'
 
 check:
-	npm --prefix frontend run build
 	# Backend release tests are temporarily disabled by operator request.
 	# .venv/bin/python -m pytest $(FEISHU_TEST_FILES)
 
 full-check:
-	npm --prefix frontend run build
 	.venv/bin/python -m pytest
 
 install-hooks:

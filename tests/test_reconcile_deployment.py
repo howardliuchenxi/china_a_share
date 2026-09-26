@@ -55,7 +55,7 @@ def test_fetch_comparison_status_uses_deployed_commit_as_base(monkeypatch):
         return FakeResponse(
             {
                 "status": "ahead",
-                "files": [{"filename": "frontend/src/App.tsx"}],
+                "files": [{"filename": "src/china_a_share/api.py"}],
             }
         )
 
@@ -68,7 +68,7 @@ def test_fetch_comparison_status_uses_deployed_commit_as_base(monkeypatch):
     )
 
     assert status == "ahead"
-    assert changed_paths == ("frontend/src/App.tsx",)
+    assert changed_paths == ("src/china_a_share/api.py",)
     assert requested_urls == [
         (
             "https://api.github.com/repos/owner/repository/compare/"

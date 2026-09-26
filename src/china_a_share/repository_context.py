@@ -14,7 +14,6 @@ RUNTIME_REPOSITORY_ROOT = Path("/app/repository")
 LOCAL_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIRECTORIES = (
     "src",
-    "frontend/src",
     "tests",
     ".github/workflows",
 )

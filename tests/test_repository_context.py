@@ -30,20 +30,12 @@ def test_repository_source_search_returns_line_numbered_matching_evidence(tmp_pa
         ),
         encoding="utf-8",
     )
-    frontend_root = tmp_path / "frontend" / "src"
-    frontend_root.mkdir(parents=True)
-    (frontend_root / "App.tsx").write_text(
-        '<section data-feedback-id="results-panel">Result</section>',
-        encoding="utf-8",
-    )
-
     evidence = RepositorySourceSearch(tmp_path).search(
         chat_request("no deterministic local transform or aggregation")
     )
 
     assert "SOURCE src/china_a_share/workflow.py" in evidence
     assert "2:     message =" in evidence
-    assert "SOURCE frontend/src/App.tsx" in evidence
 
 
 def test_repository_source_search_caches_only_allowlisted_files(tmp_path):

@@ -160,18 +160,6 @@ steps:
             raise RuntimeError(f"Start notification was rejected: {payload}")
         print("Feishu start notification sent.")
 
-  - id: frontend-check
-    name: node:22-alpine
-    entrypoint: sh
-    args:
-      - -ceu
-      - |
-        test "$$(cat /workspace/deployment-action)" = deploy || exit 0
-        corepack enable
-        cd frontend
-        pnpm install --frozen-lockfile
-        pnpm run build
-
   - id: backend-check
     name: python:3.12-slim
     entrypoint: sh

@@ -3,7 +3,6 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-import china_a_share.api as api_module
 from china_a_share.api import create_app
 from china_a_share.client import TushareApiError
 from china_a_share.core.contracts import (
@@ -987,19 +986,3 @@ def test_stock_endpoint_maps_provider_failure_to_502():
     }
 
 
-def test_frontend_routes_serve_the_unified_page(tmp_path, monkeypatch):
-    index_file = tmp_path / "index.html"
-    index_file.write_text("<html><body>A-Share Lab</body></html>", encoding="utf-8")
-    monkeypatch.setattr(api_module, "FRONTEND_DIST", tmp_path)
-    client = TestClient(create_app(FakeAnalysisService()))
-
-    root_response = client.get("/", follow_redirects=False)
-    analysis_response = client.get("/analysis")
-    basic_response = client.get("/basic", follow_redirects=False)
-
-    assert root_response.status_code == 307
-    assert root_response.headers["location"] == "/analysis"
-    assert analysis_response.status_code == 200
-    assert analysis_response.text == "<html><body>A-Share Lab</body></html>"
-    assert basic_response.status_code == 307
-    assert basic_response.headers["location"] == "/analysis"

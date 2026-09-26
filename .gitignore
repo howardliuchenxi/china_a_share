@@ -7,12 +7,7 @@ __pycache__/
 .env
 *.swp
 data/*.csv
-frontend/node_modules
 node_modules
-frontend/dist/
-frontend/*.tsbuildinfo
-frontend/vite.config.js
-frontend/vite.config.d.ts
 dist/
 build/
 *.egg-info/
@@ -25,7 +20,5 @@ build/
 .loop/logs/*.log
 
 # Playwright
-frontend/test-results/
-frontend/.playwright/
 google-cloud-sdk/
 google-cloud-sdk/

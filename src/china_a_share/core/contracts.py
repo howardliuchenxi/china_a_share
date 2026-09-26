@@ -2752,7 +2752,7 @@ class UiFeedbackRequest(BaseModel):
         min_length=1,
         max_length=100,
         pattern=r"^[a-z0-9][a-z0-9_-]*$",
-        description="Stable frontend component identifier nearest the selection.",
+        description="Stable UI component identifier nearest the selection.",
     )
     selected_text: str = Field(
         default="",
@@ -2813,7 +2813,7 @@ class UiFeedbackChatRequest(BaseModel):
         min_length=1,
         max_length=100,
         pattern=r"^[a-z0-9][a-z0-9_-]*$",
-        description="Stable frontend component identifier nearest the selection.",
+        description="Stable UI component identifier nearest the selection.",
     )
     selected_text: str = Field(
         min_length=1,
@@ -2854,7 +2854,7 @@ class UiFeedbackConfig(BaseModel):
     )
     google_client_id: str = Field(
         default="",
-        description="Public Google Web OAuth client identifier used by the frontend.",
+        description="Public Google Web OAuth client identifier for administrator sign-in.",
     )
     git_branch: str = Field(
         default="",

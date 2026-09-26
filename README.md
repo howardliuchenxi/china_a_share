@@ -165,15 +165,6 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
 
-Install and build the frontend:
-
-```bash
-cd frontend
-pnpm install
-pnpm run build
-cd ..
-```
-
 ## Run locally
 
 Start the combined production-style application:
@@ -182,20 +173,9 @@ Start the combined production-style application:
 a-share-web
 ```
 
-Open [http://127.0.0.1:8000/analysis](http://127.0.0.1:8000/analysis) for
-data analysis or [http://127.0.0.1:8000/basic](http://127.0.0.1:8000/basic) for
-reference data. The root path redirects to `/analysis`.
-
-For frontend development, keep the backend running and start Vite separately:
-
-```bash
-cd frontend
-pnpm run dev
-```
-
-Open [http://127.0.0.1:5173/analysis](http://127.0.0.1:5173/analysis) or
-[http://127.0.0.1:5173/basic](http://127.0.0.1:5173/basic). Vite proxies
-`/api` to the Python backend on port `8000`.
+The API listens on [http://127.0.0.1:8000](http://127.0.0.1:8000); the
+Feishu group chat is the primary interaction surface, and the bounded API
+routes under `/api` serve the agent runtime directly.
 
 ## Feishu research bot
 
@@ -269,9 +249,8 @@ existing Cloud Storage cache bucket.
 
 ## Deploy to Google Cloud Run
 
-The repository includes a multi-stage `Dockerfile`. It builds the React
-frontend and serves the resulting files from the same FastAPI container, so a
-deployment exposes only one HTTPS service.
+The repository includes a `Dockerfile` that packages the FastAPI backend
+and the Feishu research agent into one HTTPS service.
 
 The verified live-resource inventory, IAM boundaries, lifecycle policies, and
 cost posture are maintained in
@@ -309,7 +288,7 @@ make release
 ```
 
 `make deploy` accepts only a clean local `main` whose commit exactly matches
-`origin/main`. It builds the frontend, deploys that commit to the existing Cloud
+`origin/main`. It deploys that commit to the existing Cloud
 Run service, records the full Git commit in the service and worker environments,
 updates the private research sandbox and asynchronous analysis Cloud Run Job to
 the same immutable image, reapplies their scoped IAM and task lifecycle
@@ -457,13 +436,6 @@ bounded worker threads, and consumes real upstream API quota. The
 can raise that total to 500, and production regressions add their own calls. The
 default test suite skips the external cases so routine tests remain deterministic
 and offline.
-
-Validate the frontend production build:
-
-```bash
-cd frontend
-pnpm run build
-```
 
 ## Current limitations
 

@@ -28,7 +28,7 @@ def configure_logging() -> None:
 
 
 def main() -> None:
-    """Serve the API and built frontend on one address."""
+    """Serve the API on one address."""
     configure_logging()
     host, port = server_address()
     uvicorn.run(
