@@ -261,10 +261,16 @@ def build_query_plan_system_prompt(
 class DeepSeekQueryPlanner:
     """Convert natural language into a query plan using DeepSeek."""
 
-    def __init__(self, api_key: str, session: Optional[Any] = None) -> None:
-        """Store the required credential and an optional injectable HTTP session."""
+    def __init__(
+        self,
+        api_key: str,
+        session: Optional[Any] = None,
+        retry_delay_seconds: float = DEEPSEEK_RETRY_DELAY_SECONDS,
+    ) -> None:
+        """Store the required credential, an optional injectable HTTP session, and the inter-attempt backoff."""
         self._api_key = api_key
         self._session = session if session is not None else requests.Session()
+        self._retry_delay_seconds = retry_delay_seconds
 
     @property
     def name(self) -> str:
@@ -386,7 +392,7 @@ class DeepSeekQueryPlanner:
                 last_error = exc
                 feedback = self._build_contract_feedback(exc)
                 if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
-                    sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
+                    sleep(self._retry_delay_seconds)
                     continue
                 break
 
@@ -492,7 +498,7 @@ class DeepSeekQueryPlanner:
                 return plan
 
             if attempt + 1 < DEEPSEEK_MAX_ATTEMPTS:
-                sleep(DEEPSEEK_RETRY_DELAY_SECONDS)
+                sleep(self._retry_delay_seconds)
 
         if valid_candidates:
             selected = self._select_best_candidate(valid_candidates)

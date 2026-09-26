@@ -1013,7 +1013,7 @@ def test_planner_parses_deepseek_json_plan():
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Count stocks."),
         [DataOperation(name="daily", description="Daily prices.")],
     )
@@ -1056,7 +1056,7 @@ def test_planner_retries_one_contract_invalid_response():
         ]
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Count stocks."),
         [DataOperation(name="daily", description="Daily prices.")],
     )
@@ -1084,7 +1084,7 @@ def test_planner_revises_invalid_requirement_status_with_structured_feedback():
         ]
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Count stocks."),
         [DataOperation(name="daily", description="Daily prices.")],
     )
@@ -1134,7 +1134,7 @@ def test_planner_replans_semantic_rejection_with_complete_candidate():
             raise PlanValidationError("Operation is outside the provider catalog.")
         return plan
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan_validated(
         AnalysisRequest(prompt="Count stocks."),
         [DataOperation(name="daily", description="Daily prices.")],
         reject_once,
@@ -1198,7 +1198,7 @@ def test_planner_can_converge_across_contract_and_capability_rejections():
             raise PlanValidationError("Constraint references an unknown query.")
         return plan
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan_validated(
         AnalysisRequest(prompt="Run one multi-stage analysis."),
         [DataOperation(name="daily", description="Daily prices.")],
         reject_first_valid_candidate,
@@ -1249,7 +1249,7 @@ def test_planner_selects_contract_fidelity_over_extra_outputs():
         ]
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan_validated(
         AnalysisRequest(prompt="Return two related market measures."),
         [DataOperation(name="daily", description="Daily prices.")],
         lambda plan: plan,
@@ -1456,7 +1456,7 @@ def test_planner_stops_after_three_identical_valid_complex_candidates():
         ]
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan_validated(
         AnalysisRequest(prompt="Return two related market measures."),
         [DataOperation(name="daily", description="Daily prices.")],
         lambda plan: plan,
@@ -1506,7 +1506,7 @@ def test_planner_final_retry_can_return_contextual_clarification_options():
         ]
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan_validated(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan_validated(
         AnalysisRequest(prompt="Rank one ambiguous metric."),
         [DataOperation(name="daily", description="Daily prices.")],
         lambda plan: plan,
@@ -1536,7 +1536,7 @@ def test_planner_normalizes_null_pipeline_collections_to_defaults():
         ],
     }
 
-    result = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+    result = DeepSeekQueryPlanner("test-key", retry_delay_seconds=0).normalize_and_validate_plan(
         json.dumps(plan)
     )
 
@@ -1567,7 +1567,7 @@ def test_planner_replaces_first_last_period_return_aggregation():
         ],
     }
 
-    result = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+    result = DeepSeekQueryPlanner("test-key", retry_delay_seconds=0).normalize_and_validate_plan(
         json.dumps(plan)
     )
 
@@ -1596,7 +1596,7 @@ def test_planner_inserts_shift_for_missing_previous_margin_field():
         ],
     }
 
-    result = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+    result = DeepSeekQueryPlanner("test-key", retry_delay_seconds=0).normalize_and_validate_plan(
         json.dumps(plan)
     )
 
@@ -1638,7 +1638,7 @@ def test_planner_retries_with_field_level_contract_feedback():
         ]
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Count stocks."),
         [DataOperation(name="daily", description="Daily prices.")],
     )
@@ -1670,7 +1670,7 @@ def test_planner_normalizes_derive_comparison_to_compare_scalar():
         )
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Find positive returns."),
         [DataOperation(name="daily", description="Daily prices.")],
     )
@@ -1701,7 +1701,7 @@ def test_planner_normalizes_pipeline_syntax_across_operations():
             },
         ],
     }
-    planner = DeepSeekQueryPlanner("test-key")
+    planner = DeepSeekQueryPlanner("test-key", retry_delay_seconds=0)
 
     result = planner.normalize_and_validate_plan(json.dumps(plan))
 
@@ -1748,7 +1748,7 @@ def test_planner_normalizes_event_summary_syntax():
             },
         ],
     }
-    planner = DeepSeekQueryPlanner("test-key")
+    planner = DeepSeekQueryPlanner("test-key", retry_delay_seconds=0)
 
     result = planner.normalize_and_validate_plan(json.dumps(plan))
 
@@ -1878,7 +1878,7 @@ def test_planner_compiles_materially_different_conditional_counts():
         ],
     }
 
-    normalized = DeepSeekQueryPlanner("test-key").normalize_and_validate_plan(
+    normalized = DeepSeekQueryPlanner("test-key", retry_delay_seconds=0).normalize_and_validate_plan(
         json.dumps(plan)
     )
 
@@ -1983,7 +1983,7 @@ def test_planner_preserves_a_valid_event_study_aggregation():
             },
         ],
     }
-    planner = DeepSeekQueryPlanner("test-key")
+    planner = DeepSeekQueryPlanner("test-key", retry_delay_seconds=0)
 
     result = planner.normalize_and_validate_plan(json.dumps(plan))
 
@@ -2078,6 +2078,7 @@ def test_planner_retries_with_semantic_validation_feedback():
     result = DeepSeekQueryPlanner(
         "test-key",
         session=session,
+        retry_delay_seconds=0,
     ).plan_validated(
         AnalysisRequest(prompt="Count stocks."),
         [DataOperation(name="daily", description="Daily prices.")],
@@ -2130,6 +2131,7 @@ def test_planner_retries_when_answer_contract_is_omitted(caplog):
         result = DeepSeekQueryPlanner(
             "test-key",
             session=session,
+            retry_delay_seconds=0,
         ).plan_validated(
             AnalysisRequest(prompt="Return the requested fields."),
             [DataOperation(name="daily", description="Daily prices.")],
@@ -2209,7 +2211,7 @@ def test_planner_accepts_limit_up_query_with_native_limit_type():
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="昨天涨停多少只股票，分别是哪些？"),
         [
             DataOperation(
@@ -2275,7 +2277,7 @@ def test_planner_repairs_model_generated_limit_up_filter_and_code_count():
         )
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="昨天涨停多少只股票，分别是哪些？"),
         [DataOperation(name="limit_list_d", description="Daily limit list.")],
     )
@@ -5614,7 +5616,7 @@ def test_planner_downgrades_known_unexecutable_or_proxy_plan(
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Run the requested screen."),
         [DataOperation(name=operation, description="Provider operation.")],
     )
@@ -5650,7 +5652,7 @@ def test_planner_accepts_fixed_non_top10_float_retail_proxy():
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="分析这只股票的散户比例。"),
         [
             DataOperation(
@@ -5780,7 +5782,7 @@ def test_planner_preserves_universe_query_for_generic_retail_ranking_pipeline():
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="查找散户比例最高的10只A股股票。"),
         [
             DataOperation(name="stock_basic", description="A-share universe."),
@@ -6826,7 +6828,7 @@ def test_planner_normalizes_fields_misplaced_in_params():
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Count stocks."),
         [DataOperation(name="daily", description="Daily prices.")],
     )
@@ -6863,7 +6865,7 @@ def test_planner_splits_multi_security_float_holder_query():
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
 
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Compare three securities."),
         [DataOperation(name="top10_floatholders", description="Float holders.")],
     )
@@ -6905,7 +6907,7 @@ def test_split_float_holder_queries_still_respect_plan_query_limit():
     session = FakeSession(
         FakeResponse({"choices": [{"message": {"content": plan.model_dump_json()}}]})
     )
-    result = DeepSeekQueryPlanner("test-key", session=session).plan(
+    result = DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
         AnalysisRequest(prompt="Retrieve nine securities."),
         [DataOperation(name="top10_floatholders", description="Float holders.")],
     )
@@ -6918,7 +6920,7 @@ def test_planner_converts_network_failure_to_displayable_error():
     session = FakeSession(exception=requests.ConnectionError("network unavailable"))
 
     try:
-        DeepSeekQueryPlanner("test-key", session=session).plan(
+        DeepSeekQueryPlanner("test-key", session=session, retry_delay_seconds=0).plan(
             AnalysisRequest(prompt="Count stocks."),
             [DataOperation(name="daily", description="Daily prices.")],
         )
