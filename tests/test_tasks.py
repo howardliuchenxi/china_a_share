@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from china_a_share.core.contracts import (
     AnalysisRequest,
@@ -13,6 +14,12 @@ from china_a_share.core.contracts import (
     QueryResult,
     QueryStatus,
 )
+from china_a_share.feishu_agent import (
+    FeishuAgentRequest,
+    FeishuAgentTask,
+    FeishuDeliveryRecord,
+)
+from china_a_share.research_manifest import new_research_manifest
 from china_a_share.tasks import (
     AnalysisTaskCoordinator,
     CloudStorageAnalysisTaskStore,
@@ -98,19 +105,42 @@ class FakeAuthorizedSession:
 
 
 class FakeStorageBlob:
-    def __init__(self):
+    def __init__(self, name):
+        self.name = name
         self.uploads = []
         self.artifact_content = None
         self.content = None
+        self.generation = None
 
-    def upload_from_string(self, payload, *, content_type, retry):
+    def upload_from_string(
+        self,
+        payload,
+        *,
+        content_type,
+        retry,
+        if_generation_match=None,
+    ):
+        if if_generation_match == 0 and self.generation is not None:
+            raise PreconditionFailed("object already exists")
+        if (
+            if_generation_match not in {None, 0}
+            and if_generation_match != self.generation
+        ):
+            raise PreconditionFailed("object generation changed")
         self.content = payload
+        self.generation = (self.generation or 0) + 1
         self.uploads.append((payload, content_type, retry))
 
     def upload_from_filename(self, filename, *, content_type, retry):
         with open(filename, "rb") as handle:
             self.artifact_content = handle.read()
+        self.generation = (self.generation or 0) + 1
         self.uploads.append((filename, content_type, retry))
+
+    def reload(self, *, retry):
+        assert retry is not None
+        if not self.exists():
+            raise NotFound("object does not exist")
 
     def exists(self):
         return self.artifact_content is not None or self.content is not None
@@ -119,8 +149,7 @@ class FakeStorageBlob:
         assert retry is not None
         return self.artifact_content if self.artifact_content is not None else self.content
 
-    def download_as_text(self, *, retry):
-        assert retry is not None
+    def download_as_text(self, *, retry=None):
         if isinstance(self.content, bytes):
             return self.content.decode("utf-8")
         return self.content
@@ -131,7 +160,7 @@ class FakeStorageBucket:
         self.blobs = {}
 
     def blob(self, object_name):
-        return self.blobs.setdefault(object_name, FakeStorageBlob())
+        return self.blobs.setdefault(object_name, FakeStorageBlob(object_name))
 
 
 class FakeStorageClient:
@@ -498,3 +527,145 @@ def test_cloud_storage_store_round_trips_promoted_session_workspace():
 
     assert store.promote_session_workspace("chat:session", "agent-task") is True
     assert store.get_session_workspace("chat:session") == result
+
+
+def test_cloud_storage_store_atomically_claims_and_releases_feishu_task(monkeypatch):
+    client = FakeStorageClient()
+    store = CloudStorageAnalysisTaskStore("bucket", storage_client=client)
+    monkeypatch.setattr(store, "_wait_for_write_slot", lambda _object_name: None)
+    now = datetime.now(timezone.utc)
+    task = FeishuAgentTask(
+        task_id="agent-task",
+        status=AnalysisTaskStatus.QUEUED,
+        request=FeishuAgentRequest(
+            prompt="Research one market question.",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    claimed = store.claim_feishu_task(
+        task.task_id,
+        "worker-1",
+        now + timedelta(hours=1),
+    )
+    duplicate = store.claim_feishu_task(
+        task.task_id,
+        "worker-2",
+        now + timedelta(hours=1),
+    )
+
+    assert claimed is not None
+    assert claimed.status == AnalysisTaskStatus.RUNNING
+    assert claimed.execution_lease_owner == "worker-1"
+    assert claimed.execution_attempt_count == 1
+    assert duplicate is None
+
+    claimed.progress_message = "Research is running."
+    store.put_claimed_feishu_task(
+        claimed,
+        "worker-1",
+        now + timedelta(hours=2),
+    )
+    store.release_feishu_task(claimed, "worker-1")
+
+    released = store.get(task.task_id)
+    assert released.execution_lease_owner is None
+    assert released.execution_lease_expires_at is None
+    assert released.progress_message == "Research is running."
+
+
+def test_memory_store_claims_successful_task_only_for_pending_outbox():
+    store = MemoryAnalysisTaskStore()
+    now = datetime.now(timezone.utc)
+    task = FeishuAgentTask(
+        task_id="agent-task",
+        status=AnalysisTaskStatus.SUCCEEDED,
+        request=FeishuAgentRequest(
+            prompt="Completed research.",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    assert store.claim_feishu_task(
+        task.task_id,
+        "worker-1",
+        now + timedelta(hours=1),
+    ) is None
+
+    task.delivery_outbox = [
+        FeishuDeliveryRecord(
+            delivery_id="terminal-artifact",
+            kind="artifact",
+            status="failed",
+            target_message_id="message",
+            content_sha256="a" * 64,
+            artifact_name="result.xlsx",
+            attempt_count=1,
+            created_at=now,
+            updated_at=now,
+        )
+    ]
+    store.put(task)
+    claimed = store.claim_feishu_task(
+        task.task_id,
+        "worker-1",
+        now + timedelta(hours=1),
+    )
+
+    assert claimed is not None
+    assert claimed.status == AnalysisTaskStatus.SUCCEEDED
+    assert store.claim_feishu_task(
+        task.task_id,
+        "worker-2",
+        now + timedelta(hours=1),
+    ) is None
+
+
+def test_memory_store_reclaims_legacy_running_task_without_lease():
+    store = MemoryAnalysisTaskStore()
+    now = datetime.now(timezone.utc)
+    task = FeishuAgentTask(
+        task_id="legacy-agent-task",
+        status=AnalysisTaskStatus.RUNNING,
+        request=FeishuAgentRequest(
+            prompt="Resume a task created before lease fields existed.",
+            conversation_id="conversation",
+            source_message_id="message",
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(task)
+
+    claimed = store.claim_feishu_task(
+        task.task_id,
+        "worker-1",
+        now + timedelta(hours=1),
+    )
+
+    assert claimed is not None
+    assert claimed.execution_lease_owner == "worker-1"
+    assert claimed.execution_attempt_count == 1
+
+
+def test_cloud_storage_store_round_trips_research_manifest():
+    client = FakeStorageClient()
+    store = CloudStorageAnalysisTaskStore("bucket", storage_client=client)
+    manifest = new_research_manifest("agent-task")
+
+    store.put_research_manifest(manifest)
+
+    restored = store.get_research_manifest("agent-task")
+    assert restored == manifest
+    assert (
+        "analysis-jobs/agent-task/research-manifest.json"
+        in client.bucket_instance.blobs
+    )

@@ -37,6 +37,7 @@ def test_worker_records_feishu_initialization_failure(monkeypatch):
 
     monkeypatch.setenv("ANALYSIS_TASK_ID", task.task_id)
     monkeypatch.setattr(worker, "Settings", FakeSettings)
+    monkeypatch.setattr(worker, "read_llm_preference", lambda _settings: None)
     monkeypatch.setattr(
         worker,
         "CloudStorageAnalysisTaskStore",

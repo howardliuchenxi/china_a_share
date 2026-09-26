@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import google.auth
 import requests
+from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.api_core.retry import Retry
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
@@ -32,7 +33,11 @@ from china_a_share.core.contracts import (
     ServiceError,
 )
 from china_a_share.core.ports import AnalysisTaskDispatcher, AnalysisTaskStore
-from china_a_share.feishu_agent import FeishuAgentTask
+from china_a_share.feishu_agent import (
+    FeishuAgentTask,
+    has_retryable_terminal_deliveries,
+)
+from china_a_share.research_manifest import ResearchManifest
 
 
 ANALYSIS_TASK_PREFIX = "analysis-jobs"
@@ -66,6 +71,7 @@ class MemoryAnalysisTaskStore:
         self._latest_datasets: Dict[str, str] = {}
         self._final_datasets: Dict[str, str] = {}
         self._session_workspaces: Dict[str, tuple[str, str]] = {}
+        self._research_manifests: Dict[str, ResearchManifest] = {}
         self._lock = Lock()
 
     def get(
@@ -82,6 +88,101 @@ class MemoryAnalysisTaskStore:
         """Create or replace one task atomically."""
         with self._lock:
             self._tasks[task.task_id] = task.model_copy(deep=True)
+
+    def claim_feishu_task(
+        self,
+        task_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> Optional[FeishuAgentTask]:
+        """Atomically claim queued work or a running task with an expired lease."""
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not isinstance(task, FeishuAgentTask):
+                return None
+            reclaimable = task.status == AnalysisTaskStatus.RUNNING and (
+                (
+                    task.execution_lease_owner is None
+                    and task.execution_lease_expires_at is None
+                )
+                or (
+                    task.execution_lease_expires_at is not None
+                    and task.execution_lease_expires_at <= now
+                )
+            )
+            lease_available = (
+                task.execution_lease_owner is None
+                or (
+                    task.execution_lease_expires_at is not None
+                    and task.execution_lease_expires_at <= now
+                )
+            )
+            retryable_delivery = (
+                has_retryable_terminal_deliveries(task) and lease_available
+            )
+            if (
+                task.status != AnalysisTaskStatus.QUEUED
+                and not reclaimable
+                and not retryable_delivery
+            ):
+                return None
+            claimed = task.model_copy(deep=True)
+            if not retryable_delivery:
+                claimed.status = AnalysisTaskStatus.RUNNING
+            claimed.execution_lease_owner = lease_owner
+            claimed.execution_lease_expires_at = lease_expires_at
+            claimed.execution_attempt_count += 1
+            claimed.error = None
+            claimed.updated_at = now
+            self._tasks[task_id] = claimed.model_copy(deep=True)
+            return claimed
+
+    def put_claimed_feishu_task(
+        self,
+        task: FeishuAgentTask,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> None:
+        """Replace task state only while the same worker owns its lease."""
+        with self._lock:
+            current = self._tasks.get(task.task_id)
+            if (
+                not isinstance(current, FeishuAgentTask)
+                or current.execution_lease_owner != lease_owner
+            ):
+                raise RuntimeError("Feishu task execution lease is no longer owned.")
+            task.execution_lease_owner = lease_owner
+            task.execution_lease_expires_at = lease_expires_at
+            self._tasks[task.task_id] = task.model_copy(deep=True)
+
+    def release_feishu_task(
+        self,
+        task: FeishuAgentTask,
+        lease_owner: str,
+    ) -> None:
+        """Persist terminal state and clear the matching execution lease."""
+        with self._lock:
+            current = self._tasks.get(task.task_id)
+            if (
+                not isinstance(current, FeishuAgentTask)
+                or current.execution_lease_owner != lease_owner
+            ):
+                raise RuntimeError("Feishu task execution lease is no longer owned.")
+            task.execution_lease_owner = None
+            task.execution_lease_expires_at = None
+            self._tasks[task.task_id] = task.model_copy(deep=True)
+
+    def get_research_manifest(self, task_id: str) -> Optional[ResearchManifest]:
+        """Return an isolated manifest copy when the task has research evidence."""
+        with self._lock:
+            manifest = self._research_manifests.get(task_id)
+            return manifest.model_copy(deep=True) if manifest is not None else None
+
+    def put_research_manifest(self, manifest: ResearchManifest) -> None:
+        """Create or replace the task's bounded research-evidence manifest."""
+        with self._lock:
+            self._research_manifests[manifest.task_id] = manifest.model_copy(deep=True)
 
     def put_artifact(self, task_id: str, path: Path) -> None:
         """Persist one generated artifact for local tests."""
@@ -185,6 +286,121 @@ class CloudStorageAnalysisTaskStore:
             retry=STORAGE_WRITE_RETRY,
         )
 
+    def claim_feishu_task(
+        self,
+        task_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> Optional[FeishuAgentTask]:
+        """Atomically claim queued work through a Cloud Storage generation check."""
+        blob = self._bucket.blob(self._object_name(task_id))
+        try:
+            blob.reload(retry=STORAGE_WRITE_RETRY)
+        except NotFound:
+            return None
+        task = self._feishu_task_from_blob(blob)
+        now = datetime.now(timezone.utc)
+        reclaimable = task.status == AnalysisTaskStatus.RUNNING and (
+            (
+                task.execution_lease_owner is None
+                and task.execution_lease_expires_at is None
+            )
+            or (
+                task.execution_lease_expires_at is not None
+                and task.execution_lease_expires_at <= now
+            )
+        )
+        lease_available = (
+            task.execution_lease_owner is None
+            or (
+                task.execution_lease_expires_at is not None
+                and task.execution_lease_expires_at <= now
+            )
+        )
+        retryable_delivery = (
+            has_retryable_terminal_deliveries(task) and lease_available
+        )
+        if (
+            task.status != AnalysisTaskStatus.QUEUED
+            and not reclaimable
+            and not retryable_delivery
+        ):
+            return None
+        if not retryable_delivery:
+            task.status = AnalysisTaskStatus.RUNNING
+        task.execution_lease_owner = lease_owner
+        task.execution_lease_expires_at = lease_expires_at
+        task.execution_attempt_count += 1
+        task.error = None
+        task.updated_at = now
+        try:
+            self._upload_task_with_generation(blob, task, blob.generation)
+        except PreconditionFailed:
+            return None
+        return task
+
+    def put_claimed_feishu_task(
+        self,
+        task: FeishuAgentTask,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> None:
+        """Persist progress only when the caller still owns the stored lease."""
+        blob = self._bucket.blob(self._object_name(task.task_id))
+        try:
+            blob.reload(retry=STORAGE_WRITE_RETRY)
+        except NotFound as exc:
+            raise RuntimeError(f"Feishu task does not exist: {task.task_id}") from exc
+        current = self._feishu_task_from_blob(blob)
+        if current.execution_lease_owner != lease_owner:
+            raise RuntimeError("Feishu task execution lease is no longer owned.")
+        task.execution_lease_owner = lease_owner
+        task.execution_lease_expires_at = lease_expires_at
+        try:
+            self._upload_task_with_generation(blob, task, blob.generation)
+        except PreconditionFailed as exc:
+            raise RuntimeError("Feishu task changed during a leased write.") from exc
+
+    def release_feishu_task(
+        self,
+        task: FeishuAgentTask,
+        lease_owner: str,
+    ) -> None:
+        """Persist terminal state and clear a matching Cloud Storage lease."""
+        blob = self._bucket.blob(self._object_name(task.task_id))
+        try:
+            blob.reload(retry=STORAGE_WRITE_RETRY)
+        except NotFound as exc:
+            raise RuntimeError(f"Feishu task does not exist: {task.task_id}") from exc
+        current = self._feishu_task_from_blob(blob)
+        if current.execution_lease_owner != lease_owner:
+            raise RuntimeError("Feishu task execution lease is no longer owned.")
+        task.execution_lease_owner = None
+        task.execution_lease_expires_at = None
+        try:
+            self._upload_task_with_generation(blob, task, blob.generation)
+        except PreconditionFailed as exc:
+            raise RuntimeError("Feishu task changed while releasing its lease.") from exc
+
+    def get_research_manifest(self, task_id: str) -> Optional[ResearchManifest]:
+        """Return the task's independently persisted research manifest."""
+        blob = self._bucket.blob(self._research_manifest_object_name(task_id))
+        if not blob.exists():
+            return None
+        return ResearchManifest.model_validate_json(
+            blob.download_as_text(retry=STORAGE_WRITE_RETRY)
+        )
+
+    def put_research_manifest(self, manifest: ResearchManifest) -> None:
+        """Replace one bounded manifest without contending with progress writes."""
+        object_name = self._research_manifest_object_name(manifest.task_id)
+        self._wait_for_write_slot(object_name)
+        self._bucket.blob(object_name).upload_from_string(
+            manifest.model_dump_json(),
+            content_type="application/json",
+            retry=STORAGE_WRITE_RETRY,
+        )
+
     def put_artifact(self, task_id: str, path: Path) -> None:
         """Persist one generated artifact within the task lifecycle prefix."""
         object_name = self._artifact_object_name(task_id, path.name)
@@ -283,6 +499,31 @@ class CloudStorageAnalysisTaskStore:
         MemoryAnalysisTaskStore._validate_dataset_identity(task_id, dataset_id)
         return dataset_id
 
+    @staticmethod
+    def _feishu_task_from_blob(blob: storage.Blob) -> FeishuAgentTask:
+        """Parse one already reloaded blob and reject non-agent task records."""
+        task = FeishuAgentTask.model_validate_json(
+            blob.download_as_text(retry=STORAGE_WRITE_RETRY)
+        )
+        return task
+
+    def _upload_task_with_generation(
+        self,
+        blob: storage.Blob,
+        task: FeishuAgentTask,
+        generation: Optional[int],
+    ) -> None:
+        """Write task state only when the previously loaded generation still wins."""
+        if generation is None:
+            raise RuntimeError("Cloud Storage task generation is unavailable.")
+        self._wait_for_write_slot(blob.name)
+        blob.upload_from_string(
+            task.model_dump_json(),
+            content_type="application/json",
+            retry=STORAGE_WRITE_RETRY,
+            if_generation_match=generation,
+        )
+
     def _wait_for_write_slot(self, object_name: str) -> None:
         """Reserve a per-object write slot without throttling unrelated tasks."""
         now = time.monotonic()
@@ -324,6 +565,12 @@ class CloudStorageAnalysisTaskStore:
         if kind not in {"latest", "final"}:
             raise ValueError("Dataset pointer kind is unsupported.")
         return f"{ANALYSIS_TASK_PREFIX}/{task_id}/datasets/{kind}.txt"
+
+    @staticmethod
+    def _research_manifest_object_name(task_id: str) -> str:
+        """Return the private task-scoped research-manifest object name."""
+        MemoryAnalysisTaskStore._validate_artifact_identity(task_id, "manifest")
+        return f"{ANALYSIS_TASK_PREFIX}/{task_id}/research-manifest.json"
 
     @staticmethod
     def _session_workspace_object(conversation_id: str) -> str:

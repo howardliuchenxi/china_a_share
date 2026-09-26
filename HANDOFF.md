@@ -11,6 +11,14 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-25 · Codex] Add idempotent Feishu execution and research evidence manifests
+
+- Added atomic Cloud Storage generation-guarded task leases, legacy running-task recovery, and duplicate-worker suppression without changing normal progress or terminal message content.
+- Added a durable terminal delivery outbox; successful research and all delivery intents are stored together, failed text or workbook delivery receives one bounded retry without rerunning research, and viewer bearer tokens are never persisted.
+- Added task result fingerprints plus an executor-owned `ResearchManifest` covering dataset sources, validated parameters, dates, units, formulas, missing counts/rates, completeness evidence, code revision, and answer/artifact hashes.
+- Existing task JSON remains readable through defaults. Targeted reliability/unit checks passed (57 passed, 6 skipped); the complete suite reached 954 passed / 133 skipped with one pre-existing concurrent-call ordering assertion, which passed on isolated rerun.
+- No paid live provider/model case was needed because the change is persistence and delivery infrastructure rather than a production-reported research prompt; no cloud resources or deployment were changed.
+
 ## [2026-09-23 · Codex] Freeze and replay flexible natural-language strategies
 
 - Replaced lossy fixed-type suggestion buttons with compilation through the validated general `QueryPlan`; saved strategies now retain the exact source text, interpretation, immutable plan, anchor date, and SHA-256 fingerprint.

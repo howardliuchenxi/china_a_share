@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 import os
 import re
@@ -424,6 +425,77 @@ def test_toolbox_restores_session_dataset_and_archives_follow_up_result(tmp_path
     restored = store.get_session_workspace("chat:session")
     assert restored is not None
     assert restored.rows == ranked["preview"]
+    manifest = store.get_research_manifest("agent-task")
+    assert manifest is not None
+    assert manifest.final_dataset_id == ranked["dataset_id"]
+    assert [evidence.dataset_id for evidence in manifest.datasets] == [
+        "session_dataset",
+        ranked["dataset_id"],
+    ]
+
+
+def test_toolbox_persists_machine_readable_dataset_evidence_without_raw_code():
+    class UnitProvider(FakeProvider):
+        def validate_query(self, operation, params, fields):
+            assert operation == "daily"
+            assert params == {"trade_date": "20260916"}
+            assert fields == ["ts_code", "amount"]
+
+        def query(self, operation, params, fields, **_kwargs):
+            self.validate_query(operation, params, fields)
+            return pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "amount": 860_000.0},
+                    {"ts_code": "600000.SH", "amount": None},
+                ]
+            )
+
+    class EchoSandbox:
+        def run(self, _code, datasets):
+            return datasets["dataset_1"].copy()
+
+    store = MemoryAnalysisTaskStore()
+    toolbox = ResearchToolbox(
+        UnitProvider(),
+        "request-1",
+        python_sandbox=EchoSandbox(),
+        dataset_archive=store,
+        task_id="agent-task",
+    )
+    queried = toolbox.call(
+        "query_market_data",
+        {
+            "operation": "daily",
+            "params": {"trade_date": "20260916"},
+            "fields": ["ts_code", "amount"],
+        },
+        lambda _stage, _message: None,
+    )
+    raw_code = 'result = datasets["dataset_1"].copy()  # private analysis logic'
+    analyzed = toolbox.call(
+        "run_python_analysis",
+        {
+            "dataset_ids": [queried["dataset_id"]],
+            "code": raw_code,
+        },
+        lambda _stage, _message: None,
+    )
+
+    manifest = store.get_research_manifest("agent-task")
+
+    assert manifest is not None
+    assert len(manifest.datasets) == 2
+    query_evidence, python_evidence = manifest.datasets
+    assert query_evidence.operation_parameters == {"trade_date": "20260916"}
+    assert query_evidence.requested_fields == ["ts_code", "amount"]
+    assert query_evidence.row_count == 2
+    assert query_evidence.missing_value_counts == {"ts_code": 0, "amount": 1}
+    assert query_evidence.missing_value_rates == {"ts_code": 0.0, "amount": 0.5}
+    assert query_evidence.field_units == {"amount": "thousands of CNY (千元)"}
+    assert python_evidence.dataset_id == analyzed["dataset_id"]
+    assert python_evidence.source_dataset_ids == [queried["dataset_id"]]
+    assert len(python_evidence.operation_parameters["code_sha256"]) == 64
+    assert raw_code not in manifest.model_dump_json()
 
 
 def test_transform_tool_exposes_complete_pipeline_contract():
@@ -617,6 +689,176 @@ def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):
     assert sink.files == [("message-1", artifact_path)]
     assert store.get_artifact("agent-task", "result.xlsx") == b"xlsx"
     assert isinstance(store.get("agent-task"), FeishuAgentTask)
+    assert completed.execution_attempt_count == 1
+    assert completed.execution_lease_owner is None
+    assert completed.research_manifest is not None
+    assert completed.result_fingerprint == completed.research_manifest.output_fingerprint
+    assert len(completed.result_fingerprint) == 64
+    assert {record.delivery_id: record.status for record in completed.delivery_outbox} == {
+        "terminal-answer": "sent",
+        "terminal-artifact": "sent",
+    }
+
+
+def test_agent_coordinator_rejects_a_duplicate_worker_during_execution():
+    store = MemoryAnalysisTaskStore()
+    coordinator = FeishuAgentCoordinator(store, RecordingDispatcher())
+    task = coordinator.submit(
+        FeishuAgentRequest(
+            prompt="Research without duplicate execution.",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        task_id="agent-task",
+    )
+    duplicate_sink = RecordingSink()
+
+    class NeverRuntime:
+        def run(self, _request, _progress):
+            raise AssertionError("A duplicate worker must not execute research.")
+
+    class ReentrantRuntime:
+        calls = 0
+
+        def run(self, _request, _progress):
+            self.calls += 1
+            duplicate = coordinator.run(task.task_id, NeverRuntime(), duplicate_sink)
+            assert duplicate.status == AnalysisTaskStatus.RUNNING
+            return FeishuAgentOutcome(answer="One execution completed.")
+
+    runtime = ReentrantRuntime()
+    completed = coordinator.run(task.task_id, runtime, RecordingSink())
+
+    assert completed.status == AnalysisTaskStatus.SUCCEEDED
+    assert completed.execution_attempt_count == 1
+    assert runtime.calls == 1
+    assert duplicate_sink.messages == []
+    assert duplicate_sink.updates == []
+    assert duplicate_sink.files == []
+
+
+def test_agent_coordinator_persists_success_with_complete_outbox(tmp_path):
+    class ObservingStore(MemoryAnalysisTaskStore):
+        def __init__(self):
+            super().__init__()
+            self.successful_writes = []
+
+        def put_claimed_feishu_task(self, task, lease_owner, lease_expires_at):
+            if task.status == AnalysisTaskStatus.SUCCEEDED:
+                self.successful_writes.append(task.model_copy(deep=True))
+            super().put_claimed_feishu_task(task, lease_owner, lease_expires_at)
+
+    store = ObservingStore()
+    coordinator = FeishuAgentCoordinator(store, RecordingDispatcher())
+    task = coordinator.submit(
+        FeishuAgentRequest(
+            prompt="Persist every terminal intent with success.",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        task_id="agent-task",
+    )
+    artifact_path = tmp_path / "result.xlsx"
+    artifact_path.write_bytes(b"workbook")
+
+    class Runtime:
+        def run(self, _request, _progress):
+            return FeishuAgentOutcome(answer="Research completed.", artifact_path=artifact_path)
+
+    coordinator.run(task.task_id, Runtime(), RecordingSink())
+
+    first_success = store.successful_writes[0]
+    assert first_success.result_fingerprint is not None
+    assert {record.delivery_id: record.status for record in first_success.delivery_outbox} == {
+        "terminal-answer": "pending",
+        "terminal-artifact": "pending",
+    }
+
+
+def test_agent_coordinator_retries_artifact_outbox_without_research(tmp_path):
+    store = MemoryAnalysisTaskStore()
+    coordinator = FeishuAgentCoordinator(store, RecordingDispatcher())
+    task = coordinator.submit(
+        FeishuAgentRequest(
+            prompt="Research once and retry delivery only.",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        task_id="agent-task",
+    )
+    artifact_path = tmp_path / "result.xlsx"
+    artifact_path.write_bytes(b"durable-workbook")
+
+    class CountingRuntime:
+        calls = 0
+
+        def run(self, _request, _progress):
+            self.calls += 1
+            return FeishuAgentOutcome(
+                answer="Research completed.",
+                artifact_path=artifact_path,
+            )
+
+    class FailOnceFileSink(RecordingSink):
+        def __init__(self):
+            super().__init__()
+            self.file_attempts = 0
+            self.file_payloads = []
+
+        def reply_file(self, message_id, path):
+            self.file_attempts += 1
+            if self.file_attempts == 1:
+                raise RuntimeError("temporary file delivery failure")
+            self.file_payloads.append((message_id, path.read_bytes()))
+
+    runtime = CountingRuntime()
+    sink = FailOnceFileSink()
+    first = coordinator.run(task.task_id, runtime, sink)
+    first_fingerprint = first.result_fingerprint
+
+    assert first.status == AnalysisTaskStatus.SUCCEEDED
+    assert first.progress_message == "研究完成，但附件发送失败。"
+    assert any(
+        record.delivery_id == "terminal-artifact" and record.status == "failed"
+        for record in first.delivery_outbox
+    )
+
+    recovered = coordinator.run(task.task_id, runtime, sink)
+    unchanged = coordinator.run(task.task_id, runtime, sink)
+
+    assert runtime.calls == 1
+    assert sink.file_attempts == 2
+    assert sink.file_payloads == [("message-1", b"durable-workbook")]
+    assert recovered.progress_message == "研究完成。"
+    assert recovered.result_fingerprint == first_fingerprint
+    assert unchanged.execution_attempt_count == 2
+    assert any(
+        record.delivery_id == "terminal-artifact" and record.status == "sent"
+        for record in recovered.delivery_outbox
+    )
+
+
+def test_agent_task_accepts_records_created_before_reliability_fields():
+    parsed = FeishuAgentTask.model_validate(
+        {
+            "task_type": "feishu_agent",
+            "task_id": "historical-task",
+            "status": "queued",
+            "request": {
+                "prompt": "Historical request",
+                "conversation_id": "conversation",
+                "source_message_id": "message",
+            },
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+    )
+
+    assert parsed.execution_attempt_count == 0
+    assert parsed.execution_lease_owner is None
+    assert parsed.research_manifest is None
+    assert parsed.result_fingerprint is None
+    assert parsed.delivery_outbox == []
 
 
 def test_agent_coordinator_preserves_success_when_file_delivery_fails(tmp_path):

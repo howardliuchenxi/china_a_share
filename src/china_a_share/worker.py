@@ -16,7 +16,11 @@ from china_a_share.tasks import (
 )
 from china_a_share.core.contracts import AnalysisTaskStatus, DiscoveryTask, ServiceError
 from china_a_share.feishu import FeishuOpenApiClient
-from china_a_share.feishu_agent import FeishuAgentCoordinator, FeishuAgentTask
+from china_a_share.feishu_agent import (
+    FeishuAgentCoordinator,
+    FeishuAgentTask,
+    has_retryable_terminal_deliveries,
+)
 
 
 class WorkerDispatcher:
@@ -65,7 +69,14 @@ def main() -> None:
             task.updated_at = datetime.now(timezone.utc)
             store.put(task)
             raise
-        coordinator.run(task_id, runtime, progress_sink)
+        completed = coordinator.run(task_id, runtime, progress_sink)
+        if has_retryable_terminal_deliveries(completed):
+            # The result is already durable and will not be recomputed. Failing
+            # this execution asks Cloud Run Job's bounded retry to drain only the
+            # persisted terminal delivery outbox.
+            raise RuntimeError(
+                f"Feishu terminal delivery remains pending for task {task_id}."
+            )
     elif isinstance(task, DiscoveryTask):
         loop = create_evolution_loop(settings, store)
         loop.run(task_id)

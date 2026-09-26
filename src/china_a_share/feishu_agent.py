@@ -27,6 +27,14 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.result_pipeline import ResultPipelineExecutor
 from china_a_share.registry import data_recency_note, field_unit_notes_for
+from china_a_share.research_manifest import (
+    ResearchManifest,
+    finalize_research_manifest,
+    new_research_manifest,
+    record_dataset_evidence,
+    research_dataset_evidence,
+    select_final_dataset,
+)
 from china_a_share.security_links import (
     is_security_code_column,
     security_quote_page_url,
@@ -40,6 +48,8 @@ RESEARCH_VISUALIZATION_LINK_LIFETIME = timedelta(days=30)
 MIN_COLUMN_NOTE_CHARACTERS = 8
 MAX_COLUMN_NOTE_CHARACTERS = 400
 MAX_VISUALIZATION_METHODOLOGY_CHARACTERS = 6_000
+AGENT_EXECUTION_LEASE_DURATION = timedelta(hours=8)
+MAX_TERMINAL_DELIVERY_ATTEMPTS = 2
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +136,63 @@ class FeishuResearchVisualization(BaseModel):
     )
 
 
+class FeishuDeliveryRecord(BaseModel):
+    """One durable terminal delivery intent and its latest outcome."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_id: str = Field(
+        min_length=1,
+        description="Stable task-local identifier used to de-duplicate delivery.",
+    )
+    kind: Literal["text_reply", "text_update", "artifact"] = Field(
+        description="Feishu operation required to deliver the terminal content.",
+    )
+    status: Literal["pending", "sent", "failed", "skipped"] = Field(
+        description="Latest durable state of this delivery intent.",
+    )
+    target_message_id: str = Field(
+        min_length=1,
+        description="Source or application-authored message targeted by the delivery.",
+    )
+    content_sha256: str = Field(
+        min_length=64,
+        max_length=64,
+        description="SHA-256 digest that prevents an identifier from changing content.",
+    )
+    text: Optional[str] = Field(
+        default=None,
+        description="Non-secret semantic text retained for retry without recomputation.",
+    )
+    render_mode: Literal["plain", "terminal_with_visualization"] = Field(
+        default="plain",
+        description="Deterministic rendering mode applied when a text retry is sent.",
+    )
+    artifact_name: Optional[str] = Field(
+        default=None,
+        description="Persisted task artifact retried by this delivery intent.",
+    )
+    remote_message_id: Optional[str] = Field(
+        default=None,
+        description="Feishu message identifier returned for a successful reply.",
+    )
+    attempt_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of external delivery attempts already made.",
+    )
+    last_error: Optional[str] = Field(
+        default=None,
+        description="Most recent bounded delivery error for operator diagnosis.",
+    )
+    created_at: datetime = Field(description="UTC time when the intent was created.")
+    updated_at: datetime = Field(description="UTC time of the latest delivery change.")
+    delivered_at: Optional[datetime] = Field(
+        default=None,
+        description="UTC time when Feishu acknowledged successful delivery.",
+    )
+
+
 class FeishuAgentTask(BaseModel):
     """Durable lifecycle and output for one independent Feishu agent turn."""
 
@@ -153,6 +220,40 @@ class FeishuAgentTask(BaseModel):
         default=None,
         description="UTC time after which the viewer and workbook are unavailable.",
     )
+    execution_lease_owner: Optional[str] = Field(
+        default=None,
+        description="Opaque worker identifier holding the current execution lease.",
+    )
+    execution_lease_expires_at: Optional[datetime] = Field(
+        default=None,
+        description="UTC expiry after which an interrupted execution may be reclaimed.",
+    )
+    execution_attempt_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of workers that successfully claimed task execution.",
+    )
+    progress_message_id: Optional[str] = Field(
+        default=None,
+        description="Application-authored Feishu message reused for progress updates.",
+    )
+    progress_update_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of persisted updates made to the progress message.",
+    )
+    research_manifest: Optional[ResearchManifest] = Field(
+        default=None,
+        description="Machine-readable evidence and output fingerprints for this task.",
+    )
+    result_fingerprint: Optional[str] = Field(
+        default=None,
+        description="Stable digest of the request, evidence graph, and terminal outputs.",
+    )
+    delivery_outbox: List[FeishuDeliveryRecord] = Field(
+        default_factory=list,
+        description="Durable terminal text and artifact delivery intents.",
+    )
     error: Optional[ServiceError] = None
 
 
@@ -164,6 +265,25 @@ class AgentTaskStore(Protocol):
 
     def put(self, task: FeishuAgentTask) -> None:
         """Create or replace one task."""
+
+    def claim_feishu_task(
+        self,
+        task_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> Optional[FeishuAgentTask]:
+        """Atomically claim queued or expired Feishu task execution."""
+
+    def put_claimed_feishu_task(
+        self,
+        task: FeishuAgentTask,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> None:
+        """Persist one task only while the caller still owns its lease."""
+
+    def release_feishu_task(self, task: FeishuAgentTask, lease_owner: str) -> None:
+        """Persist terminal state and clear the caller's execution lease."""
 
     def put_artifact(self, task_id: str, path: Path) -> None:
         """Persist one generated artifact under its task identifier."""
@@ -182,6 +302,12 @@ class AgentTaskStore(Protocol):
 
     def get_session_workspace(self, conversation_id: str) -> Optional[QueryResult]:
         """Return the complete dataset currently active for one named session."""
+
+    def get_research_manifest(self, task_id: str) -> Optional[ResearchManifest]:
+        """Return incremental research evidence retained for one task."""
+
+    def put_research_manifest(self, manifest: ResearchManifest) -> None:
+        """Persist incremental research evidence independently of task progress."""
 
 
 class AgentTaskDispatcher(Protocol):
@@ -319,20 +445,49 @@ class FeishuAgentCoordinator:
         runtime: FeishuAgentRunner,
         progress_sink: AgentProgressSink,
     ) -> FeishuAgentTask:
-        """Execute one queued task and proactively report material stages."""
+        """Execute one atomically claimed task and persist terminal deliveries."""
         task = self.get(task_id)
         if task is None:
             raise KeyError(f"Feishu agent task does not exist: {task_id}")
-        if task.status in {AnalysisTaskStatus.RUNNING, AnalysisTaskStatus.SUCCEEDED}:
-            return task
+        lease_owner = uuid4().hex
+        claimed = self._store.claim_feishu_task(
+            task_id,
+            lease_owner,
+            datetime.now(timezone.utc) + AGENT_EXECUTION_LEASE_DURATION,
+        )
+        if claimed is None:
+            # Another worker owns a live lease, or the task has already reached a
+            # terminal state. Returning the latest record makes duplicate Cloud
+            # Run dispatches harmless without changing the worker contract.
+            latest = self.get(task_id)
+            if latest is None:
+                raise KeyError(f"Feishu agent task does not exist: {task_id}")
+            return latest
+        task = claimed
+
+        def persist_claimed() -> None:
+            self._store.put_claimed_feishu_task(
+                task,
+                lease_owner,
+                datetime.now(timezone.utc) + AGENT_EXECUTION_LEASE_DURATION,
+            )
+
+        if task.status == AnalysisTaskStatus.SUCCEEDED:
+            try:
+                return self._resume_terminal_deliveries(
+                    task,
+                    progress_sink,
+                    persist_claimed,
+                )
+            finally:
+                self._store.release_feishu_task(task, lease_owner)
 
         last_notified_progress: Optional[tuple[str, str]] = None
-        progress_message_id: Optional[str] = None
-        progress_update_count = 0
+        progress_message_id = task.progress_message_id
         source_withdrawn = False
 
-        def publish(message: str, *, terminal: bool = False) -> None:
-            nonlocal progress_message_id, progress_update_count, source_withdrawn
+        def publish_progress(message: str) -> None:
+            nonlocal progress_message_id, source_withdrawn
             if source_withdrawn:
                 return
             try:
@@ -341,13 +496,16 @@ class FeishuAgentCoordinator:
                         task.request.source_message_id,
                         message,
                     )
+                    task.progress_message_id = progress_message_id
+                    persist_claimed()
                     return
                 # Feishu limits edits per message. Reserve the final permitted edit
-                # for the terminal answer or failure while retaining task state.
-                if not terminal and progress_update_count >= MAX_AGENT_PROGRESS_UPDATES:
+                # for the durable terminal outbox while retaining task progress.
+                if task.progress_update_count >= MAX_AGENT_PROGRESS_UPDATES:
                     return
                 progress_sink.update(progress_message_id, message)
-                progress_update_count += 1
+                task.progress_update_count += 1
+                persist_claimed()
             except FeishuSourceMessageWithdrawnError:
                 # Once the source message is withdrawn every later delivery to it
                 # fails too; stop attempting and let the run decide to continue
@@ -362,19 +520,17 @@ class FeishuAgentCoordinator:
             task.stage = stage
             task.progress_message = message
             task.updated_at = datetime.now(timezone.utc)
-            self._store.put(task)
+            persist_claimed()
             progress = (stage, message)
             # Repeated tool calls may emit the same status, so suppress only exact
             # consecutive duplicates while preserving distinct progress details.
             if progress == last_notified_progress:
                 return
-            publish(message)
+            publish_progress(message)
             last_notified_progress = progress
 
-        task.status = AnalysisTaskStatus.RUNNING
-        task.error = None
-        report("planning", "正在理解问题并选择研究工具…")
         try:
+            report("planning", "正在理解问题并选择研究工具…")
             if source_withdrawn:
                 # The user withdrew the triggering message before any research
                 # started, so further work would bill the model invisibly.
@@ -442,45 +598,65 @@ class FeishuAgentCoordinator:
                     task_id,
                     task.request.conversation_id,
                 )
+
+            manifest = self._store.get_research_manifest(task_id)
+            if manifest is None:
+                manifest = new_research_manifest(task_id)
+            manifest = finalize_research_manifest(
+                manifest,
+                request=task.request.prompt,
+                answer=outcome.answer,
+                artifact_path=outcome.artifact_path,
+            )
+            self._store.put_research_manifest(manifest)
+            task.research_manifest = manifest
+            task.result_fingerprint = manifest.output_fingerprint
             task.status = AnalysisTaskStatus.SUCCEEDED
             task.stage = "completed"
             task.progress_message = "研究完成。"
             task.updated_at = datetime.now(timezone.utc)
-            self._store.put(task)
-            publish(terminal_message, terminal=True)
+            # Queue every terminal side effect in the same durable task write as
+            # success. A worker crash after this point can therefore retry delivery
+            # without either losing the intent or rerunning completed research.
+            self._queue_terminal_text(task, terminal_message)
+            if outcome.artifact_path is not None and outcome.artifact_path.exists():
+                self._queue_artifact_record(
+                    task,
+                    outcome.artifact_path.read_bytes(),
+                )
+            persist_claimed()
+
+            terminal_delivered = self._deliver_terminal_text(
+                task,
+                terminal_message,
+                progress_sink,
+                persist_claimed,
+                source_withdrawn=source_withdrawn,
+            )
+            artifact_delivered = True
             if outcome.artifact_path is not None:
-                try:
-                    progress_sink.reply_file(
-                        task.request.source_message_id,
-                        outcome.artifact_path,
-                    )
-                except FeishuSourceMessageWithdrawnError:
-                    # The answer text could not be delivered either once the
-                    # source message is withdrawn; keep success without noise.
-                    logger.info(
-                        "feishu_agent_artifact_delivery_skipped_withdrawn "
-                        "task_id=%s",
-                        task_id,
-                    )
-                except Exception:
-                    # The research result remains valid when only the external
-                    # attachment channel fails. Preserve success and keep the
-                    # textual answer visible instead of rewriting it as a model
-                    # or analysis failure.
-                    logger.exception(
-                        "feishu_agent_artifact_delivery_failed task_id=%s "
-                        "artifact=%s",
-                        task_id,
-                        outcome.artifact_path.name,
-                    )
-                    task.progress_message = "研究完成，但附件发送失败。"
-                    task.updated_at = datetime.now(timezone.utc)
-                    self._store.put(task)
-                    publish(
-                        outcome.answer
-                        + "\n\n研究已完成，但附件发送失败。请稍后回复“重试”重新生成附件。",
-                        terminal=True,
-                    )
+                artifact_delivered = self._deliver_terminal_artifact(
+                    task,
+                    progress_sink,
+                    persist_claimed,
+                    artifact_path=outcome.artifact_path,
+                    source_withdrawn=source_withdrawn,
+                )
+            if terminal_delivered and not artifact_delivered and not source_withdrawn:
+                task.progress_message = "研究完成，但附件发送失败。"
+                task.updated_at = datetime.now(timezone.utc)
+                persist_claimed()
+                self._deliver_text_record(
+                    task,
+                    delivery_id="artifact-failure-notice",
+                    text=(
+                        (task.answer or outcome.answer)
+                        + "\n\n研究已完成，但附件发送失败。请稍后回复“重试”重新生成附件。"
+                    ),
+                    progress_sink=progress_sink,
+                    persist=persist_claimed,
+                    source_withdrawn=False,
+                )
         except _FeishuSourceWithdrawnCancellation:
             logger.info(
                 "feishu_agent_cancelled_source_withdrawn task_id=%s", task_id
@@ -493,7 +669,7 @@ class FeishuAgentCoordinator:
                 message="Feishu source message was withdrawn; task cancelled.",
             )
             task.updated_at = datetime.now(timezone.utc)
-            self._store.put(task)
+            persist_claimed()
         except Exception as exc:
             logger.exception("feishu_agent_execution_failed task_id=%s", task_id)
             task.status = AnalysisTaskStatus.FAILED
@@ -501,9 +677,359 @@ class FeishuAgentCoordinator:
             task.progress_message = "研究任务失败。"
             task.error = ServiceError(source="system", message=str(exc))
             task.updated_at = datetime.now(timezone.utc)
-            self._store.put(task)
-            publish(f"研究任务失败：{exc}", terminal=True)
+            if progress_message_id is not None and not source_withdrawn:
+                self._deliver_text_record(
+                    task,
+                    delivery_id="terminal-failure",
+                    text=f"研究任务失败：{exc}",
+                    progress_sink=progress_sink,
+                    persist=persist_claimed,
+                    source_withdrawn=False,
+                )
+            else:
+                persist_claimed()
+        finally:
+            self._store.release_feishu_task(task, lease_owner)
         return task
+
+    def _deliver_terminal_text(
+        self,
+        task: FeishuAgentTask,
+        text: str,
+        progress_sink: AgentProgressSink,
+        persist: Callable[[], None],
+        *,
+        source_withdrawn: bool,
+    ) -> bool:
+        """Queue and attempt the terminal answer without changing its content."""
+        return self._deliver_text_record(
+            task,
+            delivery_id="terminal-answer",
+            text=text,
+            persisted_text=task.answer or text,
+            render_mode=(
+                "terminal_with_visualization"
+                if task.visualization is not None and self._public_app_url
+                else "plain"
+            ),
+            progress_sink=progress_sink,
+            persist=persist,
+            source_withdrawn=source_withdrawn,
+        )
+
+    def _queue_terminal_text(
+        self,
+        task: FeishuAgentTask,
+        text: str,
+    ) -> None:
+        """Queue the terminal answer before the task's successful state is stored."""
+        self._queue_text_record(
+            task,
+            delivery_id="terminal-answer",
+            text=task.answer or text,
+            render_mode=(
+                "terminal_with_visualization"
+                if task.visualization is not None and self._public_app_url
+                else "plain"
+            ),
+        )
+
+    def _queue_text_record(
+        self,
+        task: FeishuAgentTask,
+        *,
+        delivery_id: str,
+        text: str,
+        render_mode: Literal["plain", "terminal_with_visualization"],
+    ) -> tuple[FeishuDeliveryRecord, bool]:
+        """Return the stable text intent and whether it was newly inserted."""
+        target_message_id = task.progress_message_id or task.request.source_message_id
+        kind: Literal["text_reply", "text_update"] = (
+            "text_update" if task.progress_message_id else "text_reply"
+        )
+        content_sha256 = hashlib.sha256(
+            f"{render_mode}\0{text}".encode("utf-8")
+        ).hexdigest()
+        record = self._delivery_record(task, delivery_id)
+        if record is not None:
+            if record.content_sha256 != content_sha256:
+                raise ValueError(
+                    f"Delivery identifier changed content: {delivery_id}"
+                )
+            return record, False
+        now = datetime.now(timezone.utc)
+        record = FeishuDeliveryRecord(
+            delivery_id=delivery_id,
+            kind=kind,
+            status="pending",
+            target_message_id=target_message_id,
+            content_sha256=content_sha256,
+            text=text,
+            render_mode=render_mode,
+            created_at=now,
+            updated_at=now,
+        )
+        self._replace_delivery_record(task, record)
+        return record, True
+
+    def _deliver_text_record(
+        self,
+        task: FeishuAgentTask,
+        *,
+        delivery_id: str,
+        text: str,
+        persisted_text: Optional[str] = None,
+        render_mode: Literal["plain", "terminal_with_visualization"] = "plain",
+        progress_sink: AgentProgressSink,
+        persist: Callable[[], None],
+        source_withdrawn: bool,
+    ) -> bool:
+        """Persist a text intent before applying one reply or idempotent update."""
+        semantic_text = persisted_text if persisted_text is not None else text
+        record, created = self._queue_text_record(
+            task,
+            delivery_id=delivery_id,
+            text=semantic_text,
+            render_mode=render_mode,
+        )
+        if record.status in {"sent", "skipped"}:
+            return record.status == "sent"
+        if created:
+            persist()
+        if source_withdrawn:
+            record.status = "skipped"
+            record.updated_at = datetime.now(timezone.utc)
+            record.last_error = "Source message was withdrawn."
+            self._replace_delivery_record(task, record)
+            persist()
+            return False
+        record.status = "pending"
+        record.attempt_count += 1
+        record.updated_at = datetime.now(timezone.utc)
+        self._replace_delivery_record(task, record)
+        persist()
+        try:
+            if record.kind == "text_update":
+                progress_sink.update(record.target_message_id, text)
+            else:
+                record.remote_message_id = progress_sink.reply(
+                    record.target_message_id,
+                    text,
+                )
+        except FeishuSourceMessageWithdrawnError:
+            record.status = "skipped"
+            record.last_error = "Source message was withdrawn."
+        except Exception as exc:
+            logger.exception(
+                "feishu_agent_terminal_text_delivery_failed task_id=%s delivery_id=%s",
+                task.task_id,
+                delivery_id,
+            )
+            record.status = "failed"
+            record.last_error = str(exc)[:500]
+        else:
+            record.status = "sent"
+            record.last_error = None
+            record.delivered_at = datetime.now(timezone.utc)
+        record.updated_at = datetime.now(timezone.utc)
+        self._replace_delivery_record(task, record)
+        persist()
+        return record.status == "sent"
+
+    def _deliver_terminal_artifact(
+        self,
+        task: FeishuAgentTask,
+        progress_sink: AgentProgressSink,
+        persist: Callable[[], None],
+        *,
+        artifact_path: Optional[Path] = None,
+        source_withdrawn: bool,
+    ) -> bool:
+        """Persist and attempt one workbook delivery using archived bytes on retry."""
+        artifact_name = task.artifact_name
+        if artifact_name is None:
+            return True
+        record = self._delivery_record(task, "terminal-artifact")
+        artifact_bytes = (
+            artifact_path.read_bytes()
+            if artifact_path is not None and artifact_path.exists()
+            else self._store.get_artifact(task.task_id, artifact_name)
+        )
+        if artifact_bytes is None:
+            logger.error(
+                "feishu_agent_terminal_artifact_missing task_id=%s artifact=%s",
+                task.task_id,
+                artifact_name,
+            )
+            if record is not None:
+                record.status = "failed"
+                record.attempt_count = MAX_TERMINAL_DELIVERY_ATTEMPTS
+                record.last_error = "Persisted terminal artifact is unavailable."
+                record.updated_at = datetime.now(timezone.utc)
+                self._replace_delivery_record(task, record)
+                persist()
+            return False
+        record, created = self._queue_artifact_record(task, artifact_bytes)
+        if record.status in {"sent", "skipped"}:
+            return record.status == "sent"
+        if created:
+            persist()
+        if source_withdrawn:
+            record.status = "skipped"
+            record.updated_at = datetime.now(timezone.utc)
+            record.last_error = "Source message was withdrawn."
+            self._replace_delivery_record(task, record)
+            persist()
+            return False
+        record.status = "pending"
+        record.attempt_count += 1
+        record.updated_at = datetime.now(timezone.utc)
+        self._replace_delivery_record(task, record)
+        persist()
+        try:
+            if artifact_path is not None and artifact_path.exists():
+                progress_sink.reply_file(record.target_message_id, artifact_path)
+            else:
+                with tempfile.TemporaryDirectory(prefix="feishu-delivery-") as temp_dir:
+                    retry_path = Path(temp_dir) / artifact_name
+                    retry_path.write_bytes(artifact_bytes)
+                    progress_sink.reply_file(record.target_message_id, retry_path)
+        except FeishuSourceMessageWithdrawnError:
+            record.status = "skipped"
+            record.last_error = "Source message was withdrawn."
+        except Exception as exc:
+            logger.exception(
+                "feishu_agent_terminal_artifact_delivery_failed task_id=%s artifact=%s",
+                task.task_id,
+                artifact_name,
+            )
+            record.status = "failed"
+            record.last_error = str(exc)[:500]
+        else:
+            record.status = "sent"
+            record.last_error = None
+            record.delivered_at = datetime.now(timezone.utc)
+        record.updated_at = datetime.now(timezone.utc)
+        self._replace_delivery_record(task, record)
+        persist()
+        return record.status == "sent"
+
+    def _queue_artifact_record(
+        self,
+        task: FeishuAgentTask,
+        artifact_bytes: bytes,
+    ) -> tuple[FeishuDeliveryRecord, bool]:
+        """Return the immutable artifact intent and whether it was newly inserted."""
+        if task.artifact_name is None:
+            raise ValueError("Terminal artifact name is required before queueing.")
+        content_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+        record = self._delivery_record(task, "terminal-artifact")
+        if record is not None:
+            if record.content_sha256 != content_sha256:
+                raise ValueError("Terminal artifact changed after it was queued.")
+            return record, False
+        now = datetime.now(timezone.utc)
+        record = FeishuDeliveryRecord(
+            delivery_id="terminal-artifact",
+            kind="artifact",
+            status="pending",
+            target_message_id=task.request.source_message_id,
+            content_sha256=content_sha256,
+            artifact_name=task.artifact_name,
+            created_at=now,
+            updated_at=now,
+        )
+        self._replace_delivery_record(task, record)
+        return record, True
+
+    def _resume_terminal_deliveries(
+        self,
+        task: FeishuAgentTask,
+        progress_sink: AgentProgressSink,
+        persist: Callable[[], None],
+    ) -> FeishuAgentTask:
+        """Retry unsent terminal outbox records without rerunning research."""
+        retryable = [
+            record
+            for record in task.delivery_outbox
+            if record.status in {"pending", "failed"}
+            and record.attempt_count < MAX_TERMINAL_DELIVERY_ATTEMPTS
+        ]
+        for record in retryable:
+            if record.kind == "artifact":
+                delivered = self._deliver_terminal_artifact(
+                    task,
+                    progress_sink,
+                    persist,
+                    source_withdrawn=False,
+                )
+                if delivered and task.progress_message == "研究完成，但附件发送失败。":
+                    task.progress_message = "研究完成。"
+                    persist()
+                    if task.answer and task.progress_message_id:
+                        self._deliver_text_record(
+                            task,
+                            delivery_id="artifact-delivery-recovered",
+                            text=task.answer + "\n\n附件已自动补发成功。",
+                            progress_sink=progress_sink,
+                            persist=persist,
+                            source_withdrawn=False,
+                        )
+            elif record.text is not None:
+                retry_text = record.text
+                if record.render_mode == "terminal_with_visualization":
+                    token = secrets.token_urlsafe(32)
+                    task.visualization_token_hash = research_visualization_token_hash(
+                        token
+                    )
+                    task.visualization_expires_at = (
+                        datetime.now(timezone.utc)
+                        + RESEARCH_VISUALIZATION_LINK_LIFETIME
+                    )
+                    query = urlencode({"token": token})
+                    retry_text += (
+                        "\n\n研究结果页面（30天内有效，点击后直接查看）：\n"
+                        f"{self._public_app_url}/research/{task.task_id}?{query}"
+                    )
+                    persist()
+                self._deliver_text_record(
+                    task,
+                    delivery_id=record.delivery_id,
+                    text=retry_text,
+                    persisted_text=record.text,
+                    render_mode=record.render_mode,
+                    progress_sink=progress_sink,
+                    persist=persist,
+                    source_withdrawn=False,
+                )
+        return task
+
+    @staticmethod
+    def _delivery_record(
+        task: FeishuAgentTask,
+        delivery_id: str,
+    ) -> Optional[FeishuDeliveryRecord]:
+        """Return one isolated delivery record from the task outbox."""
+        return next(
+            (
+                record.model_copy(deep=True)
+                for record in task.delivery_outbox
+                if record.delivery_id == delivery_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _replace_delivery_record(
+        task: FeishuAgentTask,
+        record: FeishuDeliveryRecord,
+    ) -> None:
+        """Insert or replace one task-local delivery intent by stable identifier."""
+        task.delivery_outbox = [
+            existing
+            for existing in task.delivery_outbox
+            if existing.delivery_id != record.delivery_id
+        ] + [record]
 
 
 class FeishuAgentOutcome(BaseModel):
@@ -519,6 +1045,15 @@ class FeishuAgentOutcome(BaseModel):
 def research_visualization_token_hash(token: str) -> str:
     """Return the stable digest used to verify one viewer bearer token."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def has_retryable_terminal_deliveries(task: FeishuAgentTask) -> bool:
+    """Return whether a successful task needs one bounded worker retry."""
+    return task.status == AnalysisTaskStatus.SUCCEEDED and any(
+        record.status in {"pending", "failed"}
+        and record.attempt_count < MAX_TERMINAL_DELIVERY_ATTEMPTS
+        for record in task.delivery_outbox
+    )
 
 
 class ResearchToolbox:
@@ -543,10 +1078,23 @@ class ResearchToolbox:
         self._dataset_archive = dataset_archive
         self._task_id = task_id
         self._datasets: Dict[str, QueryResult] = {}
+        self._manifest: Optional[ResearchManifest] = None
+        if self._dataset_archive is not None and self._task_id:
+            self._manifest = self._dataset_archive.get_research_manifest(self._task_id)
+            if self._manifest is None:
+                self._manifest = new_research_manifest(self._task_id)
+                self._dataset_archive.put_research_manifest(self._manifest)
         if session_dataset is not None:
-            self._datasets["session_dataset"] = session_dataset.model_copy(
+            retained_session = session_dataset.model_copy(
                 update={"query_id": "session_dataset"},
                 deep=True,
+            )
+            self._datasets["session_dataset"] = retained_session
+            self._record_dataset_evidence(
+                retained_session,
+                source_dataset_ids=[],
+                operation_parameters={"source": "session_workspace"},
+                requested_fields=list(retained_session.columns),
             )
 
     @property
@@ -842,7 +1390,12 @@ class ResearchToolbox:
                 operation,
                 frame,
             )
-            self._retain_dataset(result)
+            self._retain_dataset(
+                result,
+                source_dataset_ids=[],
+                operation_parameters=params,
+                requested_fields=fields,
+            )
             return _result_payload(result)
         if name == "rank_dataset":
             progress("calculating", "正在执行排序与排名…")
@@ -873,7 +1426,17 @@ class ResearchToolbox:
                 f"{source.operation}_ranked",
                 ranked,
             )
-            self._retain_dataset(result)
+            self._retain_dataset(
+                result,
+                source_dataset_ids=[dataset_id],
+                operation_parameters={
+                    "sort_by": sort_by,
+                    "direction": str(arguments["direction"]),
+                    "limit": int(arguments["limit"]),
+                    "fields": fields,
+                },
+                requested_fields=fields,
+            )
             return _result_payload(result)
         if name == "join_datasets":
             progress("calculating", "正在合并市场与财务数据…")
@@ -902,7 +1465,16 @@ class ResearchToolbox:
                 f"{left.operation}_joined",
                 merged,
             )
-            self._retain_dataset(result)
+            self._retain_dataset(
+                result,
+                source_dataset_ids=[left.query_id, right.query_id],
+                operation_parameters={
+                    "join_on": join_on,
+                    "right_fields": right_fields,
+                    "cardinality": cardinality,
+                },
+                requested_fields=list(result.columns),
+            )
             return _result_payload(result)
         if name == "transform_dataset":
             progress("calculating", "正在执行确定性筛选与计算…")
@@ -917,7 +1489,17 @@ class ResearchToolbox:
                 source,
                 self._datasets,
             )
-            self._retain_dataset(result)
+            pipeline_sources = [pipeline.source_query_id]
+            for step in pipeline.steps:
+                right_source = step.right_source_query_id
+                if right_source and right_source not in pipeline_sources:
+                    pipeline_sources.append(right_source)
+            self._retain_dataset(
+                result,
+                source_dataset_ids=pipeline_sources,
+                operation_parameters={"pipeline": pipeline.model_dump(mode="json")},
+                requested_fields=list(result.columns),
+            )
             return _result_payload(result)
         if name == "run_python_analysis":
             if self._python_sandbox is None:
@@ -948,7 +1530,16 @@ class ResearchToolbox:
                 "python_dataframe",
                 frame,
             )
-            self._retain_dataset(result)
+            self._retain_dataset(
+                result,
+                source_dataset_ids=dataset_ids,
+                operation_parameters={
+                    "code_sha256": hashlib.sha256(
+                        str(arguments["code"]).encode("utf-8")
+                    ).hexdigest()
+                },
+                requested_fields=list(result.columns),
+            )
             return _result_payload(result)
         if name == "export_excel":
             dataset_id = str(arguments["dataset_id"])
@@ -968,6 +1559,10 @@ class ResearchToolbox:
                 if dataset_id == "session_dataset":
                     self._dataset_archive.archive_dataset(self._task_id, result)
                 self._dataset_archive.mark_final_dataset(self._task_id, dataset_id)
+                if self._manifest is None:
+                    self._manifest = new_research_manifest(self._task_id)
+                self._manifest = select_final_dataset(self._manifest, dataset_id)
+                self._dataset_archive.put_research_manifest(self._manifest)
             return {
                 "file_name": artifact_path.name,
                 "file_path": str(artifact_path),
@@ -975,11 +1570,46 @@ class ResearchToolbox:
             }
         raise ValueError(f"Unknown research tool: {name}")
 
-    def _retain_dataset(self, result: QueryResult) -> None:
+    def _retain_dataset(
+        self,
+        result: QueryResult,
+        *,
+        source_dataset_ids: List[str],
+        operation_parameters: Mapping[str, Any],
+        requested_fields: List[str],
+    ) -> None:
         """Retain a complete dataset in memory and the durable task archive."""
         self._datasets[result.query_id] = result
         if self._dataset_archive is not None and self._task_id:
             self._dataset_archive.archive_dataset(self._task_id, result)
+        self._record_dataset_evidence(
+            result,
+            source_dataset_ids=source_dataset_ids,
+            operation_parameters=operation_parameters,
+            requested_fields=requested_fields,
+        )
+
+    def _record_dataset_evidence(
+        self,
+        result: QueryResult,
+        *,
+        source_dataset_ids: List[str],
+        operation_parameters: Mapping[str, Any],
+        requested_fields: List[str],
+    ) -> None:
+        """Persist executor-derived evidence independently of model narration."""
+        if self._dataset_archive is None or not self._task_id:
+            return
+        if self._manifest is None:
+            self._manifest = new_research_manifest(self._task_id)
+        evidence = research_dataset_evidence(
+            result,
+            source_dataset_ids=source_dataset_ids,
+            operation_parameters=operation_parameters,
+            requested_fields=requested_fields,
+        )
+        self._manifest = record_dataset_evidence(self._manifest, evidence)
+        self._dataset_archive.put_research_manifest(self._manifest)
 
 
 def _validated_column_notes(
