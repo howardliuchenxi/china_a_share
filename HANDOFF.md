@@ -11,6 +11,12 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-26 · ZCode] 测试提速与前端整体移除（闲时任务代跑）
+
+- 做了什么：①DeepSeek planner 重试退避改为构造参数 `retry_delay_seconds`（默认生产常量 1s），单测注入 0——全量 113.5s→59.8s（949p/134s 全绿，未加 skip 未弱化断言）；②按用户拍板整体移除前端：frontend/ 26 文件、Dockerfile node 构建阶段、api.py 页面路由与 StaticFiles 挂载、Makefile npm 构建、pre-push 钩子 node_modules 软链、cloudbuild frontend-check 步骤、PI UI feedback workflow（触发源与构建对象均为前端）、repository_context 的 frontend/src 白名单，API 路由与飞书 webhook 原样保留（947p/134s 全绿，−2 个前端主题测试）。
+- 关键决定：discovery rule_search 慢测试（16.7/8.3/4.9s）实测为 pandas 固定开销（~21ms/次公式评估，缩合成数据行数无效），不动统计核心（四关判据地基）、不缩数据（会弱化断言）——保留原规模，留给后续专项。
+- 遗留：`/` 页面随下次自动部署消失（已获批）；`make check` 因运营方此前已禁用后端门禁测试而成为空门禁（本次仅移除 npm 构建）；残留 frontend 字样仅存在于历史记述（HANDOFF/docs/audit）与线上可观测性资源名（frontend_request_total 指标与 dashboard.json，改名属云资源变更不在本次范围）。
+
 ## [2026-09-26 · ZCode] 修复分层时序模型判断逻辑：条件日期绑定 + 倒推锚定纪律
 
 - 生产反馈（2026-09-26 群内，GCS task 423056c1…）：用户定义 v2.3 分层模型后问「603823，在8.10这一天 属于哪一层」，agent 两处逻辑错误——①拿查询日 L1 准入条件（当日 PE 超段上限）否决整条历史链条（把准入条件当持续在册条件，与「每层条件只限该层当日」冲突）；②默默执行「下穿当日须 cond 成立」的同日自相矛盾条件（cond 含 MA5>MA20，下穿即 MA5<MA20 → L5 恒空）而不上抛。
