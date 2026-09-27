@@ -26,6 +26,13 @@
   - 为什么：未经对齐的改动会累积架构不一致；中途打断破坏执行连续性。规则全文已落在各工具全局配置（~/.codex/AGENTS.md、~/.claude/CLAUDE.md、~/.gemini/GEMINI.md，ZCode 侧为其持久记忆）。
   - 可推翻当：用户明确要求恢复「直接开工」或「逐步确认」模式。
 
+## [2026-09-27 · Codex] v2.24 condition effect validation
+
+- Built an auditable L1-L7 daily state-machine study for 2025-01-01 through 2026-09-24, including a narrow counterfactual that reapplies L1/L2 to L3-L6.
+- Main result: v2.24 produced 5,077 L7 events and 3,693 canonical-only events, but N10 hit rate stayed below 50%, median/trimmed/excess returns were negative, and quality-difference confidence intervals crossed zero.
+- Delivered an executed notebook, an English methodology report, tests, and a two-sheet Excel workbook with 6,473 event rows and N1-N10 audit fields.
+- Material limitation: current THS industry membership was applied historically because the available membership response lacks effective dates; L10 remains unevaluable until sell/holding rules are defined.
+
 ## [2026-09-20 · ZCode] GLM 循环停滞止损 + 轮级遥测（b7ba50d4）
 
 - 用户问「60 轮能否减少/架构是否需升级」。判断：静态调小数字会误伤慢而有效的长链路，正确旋钮是**停滞检测**——`GLM_PASSIVE_TOOLS`（search/clarification）连续 `GLM_RUNTIME_STAGNATION_LIMIT=8` 轮占满即提前终止（群内人话提示：细化问题或切回 DeepSeek），60 硬顶保留兜底；同时每轮 `log_event("glm_agent_round", tools=…)` 补上轮级遥测（对照实验时失败轨迹不可见的缺口）。
