@@ -11,6 +11,14 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-26 · Codex] Enforce one workbook with replaceable topic tabs
+
+- Fixed production task `3311be2d…` (`按照以上内容，补全模型`), which completed research but failed delivery because an extra supported file made the terminal artifact scan ambiguous.
+- `export_excel` now owns one canonical `a_share_research.xlsx`; distinct stable `sheet_name` values add topic tabs, while reusing a name atomically replaces stale content in that tab.
+- Delivery prefers the canonical workbook and logs/ignores non-terminal CSV/PDF/DOCX/XLSX files instead of failing the completed task; legacy single-file runtimes remain supported.
+- Workbook methodology and column-note indexes now retain per-topic metadata, and the viewer reads the latest exported topic while remaining compatible with legacy workbook layouts.
+- Validation: targeted 33 passed / 8 skipped; full suite 951 passed / 135 skipped; exact production prompt passed against real Codex/DeepSeek with one workbook and multiple tabs in 197.88s. The known concurrent disclosure-call ordering test failed once in the first full run, passed alone, and the complete rerun was green.
+
 ## [2026-09-26 · ZCode] 测试提速与前端整体移除（闲时任务代跑）
 
 - 做了什么：①DeepSeek planner 重试退避改为构造参数 `retry_delay_seconds`（默认生产常量 1s），单测注入 0——全量 113.5s→59.8s（949p/134s 全绿，未加 skip 未弱化断言）；②按用户拍板整体移除前端：frontend/ 26 文件、Dockerfile node 构建阶段、api.py 页面路由与 StaticFiles 挂载、Makefile npm 构建、pre-push 钩子 node_modules 软链、cloudbuild frontend-check 步骤、PI UI feedback workflow（触发源与构建对象均为前端）、repository_context 的 frontend/src 白名单，API 路由与飞书 webhook 原样保留（947p/134s 全绿，−2 个前端主题测试）。

@@ -11,6 +11,7 @@ from china_a_share.codex_agent import (
     _build_research_visualization,
     _developer_instructions,
     _normalize_token_usage,
+    _persist_artifact,
     _run_turn_with_progress,
     _safe_artifact_filename_stem,
 )
@@ -109,6 +110,29 @@ def test_artifact_filename_preserves_safe_session_name_and_replaces_separators()
     assert _safe_artifact_filename_stem(" 银行/低估值:筛选? ") == (
         "银行_低估值_筛选_"
     )
+
+
+def test_terminal_artifact_prefers_managed_workbook_over_extra_files(
+    tmp_path,
+    caplog,
+):
+    caplog.set_level("WARNING")
+    (tmp_path / "a_share_research.xlsx").write_bytes(b"current workbook")
+    (tmp_path / "stale.csv").write_bytes(b"stale export")
+    (tmp_path / "notes.pdf").write_bytes(b"extra output")
+
+    persisted = _persist_artifact(tmp_path, "模型标准")
+
+    assert persisted is not None
+    assert persisted.name == "模型标准.xlsx"
+    assert persisted.read_bytes() == b"current workbook"
+    warning = next(
+        record.message
+        for record in caplog.records
+        if record.message.startswith("codex_feishu_ignored_nonterminal_artifacts")
+    )
+    assert "notes.pdf" in warning
+    assert "stale.csv" in warning
 
 
 class FakeCodex:
@@ -307,6 +331,15 @@ def test_codex_runtime_preserves_context_uses_generic_mcp_and_persists_artifact(
     assert "input_tokens=1200" in usage_record
     assert "cached_input_tokens=900" in usage_record
     assert "reasoning_output_tokens=80" in usage_record
+
+
+def test_developer_instructions_require_one_workbook_with_topic_tabs():
+    instructions = _developer_instructions()
+
+    assert "single workbook" in instructions
+    assert "one stable sheet_name per topic" in instructions
+    assert "replace a stale topic" in instructions
+    assert "never create another terminal CSV" in instructions
 
 
 def test_token_usage_rejects_partial_or_non_numeric_snapshots():
@@ -519,21 +552,93 @@ def test_workbook_is_converted_to_bounded_interactive_dataset(tmp_path):
     }
 
 
-def test_legacy_workbook_without_notes_still_extracts_methodology(tmp_path):
-    workbook_path = build_research_workbook(
-        QueryResult(
-            query_id="legacy",
-            provider="tushare",
-            operation="daily",
-            status=QueryStatus.SUCCESS,
-            columns=["ts_code", "close"],
-            rows=[{"ts_code": "600000.SH", "close": 12.5}],
-            row_count=1,
-        ),
-        "Legacy study",
-        "前复权口径说明。",
-        output_dir=tmp_path,
+def test_multitopic_workbook_visualizes_latest_replaced_topic(tmp_path):
+    first = QueryResult(
+        query_id="overview-v1",
+        provider="test",
+        operation="model_overview",
+        status=QueryStatus.SUCCESS,
+        columns=["layer", "status"],
+        rows=[{"layer": "L1", "status": "draft"}],
+        row_count=1,
     )
+    details = QueryResult(
+        query_id="details",
+        provider="test",
+        operation="model_details",
+        status=QueryStatus.SUCCESS,
+        columns=["field", "source"],
+        rows=[{"field": "close", "source": "daily"}],
+        row_count=1,
+    )
+    first_path = build_research_workbook(
+        first,
+        "Model overview",
+        "Initial overview.",
+        output_dir=tmp_path,
+        sheet_name="模型总览",
+        column_notes={
+            "layer": "模型层级名称。",
+            "status": "当前层级规则状态。",
+        },
+    )
+    build_research_workbook(
+        details,
+        "Data fields",
+        "Verified field sources.",
+        output_dir=tmp_path,
+        sheet_name="数据表",
+        column_notes={
+            "field": "数据字段名称。",
+            "source": "字段对应的数据源。",
+        },
+    )
+    updated = first.model_copy(
+        update={
+            "query_id": "overview-v2",
+            "rows": [{"layer": "L1", "status": "confirmed"}],
+        }
+    )
+    build_research_workbook(
+        updated,
+        "Updated model overview",
+        "Current confirmed overview.",
+        output_dir=tmp_path,
+        sheet_name="模型总览",
+        column_notes={
+            "layer": "模型层级名称。",
+            "status": "当前层级规则状态。",
+        },
+    )
+
+    visualization = _build_research_visualization(first_path)
+
+    assert visualization is not None
+    assert visualization.title == "Updated model overview"
+    assert visualization.rows == [{"layer": "L1", "status": "confirmed"}]
+    assert visualization.methodology == "Current confirmed overview."
+    assert visualization.column_notes == {
+        "layer": "模型层级名称。",
+        "status": "当前层级规则状态。",
+    }
+
+
+def test_legacy_workbook_without_notes_still_extracts_methodology(tmp_path):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    results = workbook.active
+    results.title = "Results"
+    results["A2"] = "Legacy study"
+    results["A5"] = "ts_code"
+    results["B5"] = "close"
+    results["A6"] = "600000.SH"
+    results["B6"] = 12.5
+    methodology = workbook.create_sheet("Methodology")
+    methodology["B7"] = "前复权口径说明。"
+    workbook_path = tmp_path / "legacy.xlsx"
+    workbook.save(workbook_path)
+    workbook.close()
 
     visualization = _build_research_visualization(workbook_path)
 

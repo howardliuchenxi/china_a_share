@@ -475,14 +475,17 @@ def test_research_workbook_preserves_numeric_values_and_source_context():
     notes = workbook["列说明"]
     assert results["B6"].value == 24.5
     assert isinstance(results["B6"].value, float)
-    assert methodology["B4"].value == "tushare"
-    assert methodology["B5"].value == "daily_basic"
-    assert methodology["B7"].value == "Ranked by PE."
+    assert methodology["A4"].value == "Theme"
+    assert methodology["A5"].value == "Results"
+    assert methodology["B5"].value == "tushare"
+    assert methodology["C5"].value == "daily_basic"
+    assert methodology["E5"].value == "Ranked by PE."
     assert results["C6"].number_format == "0.00%"
-    assert notes["A5"].value == "ts_code"
-    assert notes["B5"].value == "A股证券代码，含交易所后缀。"
-    assert notes["A6"].value == "pe"
-    assert notes["B7"].value == "股息率 = 近12个月每股分红 / 收盘价。"
+    assert notes["A5"].value == "Results"
+    assert notes["B5"].value == "ts_code"
+    assert notes["C5"].value == "A股证券代码，含交易所后缀。"
+    assert notes["B6"].value == "pe"
+    assert notes["C7"].value == "股息率 = 近12个月每股分红 / 收盘价。"
     assert results["A5"].comment is not None
     assert "证券代码" in results["A5"].comment.text
     assert all(
@@ -576,6 +579,65 @@ def test_export_tool_rejects_incomplete_column_notes(tmp_path):
             },
             lambda _stage, _message: None,
         )
+
+
+def test_export_tool_keeps_topics_as_tabs_and_replaces_stale_topic(tmp_path):
+    toolbox = ResearchToolbox(FakeProvider(), "request-1", artifact_dir=tmp_path)
+    queried = toolbox.call(
+        "query_market_data",
+        {
+            "operation": "daily",
+            "params": {"trade_date": "20260916"},
+            "fields": ["ts_code", "close"],
+        },
+        lambda _stage, _message: None,
+    )
+    base_arguments = {
+        "dataset_id": queried["dataset_id"],
+        "methodology": "Use the complete daily dataset.",
+        "column_notes": [
+            {"column": "ts_code", "note": "A股证券代码，含交易所后缀。"},
+            {"column": "close", "note": "未复权收盘价，单位为元。"},
+        ],
+    }
+
+    first = toolbox.call(
+        "export_excel",
+        {**base_arguments, "title": "Model overview", "sheet_name": "模型总览"},
+        lambda _stage, _message: None,
+    )
+    second = toolbox.call(
+        "export_excel",
+        {**base_arguments, "title": "Layer details", "sheet_name": "分层明细"},
+        lambda _stage, _message: None,
+    )
+    replaced = toolbox.call(
+        "export_excel",
+        {
+            **base_arguments,
+            "title": "Updated model overview",
+            "sheet_name": "模型总览",
+            "methodology": "Replace the stale overview with current rules.",
+        },
+        lambda _stage, _message: None,
+    )
+
+    assert first["file_path"] == second["file_path"] == replaced["file_path"]
+    assert [path.name for path in tmp_path.glob("*.xlsx")] == [
+        "a_share_research.xlsx"
+    ]
+    workbook = load_workbook(replaced["file_path"], data_only=False)
+    assert workbook.sheetnames == ["模型总览", "分层明细", "Methodology", "列说明"]
+    assert workbook["模型总览"]["A2"].value == "Updated model overview"
+    assert workbook["分层明细"]["A2"].value == "Layer details"
+    assert workbook["Methodology"]["A5"].value == "模型总览"
+    assert workbook["Methodology"]["E5"].value == (
+        "Replace the stale overview with current rules."
+    )
+    assert workbook["Methodology"]["A6"].value == "分层明细"
+    assert workbook["列说明"]["A5"].value == "模型总览"
+    assert workbook["列说明"]["A7"].value == "分层明细"
+    assert workbook.active.title == "模型总览"
 
 
 def test_agent_coordinator_reports_progress_answer_and_file(tmp_path):
@@ -923,6 +985,56 @@ def test_live_feishu_agent_answers_reported_thirty_day_return_ranking():
     assert "只返回前 20 行" not in outcome.answer
     assert re.search(r"\b\d{6}\.(?:SH|SZ|BJ)\b", outcome.answer)
     assert "%" in outcome.answer
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1",
+    reason="Set RUN_LIVE_ANALYSIS=1 to call the configured model and Tushare.",
+)
+def test_live_feishu_agent_completes_reported_model_in_one_workbook():
+    """Reported regression: one follow-up produced multiple terminal files."""
+    runtime = create_feishu_agent_runtime(Settings.from_env())
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="按照以上内容，补全模型",
+            conversation_id="live:feishu:agent:reported-single-model-workbook",
+            conversation_name="模型标准",
+            source_message_id="live-reported-single-model-workbook",
+            conversation=[
+                FeishuAgentConversationTurn(
+                    prompt="给出现在模型的标准",
+                    answer=(
+                        "当前模型需要整理为一个 Excel 工作簿。主题一“模型标准”"
+                        "列出 L1 基础层、L2 观察层、L3 执行层及各层条件；"
+                        "主题二“数据表”列出每层使用的数据源、字段和状态。"
+                        "L1 条件为 stock_basic.list_date 距判定日满365个自然日；"
+                        "L2 使用 qf=daily.close×同日 adj_factor 的前复权序列，"
+                        "MA60 为截至判定日最近60个有行情交易日（含当日）的"
+                        "简单均值，qf>MA60 即进入；L3 为当日收盘后从 L2 选入，"
+                        "并剔除 limit_list_d.limit_type='U' 的收盘封涨停股票。"
+                        "以上价格、窗口、时点和涨停口径均已确认，没有开放项。"
+                        "请在用户确认后补全两个主题；不同主题放不同 tab，"
+                        "不要生成多个附件。"
+                    ),
+                )
+            ],
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert outcome.artifact_path is not None
+    assert outcome.artifact_path.suffix.casefold() == ".xlsx"
+    workbook = load_workbook(outcome.artifact_path, read_only=True, data_only=True)
+    topic_sheets = [
+        name
+        for name in workbook.sheetnames
+        if name not in {"Methodology", "列说明"}
+    ]
+    workbook.close()
+    assert len(topic_sheets) >= 2
+    assert len(topic_sheets) == len(set(topic_sheets))
 
 
 @pytest.mark.live

@@ -680,8 +680,11 @@ class ResearchToolbox:
                 "function": {
                     "name": "export_excel",
                     "description": (
-                        "Create a polished Excel workbook from a retained "
-                        "dataset. methodology must enumerate, for every derived "
+                        "Create or update the task's single polished Excel workbook "
+                        "from a retained dataset. Use one stable sheet_name per "
+                        "topic: a new topic adds a worksheet, while exporting the "
+                        "same sheet_name again replaces its stale worksheet. "
+                        "methodology must enumerate, for every derived "
                         "indicator: its input fields, the exact price series and "
                         "adjustment basis, window semantics (trading days or "
                         "calendar days), and the event-deduplication rule. Never "
@@ -695,6 +698,15 @@ class ResearchToolbox:
                         "properties": {
                             "dataset_id": {"type": "string"},
                             "title": {"type": "string"},
+                            "sheet_name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 31,
+                                "description": (
+                                    "Stable Excel worksheet name for this topic. "
+                                    "Defaults to Results for legacy callers."
+                                ),
+                            },
                             "methodology": {"type": "string"},
                             "column_notes": {
                                 "type": "array",
@@ -963,6 +975,7 @@ class ResearchToolbox:
                 str(arguments["methodology"]),
                 output_dir=self._artifact_dir,
                 column_notes=column_notes,
+                sheet_name=str(arguments.get("sheet_name") or "Results"),
             )
             if self._dataset_archive is not None and self._task_id:
                 if dataset_id == "session_dataset":
@@ -1021,10 +1034,16 @@ def _validated_column_notes(
     return notes
 
 
+RESEARCH_WORKBOOK_FILENAME = "a_share_research.xlsx"
+RESEARCH_METHODOLOGY_SHEET_NAME = "Methodology"
 RESEARCH_COLUMN_NOTES_SHEET_NAME = "列说明"
+RESEARCH_METADATA_SHEET_NAMES = frozenset(
+    {RESEARCH_METHODOLOGY_SHEET_NAME, RESEARCH_COLUMN_NOTES_SHEET_NAME}
+)
 
 _DATE_COLUMN_TOKEN_PATTERN = re.compile(r"date|day|time|时|日|期", re.IGNORECASE)
 _COMPACT_CALENDAR_DATE_PATTERN = re.compile(r"\d{8}")
+_INVALID_EXCEL_SHEET_NAME_PATTERN = re.compile(r"[\\[\\]:*?/\\\\]")
 
 
 def compact_calendar_date_text(column: str, value: Any) -> Any:
@@ -1054,6 +1073,170 @@ def compact_calendar_date_text(column: str, value: Any) -> Any:
     return parsed.strftime("%Y-%m-%d")
 
 
+def _validated_research_sheet_name(value: str) -> str:
+    """Return one explicit topic identity that Excel can use as a worksheet."""
+    sheet_name = str(value or "").strip()
+    if not sheet_name or len(sheet_name) > 31:
+        raise ValueError("sheet_name must contain 1-31 characters.")
+    if _INVALID_EXCEL_SHEET_NAME_PATTERN.search(sheet_name):
+        raise ValueError("sheet_name contains an unsupported Excel character.")
+    if sheet_name.casefold() in {
+        name.casefold() for name in RESEARCH_METADATA_SHEET_NAMES
+    }:
+        raise ValueError("sheet_name is reserved for workbook metadata.")
+    return sheet_name
+
+
+def _research_result_sheets(workbook: Any) -> List[Any]:
+    """Return only user-facing topic sheets in workbook order."""
+    metadata_names = {name.casefold() for name in RESEARCH_METADATA_SHEET_NAMES}
+    return [
+        sheet
+        for sheet in workbook.worksheets
+        if sheet.title.casefold() not in metadata_names
+    ]
+
+
+def _read_methodology_records(workbook: Any) -> Dict[str, Dict[str, Any]]:
+    """Read current or legacy per-topic methodology before rebuilding metadata."""
+    if RESEARCH_METHODOLOGY_SHEET_NAME not in workbook.sheetnames:
+        return {}
+    sheet = workbook[RESEARCH_METHODOLOGY_SHEET_NAME]
+    headers = tuple(
+        sheet.cell(4, column_index).value for column_index in range(1, 7)
+    )
+    records: Dict[str, Dict[str, Any]] = {}
+    if headers == (
+        "Theme",
+        "Data provider",
+        "Operation",
+        "Dataset",
+        "Method",
+        "Generated at",
+    ):
+        for values in sheet.iter_rows(min_row=5, max_col=6, values_only=True):
+            theme = str(values[0] or "").strip()
+            if not theme:
+                continue
+            records[theme] = {
+                "provider": values[1],
+                "operation": values[2],
+                "dataset": values[3],
+                "methodology": values[4],
+                "generated_at": values[5],
+            }
+        return records
+
+    result_sheets = _research_result_sheets(workbook)
+    if not result_sheets:
+        return {}
+    records[result_sheets[0].title] = {
+        "provider": sheet["B4"].value,
+        "operation": sheet["B5"].value,
+        "dataset": sheet["B6"].value,
+        "methodology": sheet["B7"].value,
+        "generated_at": sheet["B8"].value,
+    }
+    return records
+
+
+def _rebuild_research_metadata_sheets(
+    workbook: Any,
+    methodology_records: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Rebuild shared metadata indexes from the current topic worksheets."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    for sheet_name in RESEARCH_METADATA_SHEET_NAMES:
+        if sheet_name in workbook.sheetnames:
+            workbook.remove(workbook[sheet_name])
+
+    methodology_sheet = workbook.create_sheet(RESEARCH_METHODOLOGY_SHEET_NAME)
+    notes_sheet = workbook.create_sheet(RESEARCH_COLUMN_NOTES_SHEET_NAME)
+    methodology_sheet.sheet_view.showGridLines = False
+    notes_sheet.sheet_view.showGridLines = False
+
+    methodology_sheet["A2"] = "Methodology"
+    methodology_sheet["A2"].font = Font(name="Arial", size=14, bold=True)
+    methodology_headers = (
+        "Theme",
+        "Data provider",
+        "Operation",
+        "Dataset",
+        "Method",
+        "Generated at",
+    )
+    for column_index, header in enumerate(methodology_headers, start=1):
+        cell = methodology_sheet.cell(4, column_index, header)
+        cell.fill = PatternFill("solid", fgColor="1F4E78")
+        cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    for row_index, result_sheet in enumerate(
+        _research_result_sheets(workbook),
+        start=5,
+    ):
+        record = methodology_records.get(result_sheet.title, {})
+        values = (
+            result_sheet.title,
+            record.get("provider"),
+            record.get("operation"),
+            record.get("dataset"),
+            record.get("methodology"),
+            record.get("generated_at"),
+        )
+        for column_index, value in enumerate(values, start=1):
+            cell = methodology_sheet.cell(row_index, column_index, value)
+            cell.font = Font(name="Arial", size=10)
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+        methodology_sheet.cell(row_index, 6).number_format = "yyyy-mm-dd hh:mm"
+    methodology_sheet.freeze_panes = "A5"
+    for column, width in zip("ABCDEF", (24, 18, 22, 24, 80, 20)):
+        methodology_sheet.column_dimensions[column].width = width
+    methodology_sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    methodology_sheet.page_setup.orientation = "landscape"
+    methodology_sheet.page_setup.fitToWidth = 1
+    methodology_sheet.page_setup.fitToHeight = 0
+    methodology_sheet.print_area = (
+        f"A1:F{4 + max(len(_research_result_sheets(workbook)), 1)}"
+    )
+
+    notes_sheet["A2"] = "列说明"
+    notes_sheet["A2"].font = Font(name="Arial", size=14, bold=True)
+    for column_index, header in enumerate(("主题", "列", "说明"), start=1):
+        cell = notes_sheet.cell(4, column_index, header)
+        cell.fill = PatternFill("solid", fgColor="1F4E78")
+        cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    row_index = 5
+    for result_sheet in _research_result_sheets(workbook):
+        for header_cell in result_sheet[5]:
+            column = str(header_cell.value or "").strip()
+            if not column:
+                continue
+            note = header_cell.comment.text if header_cell.comment is not None else ""
+            notes_sheet.cell(row_index, 1, result_sheet.title)
+            notes_sheet.cell(row_index, 2, column)
+            notes_sheet.cell(row_index, 3, note)
+            for column_index in range(1, 4):
+                cell = notes_sheet.cell(row_index, column_index)
+                cell.font = Font(name="Arial", size=10)
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+            notes_sheet.cell(row_index, 2).font = Font(
+                name="Arial",
+                size=10,
+                bold=True,
+            )
+            row_index += 1
+    notes_sheet.column_dimensions["A"].width = 24
+    notes_sheet.column_dimensions["B"].width = 24
+    notes_sheet.column_dimensions["C"].width = 80
+    notes_sheet.freeze_panes = "A5"
+    notes_sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    notes_sheet.page_setup.fitToWidth = 1
+    notes_sheet.page_setup.fitToHeight = 0
+    notes_sheet.print_area = f"A1:C{max(row_index - 1, 5)}"
+
+
 def build_research_workbook(
     result: QueryResult,
     title: str,
@@ -1061,25 +1244,52 @@ def build_research_workbook(
     *,
     output_dir: Optional[Path] = None,
     column_notes: Optional[Mapping[str, str]] = None,
+    sheet_name: str = "Results",
 ) -> Path:
-    """Create one readable workbook with results, notes, and methodology."""
+    """Upsert one topic worksheet in the task's single research workbook."""
     try:
-        from openpyxl import Workbook
+        from openpyxl import Workbook, load_workbook
         from openpyxl.comments import Comment
         from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.utils import get_column_letter
     except ImportError as exc:
         raise RuntimeError("Excel export requires the openpyxl dependency.") from exc
 
+    target_sheet_name = _validated_research_sheet_name(sheet_name)
+    target_dir = output_dir or Path(tempfile.mkdtemp(prefix="feishu-agent-"))
+    target_dir.mkdir(parents=True, exist_ok=True)
+    output_path = target_dir / RESEARCH_WORKBOOK_FILENAME
+    if output_path.exists():
+        workbook = load_workbook(output_path)
+        methodology_records = _read_methodology_records(workbook)
+    else:
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        methodology_records = {}
+
+    existing_sheet_name = next(
+        (
+            existing.title
+            for existing in _research_result_sheets(workbook)
+            if existing.title.casefold() == target_sheet_name.casefold()
+        ),
+        None,
+    )
+    if existing_sheet_name is not None:
+        target_sheet_name = existing_sheet_name
+        sheet_index = workbook.index(workbook[existing_sheet_name])
+        workbook.remove(workbook[existing_sheet_name])
+    else:
+        metadata_indexes = [
+            workbook.index(workbook[name])
+            for name in RESEARCH_METADATA_SHEET_NAMES
+            if name in workbook.sheetnames
+        ]
+        sheet_index = min(metadata_indexes, default=len(workbook.worksheets))
+    results_sheet = workbook.create_sheet(target_sheet_name, sheet_index)
+
     notes = {str(key): str(value) for key, value in (column_notes or {}).items()}
-    workbook = Workbook()
-    results_sheet = workbook.active
-    results_sheet.title = "Results"
-    methodology_sheet = workbook.create_sheet("Methodology")
-    notes_sheet = workbook.create_sheet(RESEARCH_COLUMN_NOTES_SHEET_NAME)
     results_sheet.sheet_view.showGridLines = False
-    methodology_sheet.sheet_view.showGridLines = False
-    notes_sheet.sheet_view.showGridLines = False
 
     results_sheet["A2"] = title
     results_sheet["A2"].font = Font(name="Arial", size=14, bold=True)
@@ -1135,61 +1345,25 @@ def build_research_workbook(
         f"{header_row + max(result.row_count, 1)}"
     )
 
-    notes_sheet["A2"] = "列说明"
-    notes_sheet["A2"].font = Font(name="Arial", size=14, bold=True)
-    notes_header_row = 4
-    for column_index, header in enumerate(("列", "说明"), start=1):
-        cell = notes_sheet.cell(notes_header_row, column_index, header)
-        cell.fill = PatternFill("solid", fgColor="1F4E78")
-        cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-    for row_index, column in enumerate(result.columns, start=notes_header_row + 1):
-        note_cell = notes_sheet.cell(row_index, 1, column)
-        note_cell.font = Font(name="Arial", size=10, bold=True)
-        note_cell.alignment = Alignment(vertical="center")
-        detail_cell = notes_sheet.cell(row_index, 2, notes.get(column, ""))
-        detail_cell.font = Font(name="Arial", size=10)
-        detail_cell.alignment = Alignment(wrap_text=True, vertical="top")
-    notes_sheet.column_dimensions["A"].width = 24
-    notes_sheet.column_dimensions["B"].width = 80
-    notes_sheet.freeze_panes = "A5"
-    notes_sheet.sheet_properties.pageSetUpPr.fitToPage = True
-    notes_sheet.page_setup.fitToWidth = 1
-    notes_sheet.page_setup.fitToHeight = 0
-    notes_sheet.print_area = (
-        f"A1:B{notes_header_row + max(len(result.columns), 1)}"
+    methodology_records[target_sheet_name] = {
+        "provider": result.provider,
+        "operation": result.operation,
+        "dataset": result.query_id,
+        "methodology": methodology,
+        "generated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+    }
+    _rebuild_research_metadata_sheets(workbook, methodology_records)
+    workbook.active = workbook.index(results_sheet)
+
+    temporary_path = output_path.with_name(
+        f".{output_path.stem}-{uuid4().hex}.xlsx"
     )
-
-    methodology_sheet["A2"] = "Methodology"
-    methodology_sheet["A2"].font = Font(name="Arial", size=14, bold=True)
-    methodology_sheet["A4"] = "Data provider"
-    methodology_sheet["B4"] = result.provider
-    methodology_sheet["A5"] = "Operation"
-    methodology_sheet["B5"] = result.operation
-    methodology_sheet["A6"] = "Dataset"
-    methodology_sheet["B6"] = result.query_id
-    methodology_sheet["A7"] = "Method"
-    methodology_sheet["B7"] = methodology
-    methodology_sheet["A8"] = "Generated at"
-    methodology_sheet["B8"] = datetime.now(timezone.utc).replace(tzinfo=None)
-    methodology_sheet["B8"].number_format = "yyyy-mm-dd hh:mm"
-    methodology_sheet.column_dimensions["A"].width = 18
-    methodology_sheet.column_dimensions["B"].width = 60
-    methodology_sheet["B7"].alignment = Alignment(wrap_text=True, vertical="top")
-    for row in methodology_sheet.iter_rows(min_row=4, max_row=8, min_col=1, max_col=2):
-        for cell in row:
-            cell.font = Font(name="Arial", size=10)
-    for row_index in range(4, 9):
-        methodology_sheet.cell(row_index, 1).font = Font(name="Arial", size=10, bold=True)
-    methodology_sheet.sheet_properties.pageSetUpPr.fitToPage = True
-    methodology_sheet.page_setup.fitToWidth = 1
-    methodology_sheet.page_setup.fitToHeight = 1
-    methodology_sheet.print_area = "A1:B9"
-
-    target_dir = output_dir or Path(tempfile.mkdtemp(prefix="feishu-agent-"))
-    target_dir.mkdir(parents=True, exist_ok=True)
-    output_path = target_dir / "a_share_research.xlsx"
-    workbook.save(output_path)
+    try:
+        workbook.save(temporary_path)
+        temporary_path.replace(output_path)
+    finally:
+        workbook.close()
+        temporary_path.unlink(missing_ok=True)
     return output_path
 
 

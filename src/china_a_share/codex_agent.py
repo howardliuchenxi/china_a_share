@@ -24,6 +24,8 @@ from china_a_share.feishu_agent import (
     MAX_COLUMN_NOTE_CHARACTERS,
     MAX_VISUALIZATION_METHODOLOGY_CHARACTERS,
     RESEARCH_COLUMN_NOTES_SHEET_NAME,
+    RESEARCH_METHODOLOGY_SHEET_NAME,
+    RESEARCH_WORKBOOK_FILENAME,
 )
 
 
@@ -444,7 +446,12 @@ def _developer_instructions() -> str:
         "a tool rejects invalid arguments, inspect its schema and correct the call "
         "once; do not repeat equivalent failing calls. Never invent missing values. "
         "If a result has more than ten rows or the user asks for a file, create an "
-        "Excel artifact with the export tool. When the user asks for a chart or "
+        "Excel artifact with the export tool. Produce only the single workbook "
+        "managed by export_excel; never create another terminal CSV, Excel, PDF, "
+        "or Word file directly. For multiple topics, call export_excel with one "
+        "stable sheet_name per topic so they become worksheets in that workbook; "
+        "reuse the same sheet_name when newer content must replace a stale topic. "
+        "When the user asks for a chart or "
         "interactive visualization, export the complete final dataset to Excel so "
         "the delivery layer can render it interactively. "
         "State methodology precisely: for every derived indicator in the workbook "
@@ -518,19 +525,39 @@ def _persist_artifact(
     artifact_dir: Path,
     conversation_name: str,
 ) -> Optional[Path]:
-    candidates = [
-        path
-        for path in artifact_dir.iterdir()
-        if path.is_file()
-        and not path.is_symlink()
-        and path.suffix.casefold() in SUPPORTED_ARTIFACT_SUFFIXES
-        and path.stat().st_size > 0
-    ]
+    candidates = sorted(
+        [
+            path
+            for path in artifact_dir.iterdir()
+            if path.is_file()
+            and not path.is_symlink()
+            and path.suffix.casefold() in SUPPORTED_ARTIFACT_SUFFIXES
+            and path.stat().st_size > 0
+        ],
+        key=lambda path: path.name,
+    )
     if not candidates:
         return None
-    if len(candidates) > 1:
+    canonical = artifact_dir / RESEARCH_WORKBOOK_FILENAME
+    if canonical in candidates:
+        ignored = [path.name for path in candidates if path != canonical]
+        if ignored:
+            logger.warning(
+                "codex_feishu_ignored_nonterminal_artifacts canonical=%s ignored=%s",
+                canonical.name,
+                ignored,
+            )
+        source = canonical
+    elif len(candidates) > 1:
+        logger.error(
+            "codex_feishu_terminal_artifact_ambiguous candidates=%s",
+            [path.name for path in candidates],
+        )
         raise RuntimeError("Codex produced more than one terminal artifact.")
-    source = candidates[0]
+    else:
+        # Preserve delivery for older or non-tool runtimes that generated one
+        # supported file before the canonical workbook contract was introduced.
+        source = candidates[0]
     output_dir = Path(tempfile.mkdtemp(prefix="feishu-agent-output-"))
     output_path = output_dir / (
         _safe_artifact_filename_stem(conversation_name) + source.suffix.casefold()
@@ -546,15 +573,31 @@ def _safe_artifact_filename_stem(value: str) -> str:
     return sanitized or "a_share_research"
 
 
-def _extract_column_notes(workbook: Any) -> dict[str, str]:
+def _extract_column_notes(
+    workbook: Any,
+    topic_sheet_name: str,
+) -> dict[str, str]:
     """Read the bounded column-name to explanation mapping from one workbook."""
     if RESEARCH_COLUMN_NOTES_SHEET_NAME not in workbook.sheetnames:
         return {}
     sheet = workbook[RESEARCH_COLUMN_NOTES_SHEET_NAME]
     notes: dict[str, str] = {}
-    for values in sheet.iter_rows(min_row=5, max_col=2, values_only=True):
-        column = values[0] if len(values) > 0 else None
-        note = values[1] if len(values) > 1 else None
+    aggregate_layout = tuple(
+        sheet.cell(4, column_index).value for column_index in range(1, 4)
+    ) == ("主题", "列", "说明")
+    max_column = 3 if aggregate_layout else 2
+    for values in sheet.iter_rows(
+        min_row=5,
+        max_col=max_column,
+        values_only=True,
+    ):
+        if aggregate_layout:
+            theme, column, note = values
+            if str(theme or "").strip() != topic_sheet_name:
+                continue
+        else:
+            column = values[0] if len(values) > 0 else None
+            note = values[1] if len(values) > 1 else None
         if column is None or note is None:
             continue
         column_name = str(column).strip()
@@ -565,11 +608,29 @@ def _extract_column_notes(workbook: Any) -> dict[str, str]:
     return notes
 
 
-def _extract_workbook_methodology(workbook: Any) -> str:
+def _extract_workbook_methodology(workbook: Any, topic_sheet_name: str) -> str:
     """Read the bounded methodology text recorded on the Methodology sheet."""
-    if "Methodology" not in workbook.sheetnames:
+    if RESEARCH_METHODOLOGY_SHEET_NAME not in workbook.sheetnames:
         return ""
-    method = str(workbook["Methodology"]["B7"].value or "").strip()
+    sheet = workbook[RESEARCH_METHODOLOGY_SHEET_NAME]
+    aggregate_layout = tuple(
+        sheet.cell(4, column_index).value for column_index in range(1, 7)
+    ) == (
+        "Theme",
+        "Data provider",
+        "Operation",
+        "Dataset",
+        "Method",
+        "Generated at",
+    )
+    if aggregate_layout:
+        method = ""
+        for values in sheet.iter_rows(min_row=5, max_col=5, values_only=True):
+            if str(values[0] or "").strip() == topic_sheet_name:
+                method = str(values[4] or "").strip()
+                break
+    else:
+        method = str(sheet["B7"].value or "").strip()
     return method[:MAX_VISUALIZATION_METHODOLOGY_CHARACTERS]
 
 
@@ -616,7 +677,20 @@ def _build_research_visualization(
         from openpyxl import load_workbook
 
         workbook = load_workbook(artifact_path, read_only=True, data_only=True)
-        sheet = workbook["Results"] if "Results" in workbook.sheetnames else workbook.active
+        metadata_names = {
+            RESEARCH_METHODOLOGY_SHEET_NAME.casefold(),
+            RESEARCH_COLUMN_NOTES_SHEET_NAME.casefold(),
+        }
+        sheet = workbook.active
+        if sheet.title.casefold() in metadata_names:
+            sheet = next(
+                (
+                    candidate
+                    for candidate in workbook.worksheets
+                    if candidate.title.casefold() not in metadata_names
+                ),
+                sheet,
+            )
         title = str(sheet["A2"].value or "A股研究结果").strip()
         raw_headers = next(
             sheet.iter_rows(min_row=5, max_row=5, values_only=True),
@@ -647,8 +721,8 @@ def _build_research_visualization(
                 }
             )
         source_row_count = max(sheet.max_row - 5, 0)
-        column_notes = _extract_column_notes(workbook)
-        methodology = _extract_workbook_methodology(workbook)
+        column_notes = _extract_column_notes(workbook, sheet.title)
+        methodology = _extract_workbook_methodology(workbook, sheet.title)
         workbook.close()
         numeric_columns = [
             column
