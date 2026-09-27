@@ -47,6 +47,22 @@ GLM_RUNTIME_MAX_OUTPUT_TOKENS = 16_000
 # loop aborts early instead of burning the full round budget.
 GLM_PASSIVE_TOOLS = frozenset({"search_market_data", "request_clarification"})
 GLM_RUNTIME_STAGNATION_LIMIT = 8
+# When the bounded loop stops without a terminal answer (round budget spent,
+# or an empty content round), one tools-free wrap-up round converts the spent
+# loop into a user-readable reply instead of a bare failure.
+GLM_FINALIZATION_INSTRUCTIONS = (
+    "You have used this research turn's tool-round budget. Do not try to "
+    "call any more tools. From the conversation and the data already "
+    "gathered, write the final answer for the user in Chinese: report what "
+    "you completed and its key results, state plainly which part could not "
+    "be finished in this turn, and propose the next concrete step. If the "
+    "request still lacks a decision only the user can make, end with one "
+    "concrete clarifying question with numbered options."
+)
+GLM_EMPTY_ANSWER_FALLBACK = (
+    "本轮研究在多次调用工具后仍未能产出结论性回答。请补充关键信息"
+    "（标的、日期区间、指标定义）后重试，或在快捷菜单切换模型后重试。"
+)
 GLM_RECOVERY_INSTRUCTIONS = (
     "Research loop discipline:\n"
     "- Plan before acting: decompose the question into the data you need, "
@@ -148,6 +164,25 @@ class GlmFeishuAgentRuntime:
                 )
         raise last_exc
 
+    def _final_answer_without_tools(self, messages: List[Dict[str, Any]]) -> str:
+        """Spend one tools-free wrap-up round and return its content."""
+        payload = self._post_with_retry(
+            {
+                "model": self._model,
+                "messages": messages
+                + [{"role": "user", "content": GLM_FINALIZATION_INSTRUCTIONS}],
+                "thinking": {"type": "enabled"},
+                "temperature": 0,
+                "max_tokens": GLM_RUNTIME_MAX_OUTPUT_TOKENS,
+                "stream": False,
+            }
+        )
+        error = payload.get("error")
+        if error:
+            raise RuntimeError(_friendly_glm_error(error))
+        message = ((payload.get("choices") or [{}])[0].get("message")) or {}
+        return str(message.get("content") or "").strip()
+
     def run(
         self,
         request: FeishuAgentRequest,
@@ -171,7 +206,9 @@ class GlmFeishuAgentRuntime:
             ]
             answer = ""
             stagnation_rounds = 0
+            rounds_used = 0
             for round_index in range(GLM_RUNTIME_MAX_ROUNDS):
+                rounds_used = round_index + 1
                 payload = self._post_with_retry(
                     {
                         "model": self._model,
@@ -239,9 +276,24 @@ class GlmFeishuAgentRuntime:
                         }
                     )
             if not answer:
-                raise RuntimeError(
-                    "GLM agent exceeded the bounded tool-call limit without an answer."
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "glm_agent_finalization",
+                    conversation_id=request.conversation_id,
+                    model=self._model,
+                    rounds_used=rounds_used,
                 )
+                answer = self._final_answer_without_tools(messages)
+                if not answer:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "glm_agent_finalization_empty",
+                        conversation_id=request.conversation_id,
+                        model=self._model,
+                    )
+                    answer = GLM_EMPTY_ANSWER_FALLBACK
             artifact_path = _persist_artifact(artifact_dir, request.conversation_name)
             return FeishuAgentOutcome(
                 answer=answer,

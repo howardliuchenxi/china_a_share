@@ -783,3 +783,160 @@ def test_glm_runtime_resets_stagnation_after_real_work():
     )
 
     assert outcome.answer == "研究完成。"
+
+
+def test_glm_runtime_finalizes_with_readable_answer_when_budget_is_spent():
+    """The bounded loop must end in a user-readable reply, never a bare error."""
+    from china_a_share.glm_agent import (
+        GLM_FINALIZATION_INSTRUCTIONS,
+        GLM_RUNTIME_MAX_ROUNDS,
+    )
+
+    toolbox = FakeToolbox()
+    working_round = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-work",
+                            "type": "function",
+                            "function": {
+                                "name": "query_market_data",
+                                "arguments": '{"operation": "daily"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    finalize_round = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "已完成前半部分统计；其余部分下一轮继续。",
+                }
+            }
+        ]
+    }
+    session = FakeSession([working_round] * GLM_RUNTIME_MAX_ROUNDS + [finalize_round])
+    runtime = GlmFeishuAgentRuntime(
+        base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        model="glm-5.3",
+        api_key="zai-key",
+        toolbox_factory=lambda artifact_dir, conversation_id: toolbox,
+        session=session,
+    )
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="任意问题",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        lambda stage, message: None,
+    )
+
+    assert outcome.answer == "已完成前半部分统计；其余部分下一轮继续。"
+    assert len(toolbox.calls) == GLM_RUNTIME_MAX_ROUNDS
+    assert len(session.calls) == GLM_RUNTIME_MAX_ROUNDS + 1
+    _, finalize_kwargs = session.calls[-1]
+    # The wrap-up round must not offer tools, so the model can only answer.
+    assert "tools" not in finalize_kwargs["json"]
+    final_message = finalize_kwargs["json"]["messages"][-1]
+    assert final_message["role"] == "user"
+    assert final_message["content"] == GLM_FINALIZATION_INSTRUCTIONS
+
+
+def test_glm_runtime_recovers_when_a_round_returns_empty_content():
+    """An empty content round routes to the wrap-up instead of failing the turn."""
+    from china_a_share.glm_agent import GLM_FINALIZATION_INSTRUCTIONS
+
+    toolbox = FakeToolbox()
+    empty_round = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+    finalize_round = {
+        "choices": [
+            {"message": {"role": "assistant", "content": "根据已有数据，答案是 11.70。"}}
+        ]
+    }
+    session = FakeSession([empty_round, finalize_round])
+    runtime = GlmFeishuAgentRuntime(
+        base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        model="glm-5.3",
+        api_key="zai-key",
+        toolbox_factory=lambda artifact_dir, conversation_id: toolbox,
+        session=session,
+    )
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="平安银行最新收盘价",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        lambda stage, message: None,
+    )
+
+    assert outcome.answer == "根据已有数据，答案是 11.70。"
+    assert toolbox.calls == []
+    _, finalize_kwargs = session.calls[-1]
+    assert "tools" not in finalize_kwargs["json"]
+    assert (
+        finalize_kwargs["json"]["messages"][-1]["content"]
+        == GLM_FINALIZATION_INSTRUCTIONS
+    )
+
+
+def test_glm_finalization_falls_back_to_group_guidance_when_even_that_is_empty():
+    from china_a_share.glm_agent import (
+        GLM_EMPTY_ANSWER_FALLBACK,
+        GLM_RUNTIME_MAX_ROUNDS,
+    )
+
+    toolbox = FakeToolbox()
+    working_round = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-work",
+                            "type": "function",
+                            "function": {
+                                "name": "query_market_data",
+                                "arguments": '{"operation": "daily"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    session = FakeSession(
+        [working_round] * GLM_RUNTIME_MAX_ROUNDS
+        + [{"choices": [{"message": {"role": "assistant", "content": ""}}]}]
+    )
+    runtime = GlmFeishuAgentRuntime(
+        base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        model="glm-5.3",
+        api_key="zai-key",
+        toolbox_factory=lambda artifact_dir, conversation_id: toolbox,
+        session=session,
+    )
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="任意问题",
+            conversation_id="tenant:chat:root:user",
+            source_message_id="message-1",
+        ),
+        lambda stage, message: None,
+    )
+
+    assert outcome.answer == GLM_EMPTY_ANSWER_FALLBACK

@@ -1336,3 +1336,72 @@ def test_research_workbook_renders_compact_calendar_dates_not_grouped_numbers():
     results = load_workbook(path, data_only=False)["Results"]
     assert results["C6"].value == "2026-09-17"
     assert results["D6"].value == 20260917
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_ANALYSIS") != "1"
+    or not os.getenv("ZAI_API_KEY")
+    or not os.getenv("RESEARCH_SANDBOX_URL"),
+    reason=(
+        "Set RUN_LIVE_ANALYSIS=1 with ZAI_API_KEY and RESEARCH_SANDBOX_URL "
+        "to call the real GLM runtime and Tushare."
+    ),
+)
+def test_live_glm_runtime_answers_reported_bare_option_number():
+    """Reported regression: prompt 「3」 hit the bounded-round limit with no answer.
+
+    The production turn selected option 3 of a pending numbered question
+    (the heaviest branch), spent the whole round budget, and failed with
+    "exceeded the bounded tool-call limit". The loop must now end in a
+    user-readable answer instead.
+    """
+    runtime = create_feishu_agent_runtime(Settings.from_env(), llm_preference="glm")
+
+    outcome = runtime.run(
+        FeishuAgentRequest(
+            prompt="3",
+            conversation_id="live:feishu:agent:reported-bare-option-number",
+            source_message_id="live-reported-bare-option-number",
+            conversation=[
+                FeishuAgentConversationTurn(
+                    prompt="1",
+                    answer=(
+                        "v2.26 定案生效：L10 行业进入＝L9 推荐组合直接确定＋卖点＝"
+                        "10 档持有＋最优持有档＝选项1「逐股选档·平均收益最大」，"
+                        "已落盘 artifacts/a_share_research.xlsx。"
+                    ),
+                ),
+                FeishuAgentConversationTurn(
+                    prompt="现在进行个股的回溯测试，时间为过去两年，样本为当前L1 层全体股票。"
+                    "按照行业、个股代码 顺序，逐一回测，给每只股票建立L8.1 条件2"
+                    "（个股历史表现） 的档案资料，并且 与个股进行绑定记录",
+                    answer=(
+                        "个股回溯测试中「L8.1 条件2 档案」的信号日 t 如何定义？这直接"
+                        "决定每只股票的事件集、收益统计与 L10 最优持有档取档（其余参数"
+                        "已明确：样本＝当前 L1 层全体股票、区间＝过去两年有行情交易日、"
+                        "N=1–10 十档、收益＝qf(t+N)/qf(t)−1、qf＝未复权 daily.close×"
+                        "当日 adj_factor、同股按 N=10 前向窗口 keep-first 去重、按行业＋"
+                        "个股代码顺序逐一建档绑定）。\n"
+                        "1. 行业条件1信号日·前30%（推荐）：t＝该股所属同花顺二级行业"
+                        "每日净流入动量 net_amount(t)/net_amount(t−5)−1 在全部二级行业"
+                        "截面降序前30%的交易日（含并列，行业当日满足即其成员股各计1次"
+                        "信号；截取比例与 L2 前30%分位口径一致）\n"
+                        "2. 行业条件1信号日·固定前10行业：同上，但截取固定为截面降序"
+                        "前10个二级行业（并列全入）\n"
+                        "3. L7完整链条信号日：t＝该股过去2年内进入L7目标层的交易日"
+                        "（需对全体L1个股逐日回放L1→L7全链条，计算量最大、耗时最长）\n"
+                        "4. 重发原文：您直接给出「信号日」的精确定义与行业截取规则，"
+                        "我逐字执行不自拟\n"
+                        "请回复序号，或直接补充你的完整口径。"
+                    ),
+                ),
+            ],
+        ),
+        lambda _stage, _message: None,
+    )
+
+    assert outcome.answer.strip()
+    assert "exceeded the bounded tool-call limit" not in outcome.answer
+    assert "没有历史上下文" not in outcome.answer
+    assert "信号日" in outcome.answer or "L7" in outcome.answer

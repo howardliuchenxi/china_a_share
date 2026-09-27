@@ -17,6 +17,7 @@ from china_a_share.tasks import (
 from china_a_share.core.contracts import AnalysisTaskStatus, DiscoveryTask, ServiceError
 from china_a_share.feishu import FeishuOpenApiClient
 from china_a_share.feishu_agent import FeishuAgentCoordinator, FeishuAgentTask
+from china_a_share.observability import configure_logging
 
 
 class WorkerDispatcher:
@@ -29,6 +30,7 @@ class WorkerDispatcher:
 
 def main() -> None:
     """Load and execute the task selected by the job environment."""
+    configure_logging()
     task_id = os.getenv("ANALYSIS_TASK_ID", "").strip()
     if not task_id:
         raise ConfigurationError("ANALYSIS_TASK_ID is required for the worker.")

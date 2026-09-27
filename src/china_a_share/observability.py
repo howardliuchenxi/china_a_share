@@ -31,6 +31,13 @@ class StructuredLogFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def configure_logging() -> None:
+    """Emit application decision logs through the process root handler."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(StructuredLogFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
+
+
 def log_event(
     logger: logging.Logger,
     level: int,

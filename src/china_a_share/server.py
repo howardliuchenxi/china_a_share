@@ -1,11 +1,10 @@
 """Single-process web server entry point for local and cloud use."""
 
-import logging
 import os
 
 import uvicorn
 
-from china_a_share.observability import StructuredLogFormatter
+from china_a_share.observability import configure_logging
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -18,13 +17,6 @@ def server_address() -> tuple[str, int]:
         os.getenv("APP_HOST", DEFAULT_HOST),
         int(os.getenv("PORT", str(DEFAULT_PORT))),
     )
-
-
-def configure_logging() -> None:
-    """Emit application decision logs through the process root handler."""
-    handler = logging.StreamHandler()
-    handler.setFormatter(StructuredLogFormatter())
-    logging.basicConfig(level=logging.INFO, handlers=[handler])
 
 
 def main() -> None:

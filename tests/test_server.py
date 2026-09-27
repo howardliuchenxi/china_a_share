@@ -1,7 +1,10 @@
 import logging
 
-from china_a_share.observability import StructuredLogFormatter
-from china_a_share.server import configure_logging, server_address
+from china_a_share.observability import (
+    StructuredLogFormatter,
+    configure_logging,
+)
+from china_a_share.server import server_address
 
 
 def test_server_address_defaults_to_localhost(monkeypatch):
@@ -28,3 +31,9 @@ def test_configure_logging_enables_structured_application_info(monkeypatch):
     assert calls[0]["level"] == logging.INFO
     assert len(calls[0]["handlers"]) == 1
     assert isinstance(calls[0]["handlers"][0].formatter, StructuredLogFormatter)
+
+
+def test_worker_entry_uses_the_shared_structured_logging_configuration():
+    from china_a_share import observability, worker
+
+    assert worker.configure_logging is observability.configure_logging

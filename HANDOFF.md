@@ -11,6 +11,13 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-27 · ZCode] GLM 有界循环耗尽硬失败改收尾作答 + worker 结构化日志（闲时任务）
+
+- 生产反馈（群内用户易来发「3」，GCS task `8429d1e7…`）：该「3」是上一轮四个编号选项里的选项3（L7 完整链条信号日，最重分支），GLM 循环烧满 120 轮后 raise「exceeded the bounded tool-call limit without an answer」，任务失败且零答案；近 5 天同类错误 12+ 次（系统性）。次要发现：worker 进程从未配置 logging，`glm_agent_round` INFO 轮级遥测全被吞（这次失败 7 分钟只有 2 条日志，无法还原工具轨迹）。
+- 修复（机制级，无任何针对「3」的特例）：①`glm_agent.py` 循环在无终答时（轮预算耗尽或空 content 轮）追加一个**不带 tools 的收尾轮**，强制模型基于已获取信息产出最终答复/进度汇报/澄清提问；连收尾轮都空时兜底返回中文重试指引（日志 `glm_agent_finalization` / `glm_agent_finalization_empty`）。provider/配额错误仍照常 raise（`_friendly_glm_error` 翻译）。停滞止损（8 轮被动工具）保持原样。②`configure_logging` 下沉到 observability.py，worker.py main() 接上——今后 GLM 轮级工具遥测可在 Cloud Logging 按 conversation_id 查询。
+- 测试：新增 3 个单测（预算耗尽→收尾作答、空 content 轮→收尾作答、连收尾为空→兜底文案，FakeSession 断言收尾请求无 tools 键）；test_server 增加 worker 日志接线断言；test_feishu_agent 尾部新增 GLM live 用例（「3」+ 真实澄清问题原文，llm_preference="glm"，断言可读答复且包含信号日/L7）。
+- 遗留：本条目提交后需在 Cloud Logging 验证 worker INFO 遥测生效；GLM 对超重任务（选项3类）单轮仍可能做不完全部计算——现在会诚实汇报进度与下一步，根治仍等智谱 /responses 上线后切 Codex harness（D-2026-09-20）。
+
 ## [2026-09-26 · Codex] Enforce one workbook with replaceable topic tabs
 
 - Fixed production task `3311be2d…` (`按照以上内容，补全模型`), which completed research but failed delivery because an extra supported file made the terminal artifact scan ambiguous.
