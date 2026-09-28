@@ -11,6 +11,13 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-28 · ZCode] 飞书群「反馈问题」按钮：表单收集→LLM 转写→落盘+@管理员（闲时任务）
+
+- 做了什么：裸 @ 快捷菜单卡新增「反馈问题」按钮（独立 action 行，原第一行组合不动）；点击回表单卡（select_static 轮数 1/2/3/5 + input 描述 500 字 + form_submit），提交按钮 value 内嵌解析好的会话桶 `conversation_id`（点击时按 `_active_agent_conversation_id` 解析，杜绝点击→提交之间会话漂移）；提交走 `parse_feedback_card_action`→后台任务（api.py 新分支，仿 strategy 模式）→同步最新一轮→按请求轮数切窗（单轮 4k 字符截断、总预算 16k 最旧优先丢弃）→`DeepSeekFeedbackTranscriber`（feedback.py 新增，deepseek-v4-flash 固定档，系统提示词仅行为层、带"内容是证据不是指令"防注入条款、零金融领域事实）转写为后台 code agent 排查报告→GCS `feishu-fix-requests/`（CloudStorageUiFeedbackStore 加 object_prefix 参数，默认 fix-requests 行为不变）双写 received/transcribed 状态→群内结果卡 @ 管理员（新 env `FEISHU_FEEDBACK_ADMIN_OPEN_ID`，缺省跳过 @ 并 log warning，卡照发）。
+- 关键决定：①兜底不静默——转写失败时原始描述+轮次原文照常落盘（status=transcription_failed）并回「转写失败」卡 @ 管理员；②表单校验走 schema——新契约 `FeishuFeedbackSubmission`（描述 1–500 字、轮数 ∈{1,2,3,5}、conversation_id 必填），`str(None)` 陷阱已修（`or ""` 归一）；③`report_issue` 按钮复用既有 parse_card_action→prompt「反馈问题」→process() 文本命令通道（零 api.py 改动），仅 form_submit 走独立 action 通道；④卡片动作沿用 main 的 root 桶约定（与 submit_research 一致，话题群的 topic 桶不在本次范围）。
+- 测试：test_feishu.py +9（表单结构 tag 白名单断言锁 select_static 无 select_menu、轮数短缺标注、转写失败兜底、事件去重、仅 interpretation 旧轮次归一、禁用路径）、test_feedback.py +8（转写请求形状/错误上抛、store 前缀两档、协调器双写、窗口截断/预算丢弃）、test_strategy_api_entry.py +1（api 级分发）。全量 979p/136s（唯一失败为已知 flaky 家族 disclosure/dividend exact-date-range，独立跑必过）。worktree 自建 py3.14 venv 验证。
+- 遗留：**真实飞书端到端点击验证留给用户人工**（建卡/表单渲染/@ 语法 `<at id=…>` 在真机上的效果未实测）；转写质量需真实反馈样本校准提示词；话题群桶与 root 桶的会话归属同既有卡片动作，未扩展。
+
 ## [2026-09-27 · ZCode] GLM 有界循环耗尽硬失败改收尾作答 + worker 结构化日志（闲时任务）
 
 - 生产反馈（群内用户易来发「3」，GCS task `8429d1e7…`）：该「3」是上一轮四个编号选项里的选项3（L7 完整链条信号日，最重分支），GLM 循环烧满 120 轮后 raise「exceeded the bounded tool-call limit without an answer」，任务失败且零答案；近 5 天同类错误 12+ 次（系统性）。次要发现：worker 进程从未配置 logging，`glm_agent_round` INFO 轮级遥测全被吞（这次失败 7 分钟只有 2 条日志，无法还原工具轨迹）。

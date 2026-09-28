@@ -15,6 +15,7 @@ from china_a_share.feishu import (
     FeishuResearchBot,
     MemoryConversationStore,
 )
+from china_a_share.feishu_feedback import FeishuFeedbackCoordinator
 
 
 class FakeSender:
@@ -193,3 +194,69 @@ def test_feishu_events_route_keeps_legacy_card_actions_working():
     # Legacy actions are accepted with the standard toast without a strategy draft.
     assert response.json()["toast"]["type"] == "success"
     assert store.list_drafts("ou_api_user") == []
+
+
+def build_feedback_bot(transcriber, record_store):
+    sender = FakeSender()
+    interaction = FeishuFeedbackCoordinator(
+        transcriber, record_store, admin_open_id="ou_admin"
+    )
+    bot = FeishuResearchBot(
+        FakeTaskCoordinator(),
+        sender,
+        MemoryConversationStore(),
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        feedback_interaction=interaction,
+    )
+    return bot, sender
+
+
+def test_feishu_events_route_dispatches_feedback_card_actions():
+    class Transcriber:
+        def transcribe(self, description, turns):
+            return "整理后的排查报告"
+
+    class RecordStore:
+        def __init__(self):
+            self.records = []
+
+        def put(self, feedback_id, record):
+            self.records.append((feedback_id, dict(record)))
+
+    record_store = RecordStore()
+    bot, sender = build_feedback_bot(Transcriber(), record_store)
+    client = build_client(bot)
+
+    response = client.post(
+        FEISHU_EVENTS_API_ROUTE,
+        json={
+            "header": {
+                "token": "verification-token",
+                "event_type": "card.action.trigger",
+                "event_id": "evt-feedback-api-1",
+                "tenant_key": "tenant",
+            },
+            "event": {
+                "operator": {"open_id": "ou_api_user"},
+                "context": {
+                    "open_chat_id": "oc_api_chat",
+                    "open_message_id": "msg_api_card",
+                },
+                "action": {
+                    "value": {
+                        "action": "submit_feedback",
+                        "conversation_id": "tenant:chat:root:ou_api_user:session:default",
+                    },
+                    "form_value": {"description": "列名看不懂", "turns": "1"},
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["toast"]["type"] == "success"
+    assert len({feedback_id for feedback_id, _ in record_store.records}) == 1
+    assert record_store.records[-1][1]["status"] == "transcribed"
+    assert len(sender.cards) == 1
+    assert sender.cards[0][1]["header"]["title"]["content"] == "反馈已收到"

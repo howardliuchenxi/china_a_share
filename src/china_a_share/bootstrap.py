@@ -22,7 +22,9 @@ from china_a_share.cache import (
 from china_a_share.config import ConfigurationError, Settings
 from china_a_share.feedback import (
     CloudStorageUiFeedbackStore,
+    DeepSeekFeedbackTranscriber,
     DeepSeekUiFeedbackAssistant,
+    FEISHU_FEEDBACK_PREFIX,
     GitHubUiFeedbackDispatcher,
     GoogleAdminVerifier,
     UiFeedbackService,
@@ -48,6 +50,7 @@ from china_a_share.feishu import (
     FeishuOpenApiClient,
     FeishuResearchBot,
 )
+from china_a_share.feishu_feedback import FeishuFeedbackCoordinator
 from china_a_share.feishu_agent import (
     FeishuAgentCoordinator,
     ResearchToolbox,
@@ -152,6 +155,16 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
             strategy_scanner,
             compiler=rule_compiler,
         )
+    feedback_interaction = None
+    if settings.tushare_cache_bucket:
+        feedback_interaction = FeishuFeedbackCoordinator(
+            DeepSeekFeedbackTranscriber(settings.deepseek_api_key),
+            CloudStorageUiFeedbackStore(
+                settings.tushare_cache_bucket,
+                object_prefix=FEISHU_FEEDBACK_PREFIX,
+            ),
+            admin_open_id=settings.feishu_feedback_admin_open_id,
+        )
     return FeishuResearchBot(
         task_coordinator,
         feishu_client,
@@ -161,6 +174,7 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         allowed_open_ids=allowed_open_ids,
         agent_coordinator=agent_coordinator,
         strategy_interaction=strategy_interaction,
+        feedback_interaction=feedback_interaction,
         llm_switcher=create_llm_preference_controller(settings),
     )
 

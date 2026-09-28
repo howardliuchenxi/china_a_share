@@ -25,11 +25,16 @@ from china_a_share.core.contracts import (
 )
 from china_a_share.feishu import (
     CloudStorageConversationStore,
+    FeishuConversationTurn,
     FeishuEventError,
     FeishuResearchBot,
     FeishuTaskRecord,
     MemoryConversationStore,
     format_analysis_task,
+)
+from china_a_share.feishu_feedback import (
+    FeedbackTurn,
+    FeishuFeedbackCoordinator,
 )
 from china_a_share.feishu_agent import FeishuAgentCoordinator
 from china_a_share.tasks import MemoryAnalysisTaskStore
@@ -239,7 +244,11 @@ def card_action_payload(
     *,
     event_id="card-event-1",
     form_value=None,
+    extra_value=None,
 ):
+    value = {"action": action}
+    if extra_value:
+        value.update(extra_value)
     return {
         "header": {
             "event_id": event_id,
@@ -256,7 +265,7 @@ def card_action_payload(
             "action": {
                 "tag": "button",
                 "name": action,
-                "value": {"action": action},
+                "value": value,
                 "form_value": form_value or {},
             },
         },
@@ -1111,6 +1120,9 @@ class FakeEndpointBot:
     def parse_card_action(self, payload):
         return {"action": payload["event"]["action"]["value"]["action"]}
 
+    def parse_feedback_card_action(self, payload):
+        return None
+
     def parse_strategy_card_action(self, payload):
         action_name = payload["event"]["action"]["value"]["action"]
         if action_name.startswith("strategy_"):
@@ -1214,3 +1226,295 @@ def test_feishu_endpoint_requires_signature_for_regular_events():
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Feishu signature headers are required."}
+
+
+class FakeFeedbackTranscriber:
+    def __init__(self, report="整理后的排查报告", error=None):
+        self.report = report
+        self.error = error
+        self.calls = []
+
+    def transcribe(self, description, turns):
+        self.calls.append((description, [dict(row) for row in turns]))
+        if self.error is not None:
+            raise self.error
+        return self.report
+
+
+class FakeFeedbackRecordStore:
+    def __init__(self):
+        self.records = []
+
+    def put(self, feedback_id, record):
+        self.records.append((feedback_id, dict(record)))
+
+
+def build_feedback_bot(*, store_turns=None, transcriber=None, admin_open_id="ou-admin"):
+    service = FakeTaskCoordinator()
+    sender = FakeSender()
+    store = MemoryConversationStore()
+    transcriber = transcriber or FakeFeedbackTranscriber()
+    record_store = FakeFeedbackRecordStore()
+    interaction = FeishuFeedbackCoordinator(
+        transcriber, record_store, admin_open_id=admin_open_id
+    )
+    bot = FeishuResearchBot(
+        service,
+        sender,
+        store,
+        verification_token="verification-token",
+        encrypt_key="encrypt-key",
+        feedback_interaction=interaction,
+    )
+    if store_turns is not None:
+        store.put("tenant-1:chat-1:root:user-1:session:default", store_turns)
+    return bot, sender, store, transcriber, record_store
+
+
+def test_quick_menu_card_offers_feedback_button():
+    bot, _, sender, _ = build_bot()
+    event = bot.parse_event(
+        message_payload("event-menu", '<at user_id="bot">Bot</at>')
+    )
+
+    bot.process(event)
+
+    _, card = sender.cards[0]
+    feedback_buttons = [
+        action
+        for element in card["elements"]
+        if element["tag"] == "action"
+        for action in element["actions"]
+        if action["value"].get("action") == "report_issue"
+    ]
+    assert len(feedback_buttons) == 1
+    assert feedback_buttons[0]["text"]["content"] == "反馈问题"
+
+
+def test_report_issue_button_opens_feedback_form_bound_to_active_session():
+    bot, sender, _, _, _ = build_feedback_bot()
+
+    click_event = bot.parse_card_action(card_action_payload("report_issue"))
+    assert click_event is not None
+    assert click_event.prompt == "反馈问题"
+
+    bot.process(click_event)
+
+    assert len(sender.cards) == 1
+    _, card = sender.cards[0]
+    form = next(element for element in card["elements"] if element["tag"] == "form")
+    assert [element["name"] for element in form["elements"]] == [
+        "turns",
+        "description",
+        "submit_feedback",
+    ]
+    # The v1 card form whitelist: a select_menu tag makes Feishu drop the
+    # whole form silently, so the dropdown must stay a select_static.
+    assert [element["tag"] for element in form["elements"]] == [
+        "select_static",
+        "input",
+        "button",
+    ]
+    select = form["elements"][0]
+    assert [(option["value"], option["text"]["content"]) for option in select["options"]] == [
+        ("1", "近1轮"),
+        ("2", "近2轮"),
+        ("3", "近3轮"),
+        ("5", "近5轮"),
+    ]
+    description_input = form["elements"][1]
+    assert description_input["max_length"] == 500
+    submit = form["elements"][2]
+    assert submit["action_type"] == "form_submit"
+    assert (
+        submit["value"]["conversation_id"]
+        == "tenant-1:chat-1:root:user-1:session:default"
+    )
+    assert "select_menu" not in json.dumps(card)
+
+
+def test_feedback_form_submission_transcribes_and_replies_result_card():
+    bot, sender, _, transcriber, record_store = build_feedback_bot(
+        store_turns=[
+            FeishuConversationTurn(prompt="第一问", answer="第一答"),
+            FeishuConversationTurn(prompt="第二问", answer="第二答"),
+        ]
+    )
+
+    action = bot.parse_feedback_card_action(
+        card_action_payload(
+            "submit_feedback",
+            event_id="feedback-event-1",
+            form_value={"description": "表格列名看不懂", "turns": "2"},
+            extra_value={
+                "conversation_id": "tenant-1:chat-1:root:user-1:session:default"
+            },
+        )
+    )
+    assert action is not None
+    assert action.submission.turns == 2
+    assert action.submission.description == "表格列名看不懂"
+
+    bot.process_feedback_card_action(action)
+
+    description, rows = transcriber.calls[0]
+    assert description == "表格列名看不懂"
+    assert [row["content"] for row in rows] == ["第一问", "第一答", "第二问", "第二答"]
+    feedback_id, record = record_store.records[-1]
+    assert record["status"] == "transcribed"
+    assert record["turns_requested"] == 2
+    assert record["turns_included"] == 2
+    assert record["window_truncated"] is False
+    assert record["transcript"] == rows
+    _, card = sender.cards[-1]
+    assert card["header"]["title"]["content"] == "反馈已收到"
+    content = card["elements"][0]["text"]["content"]
+    assert "已收到，感谢反馈" in content
+    assert "整理后的排查报告" in content
+    assert "<at id=ou-admin></at>" in content
+
+
+def test_feedback_reports_shortfall_when_fewer_turns_available():
+    bot, sender, _, transcriber, record_store = build_feedback_bot(
+        store_turns=[FeishuConversationTurn(prompt="只有一问", answer="只有一答")]
+    )
+
+    action = bot.parse_feedback_card_action(
+        card_action_payload(
+            "submit_feedback",
+            form_value={"description": "d", "turns": "3"},
+            extra_value={
+                "conversation_id": "tenant-1:chat-1:root:user-1:session:default"
+            },
+        )
+    )
+    bot.process_feedback_card_action(action)
+
+    _, rows = transcriber.calls[0]
+    assert [row["content"] for row in rows] == ["只有一问", "只有一答"]
+    _, record = record_store.records[-1]
+    assert record["turns_included"] == 1
+    _, card = sender.cards[-1]
+    content = card["elements"][0]["text"]["content"]
+    assert "只有 1 轮" in content
+
+
+def test_feedback_transcription_failure_keeps_raw_feedback_visible():
+    bot, sender, _, _, record_store = build_feedback_bot(
+        transcriber=FakeFeedbackTranscriber(error=RuntimeError("upstream down")),
+        store_turns=[FeishuConversationTurn(prompt="q", answer="a")],
+    )
+
+    action = bot.parse_feedback_card_action(
+        card_action_payload(
+            "submit_feedback",
+            form_value={"description": "描述原文", "turns": "1"},
+            extra_value={
+                "conversation_id": "tenant-1:chat-1:root:user-1:session:default"
+            },
+        )
+    )
+    bot.process_feedback_card_action(action)
+
+    _, card = sender.cards[-1]
+    assert card["header"]["title"]["content"] == "反馈已收到（转写失败）"
+    content = card["elements"][0]["text"]["content"]
+    assert "描述原文" in content
+    assert "<at id=ou-admin></at>" in content
+    _, record = record_store.records[-1]
+    assert record["status"] == "transcription_failed"
+    assert "upstream down" in record["error"]
+    assert record["description"] == "描述原文"
+
+
+def test_feedback_submission_is_deduplicated_per_event():
+    bot, _, _, transcriber, record_store = build_feedback_bot()
+    payload = card_action_payload(
+        "submit_feedback",
+        event_id="feedback-event-dup",
+        form_value={"description": "d", "turns": "1"},
+        extra_value={
+            "conversation_id": "tenant-1:chat-1:root:user-1:session:default"
+        },
+    )
+    action = bot.parse_feedback_card_action(payload)
+
+    bot.process_feedback_card_action(action)
+    bot.process_feedback_card_action(action)
+
+    assert len(transcriber.calls) == 1
+    # The coordinator writes one "received" record and one final record for
+    # the SAME feedback id; a duplicate callback must not mint a new id.
+    assert len({feedback_id for feedback_id, _ in record_store.records}) == 1
+
+
+@pytest.mark.parametrize(
+    "form_value,extra_value",
+    [
+        ({"description": "x" * 501, "turns": "2"}, {"conversation_id": "c1"}),
+        ({"description": "   ", "turns": "2"}, {"conversation_id": "c1"}),
+        ({"description": "ok", "turns": "4"}, {"conversation_id": "c1"}),
+        ({"description": "ok", "turns": "2"}, {}),
+    ],
+)
+def test_feedback_form_rejects_invalid_fields(form_value, extra_value):
+    bot, _, _, _, _ = build_feedback_bot()
+
+    payload = card_action_payload(
+        "submit_feedback", form_value=form_value, extra_value=extra_value
+    )
+
+    with pytest.raises(FeishuEventError):
+        bot.parse_feedback_card_action(payload)
+
+
+def test_feedback_command_replies_disabled_text_without_interaction_module():
+    bot, _, sender, _ = build_bot()
+
+    event = bot.parse_event(
+        message_payload("event-fb", '<at user_id="bot">Bot</at> 反馈问题')
+    )
+    bot.process(event)
+
+    assert sender.cards == []
+    assert sender.replies[-1][1] == "反馈功能未启用，请联系管理员。"
+
+
+def test_feedback_parse_returns_none_without_interaction_module():
+    bot, _, _, _ = build_bot()
+
+    payload = card_action_payload(
+        "submit_feedback",
+        form_value={"description": "d", "turns": "2"},
+        extra_value={"conversation_id": "c"},
+    )
+
+    assert bot.parse_feedback_card_action(payload) is None
+
+
+def test_feedback_turn_window_accepts_bounded_pairs():
+    pair = FeedbackTurn(prompt="q", answer="a")
+    assert pair.prompt == "q"
+
+
+def test_feedback_transcript_normalizes_legacy_interpretation_turns():
+    bot, sender, _, transcriber, _ = build_feedback_bot(
+        store_turns=[
+            FeishuConversationTurn(prompt="旧一问", interpretation="旧的解读"),
+            FeishuConversationTurn(prompt="新一问", answer="新一答"),
+        ]
+    )
+
+    action = bot.parse_feedback_card_action(
+        card_action_payload(
+            "submit_feedback",
+            form_value={"description": "d", "turns": "2"},
+            extra_value={
+                "conversation_id": "tenant-1:chat-1:root:user-1:session:default"
+            },
+        )
+    )
+    bot.process_feedback_card_action(action)
+
+    _, rows = transcriber.calls[0]
+    assert [row["content"] for row in rows] == ["旧一问", "旧的解读", "新一问", "新一答"]

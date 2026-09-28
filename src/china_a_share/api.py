@@ -329,6 +329,18 @@ def create_app(
                             "content": "操作已提交",
                         }
                     }
+                feedback_action = bot.parse_feedback_card_action(payload)
+                if feedback_action is not None:
+                    background_tasks.add_task(
+                        bot.process_feedback_card_action,
+                        feedback_action,
+                    )
+                    return {
+                        "toast": {
+                            "type": "success",
+                            "content": "操作已提交",
+                        }
+                    }
                 event = bot.parse_card_action(payload)
                 if event is not None:
                     background_tasks.add_task(bot.process, event)

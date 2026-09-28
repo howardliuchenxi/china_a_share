@@ -2882,3 +2882,34 @@ class UiFeedbackSubmission(BaseModel):
         min_length=1,
         description="GitHub Actions page where the administrator can inspect progress.",
     )
+
+
+class FeishuFeedbackSubmission(BaseModel):
+    """Validated fields of one Feishu group issue-report form submission."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Reporter-authored description of the problem to transcribe.",
+    )
+    turns: int = Field(
+        description="Number of recent ask/answer turns to include in the report.",
+    )
+    conversation_id: str = Field(
+        min_length=1,
+        max_length=300,
+        description=(
+            "Conversation bucket embedded in the form card so the report covers "
+            "exactly the chat the reporter clicked from."
+        ),
+    )
+
+    @field_validator("turns")
+    @classmethod
+    def validate_turns(cls, value: int) -> int:
+        """Restrict the window to the options the form card offers."""
+        if value not in {1, 2, 3, 5}:
+            raise ValueError("turns must be one of 1, 2, 3, or 5")
+        return value

@@ -35,6 +35,8 @@ class Settings:
     feishu_verification_token: str = ""
     feishu_encrypt_key: str = ""
     feishu_allowed_open_ids: str = ""
+    # Open id mentioned on Feishu issue-report result cards; empty disables the mention.
+    feishu_feedback_admin_open_id: str = ""
     massive_api_key: str = ""
     finnhub_api_key: str = ""
     # Base URL for the active OpenAI-compatible model API.
@@ -92,6 +94,9 @@ class Settings:
         ).strip()
         feishu_encrypt_key = os.getenv("FEISHU_ENCRYPT_KEY", "").strip()
         feishu_allowed_open_ids = os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").strip()
+        feishu_feedback_admin_open_id = os.getenv(
+            "FEISHU_FEEDBACK_ADMIN_OPEN_ID", ""
+        ).strip()
         massive_api_key = os.getenv("MASSIVE_API_KEY", "").strip()
         finnhub_api_key = os.getenv("FINNHUB_API_KEY", "").strip()
         llm_base_url = os.getenv("LLM_BASE_URL", "").strip()
@@ -122,6 +127,7 @@ class Settings:
             feishu_verification_token=feishu_verification_token,
             feishu_encrypt_key=feishu_encrypt_key,
             feishu_allowed_open_ids=feishu_allowed_open_ids,
+            feishu_feedback_admin_open_id=feishu_feedback_admin_open_id,
             massive_api_key=massive_api_key,
             finnhub_api_key=finnhub_api_key,
             llm_base_url=llm_base_url,

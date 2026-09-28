@@ -20,7 +20,7 @@ from Crypto.Cipher import AES
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, ValidationError
 
 from china_a_share.core.contracts import (
     MAX_ANALYSIS_PROMPT_LENGTH,
@@ -31,6 +31,7 @@ from china_a_share.core.contracts import (
     AnalysisTaskStatus,
     AnalysisTaskSubmission,
     DiscoveryTask,
+    FeishuFeedbackSubmission,
 )
 from china_a_share.observability import log_event
 from china_a_share.feishu_agent import (
@@ -40,6 +41,14 @@ from china_a_share.feishu_agent import (
     FeishuAgentRequest,
     FeishuAgentTask,
     FeishuSourceMessageWithdrawnError,
+)
+from china_a_share.feishu_feedback import (
+    FeedbackTranscriptionError,
+    FeedbackTurn,
+    FeishuFeedbackCoordinator,
+    build_feedback_form_card,
+    build_feedback_result_card,
+    select_feedback_turn_window,
 )
 from china_a_share.discovery.strategy_interaction import StrategyInteractionCoordinator
 
@@ -80,6 +89,7 @@ QUICK_MENU_COMMAND_PATTERN = re.compile(
     r"^(?:帮助|菜单|快捷菜单|help)$",
     re.IGNORECASE,
 )
+FEEDBACK_COMMAND_PATTERN = re.compile(r"^反馈问题$")
 MODEL_COMMAND_PATTERN = re.compile(
     r"^(?:切换模型|当前模型|switch\s+model|current\s+model)"
     r"(?:\s+(?P<target>\S+))?$",
@@ -691,6 +701,17 @@ class FeishuStrategyCardAction:
     value: Dict[str, Any]
 
 
+@dataclass(frozen=True)
+class FeishuFeedbackCardAction:
+    """Validated fields of one issue-report form submission callback."""
+
+    event_id: str
+    message_id: str
+    chat_id: str
+    operator_open_id: str
+    submission: FeishuFeedbackSubmission
+
+
 class FeishuResearchBot:
     """Validate callbacks and connect Feishu conversations to analysis."""
 
@@ -705,6 +726,7 @@ class FeishuResearchBot:
         allowed_open_ids: Optional[set[str]] = None,
         agent_coordinator: Optional[FeishuAgentCoordinator] = None,
         strategy_interaction: Optional[StrategyInteractionCoordinator] = None,
+        feedback_interaction: Optional[FeishuFeedbackCoordinator] = None,
         llm_switcher: Optional[Any] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
@@ -719,6 +741,7 @@ class FeishuResearchBot:
         self._allowed_open_ids = allowed_open_ids or set()
         self._agent_coordinator = agent_coordinator
         self._strategy_interaction = strategy_interaction
+        self._feedback_interaction = feedback_interaction
         self._llm_switcher = llm_switcher
 
     @property
@@ -887,6 +910,7 @@ class FeishuResearchBot:
                 "new_session": "新建会话",
                 "list_sessions": "会话列表",
                 "task_status": "查看进度",
+                "report_issue": "反馈问题",
             }.get(action_name, "")
         if not prompt:
             return None
@@ -1052,6 +1076,15 @@ class FeishuResearchBot:
                     reply = self._retry_reply(event)
                 elif MODEL_COMMAND_PATTERN.match(event.prompt):
                     reply = self._model_command_reply(event)
+                elif FEEDBACK_COMMAND_PATTERN.match(event.prompt):
+                    if self._feedback_interaction is None:
+                        reply = "反馈功能未启用，请联系管理员。"
+                    else:
+                        self._sender.reply_card(
+                            event.message_id,
+                            self._feedback_form_reply(event),
+                        )
+                        reply = None
                 else:
                     reply = self._submit_reply(event)
             if reply is not None:
@@ -1103,6 +1136,153 @@ class FeishuResearchBot:
                 "策略操作失败，请稍后重试。若问题持续，请联系管理员并提供"
                 f"事件编号 {action.event_id}。",
             )
+
+    def parse_feedback_card_action(
+        self, payload: Dict[str, Any]
+    ) -> Optional[FeishuFeedbackCardAction]:
+        """Validate one issue-report form submission or return None."""
+        if self._feedback_interaction is None:
+            return None
+        context = self._extract_card_action_context(payload)
+        if context is None:
+            return None
+        (
+            event_id,
+            chat_id,
+            message_id,
+            operator_id,
+            action_name,
+            form_value,
+            _selected_option,
+            value,
+        ) = context
+        if action_name != "submit_feedback":
+            return None
+        try:
+            submission = FeishuFeedbackSubmission(
+                description=str(
+                    (form_value.get("description") or "")
+                    if isinstance(form_value, dict)
+                    else ""
+                ).strip(),
+                turns=str(
+                    (form_value.get("turns") or "")
+                    if isinstance(form_value, dict)
+                    else ""
+                ).strip(),
+                conversation_id=str(
+                    (value.get("conversation_id") or "") if isinstance(value, dict) else ""
+                ).strip(),
+            )
+        except ValidationError as exc:
+            raise FeishuEventError("Feishu feedback form fields are invalid.") from exc
+        return FeishuFeedbackCardAction(
+            event_id=event_id,
+            message_id=message_id,
+            chat_id=chat_id,
+            operator_open_id=operator_id,
+            submission=submission,
+        )
+
+    def process_feedback_card_action(self, action: FeishuFeedbackCardAction) -> None:
+        """Execute one claimed issue-report submission and reply with its card."""
+        if self._feedback_interaction is None:
+            return
+        if not self._store.claim_event(action.event_id):
+            return
+        submission = action.submission
+        try:
+            # Legacy turns may carry only an interpretation; normalize both
+            # shapes so the transcript always has bounded, non-null text.
+            turns = [
+                FeedbackTurn(
+                    prompt=turn.prompt,
+                    answer=turn.answer or turn.interpretation or "",
+                )
+                for turn in self._completed_agent_conversation(
+                    submission.conversation_id
+                )
+            ]
+            transcript_rows, window_truncated = select_feedback_turn_window(
+                turns, submission.turns
+            )
+            turns_included = len(transcript_rows) // 2
+            window_note = self._feedback_window_note(
+                submission.turns, turns_included, window_truncated
+            )
+            try:
+                report = self._feedback_interaction.handle_submission(
+                    description=submission.description,
+                    transcript_rows=transcript_rows,
+                    turns_requested=submission.turns,
+                    turns_included=turns_included,
+                    window_truncated=window_truncated,
+                    chat_id=action.chat_id,
+                    operator_open_id=action.operator_open_id,
+                )
+            except FeedbackTranscriptionError:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "feishu_feedback_transcription_failed",
+                    event_id=action.event_id,
+                    source="system",
+                )
+                self._sender.reply_card(
+                    action.message_id,
+                    build_feedback_result_card(
+                        raw_description=submission.description,
+                        admin_open_id=self._feedback_interaction.admin_open_id,
+                        transcription_failed=True,
+                        window_note=window_note,
+                    ),
+                )
+                self._store.complete_event(action.event_id)
+                return
+            self._sender.reply_card(
+                action.message_id,
+                build_feedback_result_card(
+                    report=report,
+                    admin_open_id=self._feedback_interaction.admin_open_id,
+                    window_note=window_note,
+                ),
+            )
+            self._store.complete_event(action.event_id)
+        except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                "feishu_feedback_submission_failed",
+                event_id=action.event_id,
+                source="system",
+                exc_info=True,
+            )
+            self._sender.reply(
+                action.message_id,
+                "反馈提交失败，请稍后重试。若问题持续，请联系管理员并提供"
+                f"事件编号 {action.event_id}。",
+            )
+
+    def _feedback_form_reply(self, event: FeishuMessageEvent) -> Dict[str, Any]:
+        """Return the issue-report form bound to the reporter's conversation."""
+        conversation_id = self._active_agent_conversation_id(event.conversation_id)
+        return build_feedback_form_card(conversation_id)
+
+    @staticmethod
+    def _feedback_window_note(
+        requested: int,
+        included: int,
+        truncated: bool,
+    ) -> str:
+        """Render one honest note about how much history the report covers."""
+        notes = []
+        if included < requested:
+            notes.append(
+                f"该会话只有 {included} 轮可引用的交互（少于所选的 {requested} 轮）。"
+            )
+        if truncated:
+            notes.append("部分较早交互或超长回答在报告中省略。")
+        return "；".join(notes)
 
     def _submit_reply(self, event: FeishuMessageEvent) -> Optional[str]:
         """Create one durable analysis task and return its tracking commands."""
@@ -1614,6 +1794,16 @@ def build_feishu_quick_menu_card(
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "查看进度"},
                     "value": {"action": "task_status"},
+                },
+            ],
+        },
+        {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "反馈问题"},
+                    "value": {"action": "report_issue"},
                 },
             ],
         },
