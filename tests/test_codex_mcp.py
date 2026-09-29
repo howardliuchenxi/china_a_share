@@ -125,3 +125,32 @@ def test_mcp_notifications_do_not_emit_responses():
         )
         is None
     )
+
+
+def test_load_conversation_texts_reads_bounded_corpus_file(tmp_path):
+    from china_a_share.codex_mcp import _load_conversation_texts
+
+    corpus_path = tmp_path / "conversation_corpus.json"
+    corpus_path.write_text(
+        '["第一轮提问\\n第一轮回答", "第二轮提问\\n第二轮回答"]',
+        encoding="utf-8",
+    )
+
+    assert _load_conversation_texts(str(corpus_path)) == [
+        "第一轮提问\n第一轮回答",
+        "第二轮提问\n第二轮回答",
+    ]
+
+
+def test_load_conversation_texts_degrades_to_none_when_corpus_unusable(tmp_path):
+    from china_a_share.codex_mcp import _load_conversation_texts
+
+    assert _load_conversation_texts("") is None
+
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert _load_conversation_texts(str(broken)) is None
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text('{"not": "a list"}', encoding="utf-8")
+    assert _load_conversation_texts(str(invalid)) is None

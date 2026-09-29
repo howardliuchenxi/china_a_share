@@ -193,6 +193,9 @@ class GlmFeishuAgentRuntime:
             artifact_dir = Path(workspace_value) / "artifacts"
             artifact_dir.mkdir()
             toolbox = self._toolbox_factory(artifact_dir, request.conversation_id)
+            toolbox.bind_conversation_texts(
+                f"{turn.prompt}\n{turn.answer}" for turn in request.conversation
+            )
             messages: List[Dict[str, Any]] = [
                 {
                     "role": "system",

@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import tempfile
-from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Protocol
+from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional, Protocol
 from urllib.parse import urlencode
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -542,12 +542,25 @@ class ResearchToolbox:
         self._artifact_dir = artifact_dir
         self._dataset_archive = dataset_archive
         self._task_id = task_id
+        self._conversation_texts: tuple = ()
         self._datasets: Dict[str, QueryResult] = {}
         if session_dataset is not None:
             self._datasets["session_dataset"] = session_dataset.model_copy(
                 update={"query_id": "session_dataset"},
                 deep=True,
             )
+
+    def bind_conversation_texts(self, texts: Optional[Iterable[str]]) -> None:
+        """Attach the searchable conversation corpus used to verify quotes.
+
+        The clarification gate checks that clauses quoted as established terms
+        really exist in the conversation, so both engine paths must hand in the
+        visible turns before the model can ask a bounded question.
+        """
+        if texts is None:
+            self._conversation_texts = ()
+        else:
+            self._conversation_texts = tuple(str(text) for text in texts)
 
     @property
     def definitions(self) -> List[Dict[str, Any]]:
@@ -571,21 +584,78 @@ class ResearchToolbox:
                     "name": "request_clarification",
                     "description": (
                         "Ask the user to resolve material ambiguity before any data "
-                        "query. Provide two to four concrete choices and mark the "
-                        "safest default as recommended."
+                        "query. First reconcile with terms the conversation has "
+                        "already established: quote every governing clause verbatim "
+                        "in governing_terms, declare each option's conflicts with "
+                        "those clauses, and when the quoted clauses already settle "
+                        "the matter return resolution='determined' with the "
+                        "conclusion and its derivation instead of asking. Options "
+                        "whose conflicts field is non-empty are dropped "
+                        "automatically, and quotes that do not appear in the "
+                        "conversation are rejected, so quote exactly and only offer "
+                        "options consistent with established terms."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "question": {"type": "string"},
+                            "governing_terms": {
+                                "type": "array",
+                                "description": (
+                                    "Verbatim quotes of conversation clauses that "
+                                    "govern this question; empty when the "
+                                    "conversation has established none."
+                                ),
+                                "items": {"type": "string"},
+                                "minItems": 0,
+                                "maxItems": 6,
+                            },
                             "options": {
                                 "type": "array",
-                                "items": {"type": "string"},
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": {"type": "string"},
+                                        "conflicts": {
+                                            "type": "string",
+                                            "description": (
+                                                "Empty when the option is "
+                                                "consistent with every quoted "
+                                                "clause; otherwise name the "
+                                                "quoted clause it contradicts "
+                                                "and why."
+                                            ),
+                                        },
+                                    },
+                                    "required": ["text", "conflicts"],
+                                    "additionalProperties": False,
+                                },
                                 "minItems": 2,
                                 "maxItems": 4,
                             },
+                            "resolution": {
+                                "type": "string",
+                                "enum": ["open", "determined"],
+                                "description": (
+                                    "'determined' when the quoted clauses already "
+                                    "fix the answer; then supply determined_answer."
+                                ),
+                            },
+                            "determined_answer": {
+                                "type": "string",
+                                "description": (
+                                    "Required for resolution='determined': the "
+                                    "conclusion plus its derivation from the "
+                                    "quoted clauses."
+                                ),
+                            },
                         },
-                        "required": ["question", "options"],
+                        "required": [
+                            "question",
+                            "governing_terms",
+                            "options",
+                            "resolution",
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -808,7 +878,9 @@ class ResearchToolbox:
             return _result_payload(result)
         if name == "request_clarification":
             return {
-                "clarification": _format_clarification(arguments),
+                "clarification": _format_clarification(
+                    arguments, self._conversation_texts
+                ),
                 "instruction": (
                     "Return the clarification verbatim as the final answer and do "
                     "not call another tool in this turn."
@@ -1422,20 +1494,119 @@ def _result_payload(
     return payload
 
 
-def _format_clarification(arguments: Any) -> str:
-    """Render one bounded clarification that can be answered by number or text."""
+CLARIFICATION_QUOTE_MAX_LENGTH = 400
+
+
+def _normalized_quote_text(text: str) -> str:
+    """Collapse all whitespace so line-wrapped quotes still match the corpus."""
+    return re.sub(r"\s+", "", text)
+
+
+def _quote_exists_in_conversation(quote: str, conversation_texts: tuple) -> bool:
+    normalized = _normalized_quote_text(quote)
+    if not normalized:
+        return False
+    return any(
+        normalized in _normalized_quote_text(text) for text in conversation_texts
+    )
+
+
+def _clarification_options(raw_options: Any) -> List[Dict[str, str]]:
+    """Validate option objects into text/conflicts pairs."""
+    if not isinstance(raw_options, list):
+        raise RuntimeError("Research clarification requires options.")
+    options: List[Dict[str, str]] = []
+    for raw_option in raw_options:
+        if not isinstance(raw_option, dict):
+            raise RuntimeError(
+                "Each clarification option must be an object with text and "
+                "conflicts."
+            )
+        text = str(raw_option.get("text") or "").strip()
+        if not text:
+            raise RuntimeError("Clarification option text cannot be empty.")
+        conflicts = str(raw_option.get("conflicts") or "").strip()
+        options.append({"text": text, "conflicts": conflicts})
+    if not 2 <= len(options) <= 4:
+        raise RuntimeError("Research clarification requires two to four options.")
+    if len({option["text"] for option in options}) != len(options):
+        raise RuntimeError("Research clarification options must be unique.")
+    return options
+
+
+def _format_clarification(arguments: Any, conversation_texts: tuple) -> str:
+    """Render one ledger-checked clarification or its already-determined answer.
+
+    The gate is deterministic: clauses quoted as established terms must exist
+    verbatim in the conversation corpus, options the caller declared conflicting
+    are dropped before the user sees them, a question whose quoted clauses
+    already settle the matter is answered instead of asked, and fewer than two
+    surviving options is a contract violation the caller must repair.
+    """
     if not isinstance(arguments, dict):
         raise RuntimeError("Research clarification arguments must be an object.")
     question = str(arguments.get("question") or "").strip()
-    raw_options = arguments.get("options")
-    if not question or not isinstance(raw_options, list):
-        raise RuntimeError("Research clarification requires a question and options.")
-    options = [str(option).strip() for option in raw_options if str(option).strip()]
-    if not 2 <= len(options) <= 4 or len(options) != len(set(options)):
+    if not question:
+        raise RuntimeError("Research clarification requires a question.")
+    resolution = str(arguments.get("resolution") or "").strip()
+    if resolution not in {"open", "determined"}:
         raise RuntimeError(
-            "Research clarification requires two to four unique options."
+            "Research clarification requires resolution 'open' or 'determined'."
+        )
+    raw_governing = arguments.get("governing_terms")
+    governing_quotes = []
+    if isinstance(raw_governing, list):
+        governing_quotes = [
+            str(quote).strip() for quote in raw_governing if str(quote).strip()
+        ]
+    if len(governing_quotes) > 6:
+        raise RuntimeError("Research clarification allows at most six quotes.")
+    for quote in governing_quotes:
+        if len(quote) > CLARIFICATION_QUOTE_MAX_LENGTH:
+            raise RuntimeError(
+                "Research clarification quotes must stay under "
+                f"{CLARIFICATION_QUOTE_MAX_LENGTH} characters; quote only the "
+                "decisive sentence of longer clauses."
+            )
+        if not _quote_exists_in_conversation(quote, conversation_texts):
+            raise RuntimeError(
+                "Research clarification governing_terms must quote the "
+                f"conversation verbatim; this quote was not found: {quote[:80]}"
+            )
+    options = _clarification_options(arguments.get("options"))
+    if resolution == "determined":
+        determined_answer = str(arguments.get("determined_answer") or "").strip()
+        if not determined_answer:
+            raise RuntimeError(
+                "A determined clarification requires determined_answer with "
+                "the conclusion and its derivation."
+            )
+        if not governing_quotes:
+            raise RuntimeError(
+                "A determined clarification must quote the established "
+                "clauses it derives from."
+            )
+        return determined_answer
+    surviving = [option for option in options if not option["conflicts"]]
+    dropped = [option for option in options if option["conflicts"]]
+    if dropped:
+        logger.info(
+            "clarification_conflicting_options_dropped count=%s dropped=%s",
+            len(dropped),
+            [option["text"][:100] for option in dropped],
+        )
+    if len(surviving) < 2:
+        raise RuntimeError(
+            "Fewer than two clarification options are consistent with the "
+            "established clauses. If the quoted clauses already settle the "
+            "matter, call request_clarification again with "
+            "resolution='determined' and the derived conclusion; otherwise "
+            "offer at least two options that do not conflict with them."
         )
     lines = [question]
-    lines.extend(f"{index}. {option}" for index, option in enumerate(options, start=1))
+    lines.extend(
+        f"{index}. {option['text']}"
+        for index, option in enumerate(surviving, start=1)
+    )
     lines.append("请回复序号，或直接补充你的完整口径。")
     return "\n".join(lines)

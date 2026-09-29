@@ -154,6 +154,12 @@ class CodexFeishuAgentRuntime:
             "RESEARCH_SANDBOX_URL": self._sandbox_url,
             "CODEX_AGENT_ARTIFACT_DIR": str(artifact_dir),
             "CODEX_AGENT_CONVERSATION_ID": request.conversation_id,
+            # The MCP toolbox verifies clarification quotes against this
+            # corpus; the file is bounded by MAX_AGENT_CONTEXT_TURNS and its
+            # .json suffix keeps it out of artifact persistence.
+            "CODEX_AGENT_CONVERSATION_FILE": _write_conversation_corpus(
+                artifact_dir, request
+            ),
         }
         task_id = os.getenv("ANALYSIS_TASK_ID", "").strip()
         if task_id:
@@ -174,6 +180,7 @@ class CodexFeishuAgentRuntime:
             "RESEARCH_SANDBOX_URL",
             "CODEX_AGENT_ARTIFACT_DIR",
             "CODEX_AGENT_CONVERSATION_ID",
+            "CODEX_AGENT_CONVERSATION_FILE",
         ]
         if os.getenv("ANALYSIS_TASK_ID", "").strip():
             mcp_env_vars.append("ANALYSIS_TASK_ID")
@@ -423,10 +430,17 @@ def _developer_instructions() -> str:
         "with the complete dataset identified by dataset_id. Prefer generic query, "
         "join, transform, rank, and sandbox composition over assumptions or manual "
         "reconstruction. If a material product or analytical choice is ambiguous, "
-        "call request_clarification once with two to four numbered choices, mark the "
-        "safest default as recommended, and return its clarification verbatim. When "
-        "conversation history shows the user answering that clarification, resolve "
-        "the answer from context instead of asking again. If the "
+        "first reconcile with terms the conversation has already established: "
+        "quote the governing clauses verbatim in governing_terms, mark every "
+        "option that conflicts with them, and when those clauses already settle "
+        "the matter call request_clarification with resolution='determined' and "
+        "the derived conclusion instead of asking the user. Otherwise call "
+        "request_clarification once with two to four numbered choices, mark the "
+        "safest default as recommended, and return its clarification verbatim. "
+        "Never offer an option that contradicts an established clause, never "
+        "re-ask a question the established clauses already answer, and when "
+        "conversation history shows the user answering an earlier clarification, "
+        "resolve the answer from context instead of asking again. If the "
         "inspect_session_dataset tool is available and the user refers to the "
         "previous list, result, table, or screening output, inspect and reuse that "
         "complete session dataset instead of reconstructing it from text or querying "
@@ -519,6 +533,26 @@ def _request_prompt(request: FeishuAgentRequest) -> str:
         "context only; answer current_user_request directly.\n"
         + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     )
+
+
+def _write_conversation_corpus(artifact_dir: Path, request: FeishuAgentRequest) -> str:
+    """Persist the visible conversation so the MCP toolbox can verify quotes.
+
+    The clarification gate rejects governing_terms that do not appear in this
+    corpus, so the Codex subprocess needs the same turns the prompt embeds.
+    """
+    corpus_path = artifact_dir / "conversation_corpus.json"
+    corpus_path.write_text(
+        json.dumps(
+            [
+                f"{turn.prompt}\n{turn.answer}"
+                for turn in request.conversation[-MAX_AGENT_CONTEXT_TURNS:]
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return str(corpus_path)
 
 
 def _persist_artifact(

@@ -11,6 +11,14 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-28 · ZCode] 澄清提问加台账一致性闸门（选项矛盾剔除/引文核验/已定即结论）
+
+- 背景（用户反馈）：agent 抛选择题时「单看选项很详细、联系整体逻辑不通」——实锤案例即 L4/L5 保留期之问：v2.24 唯一原则已写死三态纪律，选项 2/3 违反仍被并列 offered，且题设漏 r60 与 L6 自动进层。根因：已定口径只活在 12 轮对话窗口文本里，澄清工具契约（question+options 2–4 个）没有任何「对照已定条款」的强制。
+- 修复（机制级，双引擎同一咽喉 `ResearchToolbox`）：`request_clarification` 契约扩为 question + governing_terms（逐字引文，≤6 条）+ options[{text, conflicts}] + resolution(open|determined) + determined_answer。确定性闸门：①引文必须在会话语料中逐字存在（空白归一后子串匹配，杜造引文直接拒）；②模型自报 conflicts 的选项在渲染前剔除并留痕日志；③幸存 <2 即拒（要么按 determined 给结论要么给出不冲突选项）；④resolution=determined 时不提问、直接返回「结论+推导」（必须有引文与 determined_answer）。语料接线：GLM 侧 `bind_conversation_texts(request.conversation)`；Codex 侧父进程写 `conversation_corpus.json`（artifact_dir，.json 不进产物持久化）+ 新 env `CODEX_AGENT_CONVERSATION_FILE`（已入 mcp env 白名单）传入 MCP 子进程。提示词纪律同步（_developer_instructions，双引擎共用）+ 锁定断言测试。
+- 验证：全量 997 passed / 136 skipped 零失败；新增契约测试 12 个（剔除/幸存<2 拒/determined 即答/缺答案缺引文拒/伪造引文拒+换行容忍/语料文件读写降级/env 导出/提示词锁定）。live 用例不适用说明：本修复属提问行为契约，非某条可断言答案的生产 prompt，闸门行为由确定性单测覆盖（模型侧任何误用都会收到有界错误并可在轮内自纠——GLM 回喂 error、Codex 收 MCP isError）。
+- 遗留：①已定口径仍只活在 12 轮窗口内——窗口外滚出的条款对闸门不可见，「台账须存具名策略」的持久化仍是悬空项（需用户拍板存储口径）；②真实飞书端到端一次带澄清的对话待用户观察验证。
+- 附注：今日另从 Codex 会话存档（~/.codex/sessions，244 份）恢复 v2.24 逐层标准全表（台账本体在飞书 agent 服务端工作区，不在本仓库）；「L4/L5 到期去向」裁定＝选项 1 语义且为唯一原则唯一合法解。
+
 ## [2026-09-28 · ZCode] 卡片全面去表单化：旧客户端不再出现「请升级客户端」占位
 
 - 背景：用户旧客户端实测反馈——占位条是飞书对不支持的表单容器的兜底 UI，上一轮的文本兜底只是绕行，占位条仍在（快捷菜单的研究输入表单 + 反馈表单两处）；用户拍板「还不够，彻底向下兼容」。

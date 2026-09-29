@@ -93,6 +93,10 @@ class FakeTaskCoordinator:
 class FakeToolbox:
     def __init__(self):
         self.calls = []
+        self.bound_conversation_texts = None
+
+    def bind_conversation_texts(self, texts):
+        self.bound_conversation_texts = list(texts or [])
 
     @property
     def definitions(self):

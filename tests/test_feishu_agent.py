@@ -227,12 +227,19 @@ class RecordingSink:
 
 def test_request_clarification_returns_one_bounded_prompt():
     toolbox = ResearchToolbox(FakeProvider(), "request-1")
+    toolbox.bind_conversation_texts(["之前没有登记任何口径。"])
 
     payload = toolbox.call(
         "request_clarification",
         {
             "question": "请确认排名口径：",
-            "options": ["口径一（推荐）", "口径二", "自定义口径"],
+            "governing_terms": [],
+            "options": [
+                {"text": "口径一（推荐）", "conflicts": ""},
+                {"text": "口径二", "conflicts": ""},
+                {"text": "自定义口径", "conflicts": ""},
+            ],
+            "resolution": "open",
         },
         lambda _stage, _message: None,
     )
@@ -245,6 +252,168 @@ def test_request_clarification_returns_one_bounded_prompt():
         "请回复序号，或直接补充你的完整口径。"
     )
     assert "final answer" in payload["instruction"]
+
+
+def test_clarification_drops_options_declared_conflicting_with_established_terms():
+    toolbox = ResearchToolbox(FakeProvider(), "request-1")
+    toolbox.bind_conversation_texts(
+        [
+            "已登记：卖出规则未定，未定前不假设任何卖出、不做持有期收益统计。",
+            "其他话题的普通对话。",
+        ]
+    )
+
+    payload = toolbox.call(
+        "request_clarification",
+        {
+            "question": "回测窗口如何处理未平仓标的？",
+            "governing_terms": [
+                "卖出规则未定，未定前不假设任何卖出、不做持有期收益统计"
+            ],
+            "options": [
+                {"text": "按未定处理，收益统计留空（推荐）", "conflicts": ""},
+                {
+                    "text": "假设持有5个交易日后卖出",
+                    "conflicts": "与「未定前不假设任何卖出」冲突",
+                },
+                {"text": "逐日列出浮动盈亏、不计终局收益", "conflicts": ""},
+            ],
+            "resolution": "open",
+        },
+        lambda _stage, _message: None,
+    )
+
+    assert payload["clarification"] == (
+        "回测窗口如何处理未平仓标的？\n"
+        "1. 按未定处理，收益统计留空（推荐）\n"
+        "2. 逐日列出浮动盈亏、不计终局收益\n"
+        "请回复序号，或直接补充你的完整口径。"
+    )
+
+
+def test_clarification_rejects_fewer_than_two_consistent_options():
+    toolbox = ResearchToolbox(FakeProvider(), "request-1")
+    toolbox.bind_conversation_texts(
+        ["已登记：被踢出者次日起自 L1 重新扫描入层、无冷却期。"]
+    )
+
+    with pytest.raises(RuntimeError, match="two clarification options"):
+        toolbox.call(
+            "request_clarification",
+            {
+                "question": "保留期到期后去向？",
+                "governing_terms": ["被踢出者次日起自 L1 重新扫描入层、无冷却期"],
+                "options": [
+                    {"text": "次日自 L1 重扫（推荐）", "conflicts": ""},
+                    {"text": "回到 L4 在册", "conflicts": "与三态纪律冲突"},
+                ],
+                "resolution": "open",
+            },
+            lambda _stage, _message: None,
+        )
+
+
+def test_clarification_answers_determined_questions_instead_of_asking():
+    toolbox = ResearchToolbox(FakeProvider(), "request-1")
+    toolbox.bind_conversation_texts(
+        ["已登记：逐日状态仅三种＝留在本层／踢出／进入下层，无回退边。"]
+    )
+
+    payload = toolbox.call(
+        "request_clarification",
+        {
+            "question": "到期后能否回到 L4 在册？",
+            "governing_terms": ["逐日状态仅三种＝留在本层／踢出／进入下层，无回退边"],
+            "options": [
+                {"text": "可以回 L4", "conflicts": "违反无回退边"},
+                {"text": "踢出并自 L1 重扫", "conflicts": ""},
+            ],
+            "resolution": "determined",
+            "determined_answer": (
+                "不能回到 L4：逐日状态仅三种＝留在本层／踢出／进入下层，无回退"
+                "边，故到期即踢出，次日起自 L1 重新扫描。"
+            ),
+        },
+        lambda _stage, _message: None,
+    )
+
+    assert "无回退边" in payload["clarification"]
+    assert "请回复序号" not in payload["clarification"]
+    assert "final answer" in payload["instruction"]
+
+
+def test_determined_clarification_requires_answer_and_verified_quotes():
+    toolbox = ResearchToolbox(FakeProvider(), "request-1")
+    toolbox.bind_conversation_texts(["已登记：总只数上限 30。"])
+
+    with pytest.raises(RuntimeError, match="determined_answer"):
+        toolbox.call(
+            "request_clarification",
+            {
+                "question": "上限多少？",
+                "governing_terms": ["总只数上限 30"],
+                "options": [
+                    {"text": "30", "conflicts": ""},
+                    {"text": "50", "conflicts": ""},
+                ],
+                "resolution": "determined",
+            },
+            lambda _stage, _message: None,
+        )
+
+    with pytest.raises(RuntimeError, match="quote the established clauses"):
+        toolbox.call(
+            "request_clarification",
+            {
+                "question": "上限多少？",
+                "governing_terms": [],
+                "options": [
+                    {"text": "30", "conflicts": ""},
+                    {"text": "50", "conflicts": ""},
+                ],
+                "resolution": "determined",
+                "determined_answer": "上限 30。",
+            },
+            lambda _stage, _message: None,
+        )
+
+
+def test_clarification_rejects_governing_quotes_missing_from_conversation():
+    toolbox = ResearchToolbox(FakeProvider(), "request-1")
+    toolbox.bind_conversation_texts(
+        ["已登记：L5 保留期 20 个有行情交易日为上限。"]
+    )
+
+    with pytest.raises(RuntimeError, match="was not found"):
+        toolbox.call(
+            "request_clarification",
+            {
+                "question": "保留期多久？",
+                "governing_terms": ["L4 保留直到进入下一层"],
+                "options": [
+                    {"text": "20 个有行情交易日", "conflicts": ""},
+                    {"text": "无上限", "conflicts": ""},
+                ],
+                "resolution": "open",
+            },
+            lambda _stage, _message: None,
+        )
+
+    # Whitespace-wrapped quotes of real clauses still verify.
+    payload = toolbox.call(
+        "request_clarification",
+        {
+            "question": "保留期多久？",
+            "governing_terms": ["L5 保留期 20 个有行情交易日为上限"],
+            "options": [
+                {"text": "20 个有行情交易日", "conflicts": ""},
+                {"text": "无上限", "conflicts": ""},
+            ],
+            "resolution": "open",
+        },
+        lambda _stage, _message: None,
+    )
+    assert "1. 20 个有行情交易日" in payload["clarification"]
 
 
 def test_search_market_data_returns_all_audited_operations_with_query_shapes():

@@ -194,7 +194,29 @@ def create_server_from_env() -> ResearchMcpServer:
         task_id=task_id,
         session_dataset=session_dataset,
     )
+    toolbox.bind_conversation_texts(
+        _load_conversation_texts(
+            os.getenv("CODEX_AGENT_CONVERSATION_FILE", "").strip()
+        )
+    )
     return ResearchMcpServer(toolbox)
+
+
+def _load_conversation_texts(path_value: str) -> Optional[list]:
+    """Read the bounded conversation corpus written by the Codex parent process."""
+    if not path_value:
+        return None
+    try:
+        parsed = json.loads(Path(path_value).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning(
+            "codex_mcp_conversation_corpus_unreadable path=%s", path_value
+        )
+        return None
+    if not isinstance(parsed, list):
+        logger.warning("codex_mcp_conversation_corpus_invalid path=%s", path_value)
+        return None
+    return [str(text) for text in parsed]
 
 
 def _required_env(name: str) -> str:

@@ -645,3 +645,70 @@ def test_legacy_workbook_without_notes_still_extracts_methodology(tmp_path):
     assert visualization is not None
     assert visualization.column_notes == {}
     assert visualization.methodology == "前复权口径说明。"
+
+
+def test_write_conversation_corpus_persists_visible_turns_for_quote_verification(tmp_path):
+    import json
+
+    from china_a_share.codex_agent import _write_conversation_corpus
+
+    request = FeishuAgentRequest(
+        prompt="当前问题",
+        conversation_id="conversation-1",
+        source_message_id="message-1",
+        conversation=[
+            FeishuAgentConversationTurn(
+                prompt="登记规则：总只数上限 30。",
+                answer="已登记：总只数上限 30。",
+            ),
+            FeishuAgentConversationTurn(
+                prompt="第二个问题",
+                answer="第二个回答",
+            ),
+        ],
+    )
+
+    corpus_path = _write_conversation_corpus(tmp_path, request)
+
+    assert Path(corpus_path) == tmp_path / "conversation_corpus.json"
+    assert json.loads(Path(corpus_path).read_text(encoding="utf-8")) == [
+        "登记规则：总只数上限 30。\n已登记：总只数上限 30。",
+        "第二个问题\n第二个回答",
+    ]
+
+
+def test_codex_environment_exports_conversation_corpus_for_mcp_toolbox(tmp_path):
+    import json
+
+    runtime = CodexFeishuAgentRuntime(
+        api_key="key",
+        base_url="https://example.invalid",
+        model="deepseek-chat",
+        tushare_token="token",
+        cache_bucket="bucket",
+        sandbox_url="https://sandbox.invalid",
+    )
+    request = FeishuAgentRequest(
+        prompt="当前问题",
+        conversation_id="conversation-1",
+        source_message_id="message-1",
+        conversation=[
+            FeishuAgentConversationTurn(prompt="问", answer="答"),
+        ],
+    )
+
+    env = runtime._codex_environment(tmp_path, request)
+
+    corpus_path = Path(env["CODEX_AGENT_CONVERSATION_FILE"])
+    assert corpus_path.exists()
+    assert corpus_path.parent == tmp_path
+    assert json.loads(corpus_path.read_text(encoding="utf-8")) == ["问\n答"]
+
+
+def test_developer_instructions_require_ledger_reconciliation_before_clarification():
+    instructions = _developer_instructions()
+
+    assert "governing_terms" in instructions
+    assert "resolution='determined'" in instructions
+    assert "Never offer an option that contradicts an established clause" in instructions
+    assert "never re-ask a question the established clauses already answer" in instructions
