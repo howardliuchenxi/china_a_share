@@ -26,6 +26,14 @@
   - 为什么：未经对齐的改动会累积架构不一致；中途打断破坏执行连续性。规则全文已落在各工具全局配置（~/.codex/AGENTS.md、~/.claude/CLAUDE.md、~/.gemini/GEMINI.md，ZCode 侧为其持久记忆）。
   - 可推翻当：用户明确要求恢复「直接开工」或「逐步确认」模式。
 
+## [2026-09-29 · Codex] Validated six A-share strategy families
+
+- Added an isolated, reproducible study under `studies/a_share_strategy_search/`; no production application code was changed.
+- Repaired 426 endpoint-day gaps with study-local overlays, then evaluated 660 frozen candidates across train, validation, and blind periods ending 2026-09-23.
+- Selected one rule per family without using blind data; none produced positive and statistically robust blind net excess return after costs.
+- Delivered a two-sheet Excel report with 111,481 reconciled event rows, cost sensitivity, data-quality disclosures, and full execution dates.
+- Focused tests, independent result reconciliation, workbook rendering, and saved-file inspection passed.
+
 ## [2026-09-27 · Codex] v2.24 condition effect validation
 
 - Built an auditable L1-L7 daily state-machine study for 2025-01-01 through 2026-09-24, including a narrow counterfactual that reapplies L1/L2 to L3-L6.
