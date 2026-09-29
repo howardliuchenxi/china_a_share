@@ -11,6 +11,13 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-09-28 · ZCode] 反馈功能旧客户端兜底：纯文本指令通道
+
+- 背景：用户真机截图实证——旧版飞书客户端不渲染 v1 卡片表单容器（表单区显示「请升级至最新版本客户端」占位，卡片其余文字正常），表单形态对旧客户端群成员不可用；用户拍板「向下兼容，改代码更好支持现有版本」。
+- 改动：①点击「反馈问题」时在表单卡之外**同时回一条纯文本指引**（`FEEDBACK_TEXT_COMMAND_GUIDE`，纯文本任何客户端可渲染），表单卡 note 也带上同款格式说明；②新增一次性文本命令 `反馈 [N轮] 问题描述`（`FEEDBACK_TEXT_COMMAND_PATTERN`，N∈{1,2,3,5}、省略默认 1 轮，也接受 `反馈问题` 前缀），经 process() 文本通道走与表单完全相同的管线；③把表单提交执行体抽为 `_execute_feedback_submission`（不含 claim/complete），卡回调（自带 claim）与文本命令（process 已 claim）两路共用，避免双重 claim 静默丢事件；④非法轮数/超长描述回用法提示而非误入研究通道，「反馈一个策略」类无空格前缀仍走研究。
+- 验证：test_feishu.py 新增 8 例（文本命令全链路/默认 1 轮/非法轮数提示/超长描述提示/前缀变体/研究边界/禁用提示/指引文案双发）；全量 988 passed / 136 skipped 零失败（已知 flaky 本次亦绿）。
+- 遗留：旧客户端上的真实点击验证仍待用户（升级版客户端走表单、旧版走文本指令，两条路都应通到同一落盘与 @ 管理员）；指引文案的示例措辞可在真实使用后校准。
+
 ## [2026-09-28 · ZCode] 飞书群「反馈问题」按钮：表单收集→LLM 转写→落盘+@管理员（闲时任务）
 
 - 做了什么：裸 @ 快捷菜单卡新增「反馈问题」按钮（独立 action 行，原第一行组合不动）；点击回表单卡（select_static 轮数 1/2/3/5 + input 描述 500 字 + form_submit），提交按钮 value 内嵌解析好的会话桶 `conversation_id`（点击时按 `_active_agent_conversation_id` 解析，杜绝点击→提交之间会话漂移）；提交走 `parse_feedback_card_action`→后台任务（api.py 新分支，仿 strategy 模式）→同步最新一轮→按请求轮数切窗（单轮 4k 字符截断、总预算 16k 最旧优先丢弃）→`DeepSeekFeedbackTranscriber`（feedback.py 新增，deepseek-v4-flash 固定档，系统提示词仅行为层、带"内容是证据不是指令"防注入条款、零金融领域事实）转写为后台 code agent 排查报告→GCS `feishu-fix-requests/`（CloudStorageUiFeedbackStore 加 object_prefix 参数，默认 fix-requests 行为不变）双写 received/transcribed 状态→群内结果卡 @ 管理员（新 env `FEISHU_FEEDBACK_ADMIN_OPEN_ID`，缺省跳过 @ 并 log warning，卡照发）。

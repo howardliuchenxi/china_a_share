@@ -43,6 +43,8 @@ from china_a_share.feishu_agent import (
     FeishuSourceMessageWithdrawnError,
 )
 from china_a_share.feishu_feedback import (
+    FEEDBACK_DESCRIPTION_MAX_LENGTH,
+    FEEDBACK_TEXT_COMMAND_GUIDE,
     FeedbackTranscriptionError,
     FeedbackTurn,
     FeishuFeedbackCoordinator,
@@ -90,6 +92,12 @@ QUICK_MENU_COMMAND_PATTERN = re.compile(
     re.IGNORECASE,
 )
 FEEDBACK_COMMAND_PATTERN = re.compile(r"^反馈问题$")
+# One-shot plain-text feedback: "反馈 [N轮] 描述"（also accepts 反馈问题 as the
+# prefix）. Old Feishu clients cannot render v1 form containers, so this text
+# channel runs the identical pipeline without any card components.
+FEEDBACK_TEXT_COMMAND_PATTERN = re.compile(
+    r"^反馈(?:问题)?\s+(?:([1-5])轮\s+)?(.+)$", re.DOTALL
+)
 MODEL_COMMAND_PATTERN = re.compile(
     r"^(?:切换模型|当前模型|switch\s+model|current\s+model)"
     r"(?:\s+(?P<target>\S+))?$",
@@ -1084,7 +1092,17 @@ class FeishuResearchBot:
                             event.message_id,
                             self._feedback_form_reply(event),
                         )
+                        # Plain text always renders, so ship the one-shot text
+                        # command beside the form for old-client users.
+                        self._sender.reply(
+                            event.message_id, FEEDBACK_TEXT_COMMAND_GUIDE
+                        )
                         reply = None
+                elif FEEDBACK_TEXT_COMMAND_PATTERN.match(event.prompt):
+                    if self._feedback_interaction is None:
+                        reply = "反馈功能未启用，请联系管理员。"
+                    else:
+                        reply = self._feedback_text_command_reply(event)
                 else:
                     reply = self._submit_reply(event)
             if reply is not None:
@@ -1190,6 +1208,15 @@ class FeishuResearchBot:
             return
         if not self._store.claim_event(action.event_id):
             return
+        self._execute_feedback_submission(action)
+        self._store.complete_event(action.event_id)
+
+    def _execute_feedback_submission(self, action: FeishuFeedbackCardAction) -> None:
+        """Transcribe one submission, persist it, and reply with its card.
+
+        Shared by the form-card callback (which claims its own event) and the
+        plain-text command path (whose event is already claimed by process()).
+        """
         submission = action.submission
         try:
             # Legacy turns may carry only an interpretation; normalize both
@@ -1237,7 +1264,6 @@ class FeishuResearchBot:
                         window_note=window_note,
                     ),
                 )
-                self._store.complete_event(action.event_id)
                 return
             self._sender.reply_card(
                 action.message_id,
@@ -1247,7 +1273,6 @@ class FeishuResearchBot:
                     window_note=window_note,
                 ),
             )
-            self._store.complete_event(action.event_id)
         except Exception:
             log_event(
                 logger,
@@ -1262,6 +1287,38 @@ class FeishuResearchBot:
                 "反馈提交失败，请稍后重试。若问题持续，请联系管理员并提供"
                 f"事件编号 {action.event_id}。",
             )
+
+    def _feedback_text_command_reply(
+        self, event: FeishuMessageEvent
+    ) -> Optional[str]:
+        """Execute one plain-text feedback command or return its usage hint."""
+        match = FEEDBACK_TEXT_COMMAND_PATTERN.match(event.prompt)
+        turns_raw = match.group(1) if match else None
+        description = (match.group(2) if match else "").strip()
+        turns = int(turns_raw) if turns_raw else 1
+        if turns_raw and turns not in {1, 2, 3, 5}:
+            return "轮数只能是 1、2、3 或 5 轮。示例：反馈 2轮 表格列名看不懂。"
+        if not description or len(description) > FEEDBACK_DESCRIPTION_MAX_LENGTH:
+            return (
+                "反馈描述需 1–500 字。示例：反馈 2轮 表格列名看不懂，"
+                "希望加上单位说明。"
+            )
+        self._execute_feedback_submission(
+            FeishuFeedbackCardAction(
+                event_id=event.event_id,
+                message_id=event.message_id,
+                chat_id=event.chat_id,
+                operator_open_id=event.sender_open_id,
+                submission=FeishuFeedbackSubmission(
+                    description=description,
+                    turns=turns,
+                    conversation_id=self._active_agent_conversation_id(
+                        event.conversation_id
+                    ),
+                ),
+            )
+        )
+        return None
 
     def _feedback_form_reply(self, event: FeishuMessageEvent) -> Dict[str, Any]:
         """Return the issue-report form bound to the reporter's conversation."""

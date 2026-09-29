@@ -1331,6 +1331,23 @@ def test_report_issue_button_opens_feedback_form_bound_to_active_session():
         == "tenant-1:chat-1:root:user-1:session:default"
     )
     assert "select_menu" not in json.dumps(card)
+    note = next(
+        element for element in card["elements"] if element["tag"] == "note"
+    )
+    assert "旧版客户端" in note["elements"][0]["content"]
+
+
+def test_feedback_menu_click_ships_plain_text_command_guide():
+    bot, sender, _, _, _ = build_feedback_bot()
+
+    bot.process(bot.parse_card_action(card_action_payload("report_issue")))
+
+    # Old clients cannot render the form container, so the same click must
+    # also deliver a plain-text path that renders everywhere.
+    assert len(sender.cards) == 1
+    guide_texts = [text for _, text in sender.replies if "反馈 2轮" in text]
+    assert len(guide_texts) == 1
+    assert "默认最近 1 轮" in guide_texts[0]
 
 
 def test_feedback_form_submission_transcribes_and_replies_result_card():
@@ -1518,3 +1535,131 @@ def test_feedback_transcript_normalizes_legacy_interpretation_turns():
 
     _, rows = transcriber.calls[0]
     assert [row["content"] for row in rows] == ["旧一问", "旧的解读", "新一问", "新一答"]
+
+
+def test_feedback_text_command_runs_full_pipeline():
+    bot, sender, _, transcriber, record_store = build_feedback_bot(
+        store_turns=[
+            FeishuConversationTurn(prompt="第一问", answer="第一答"),
+            FeishuConversationTurn(prompt="第二问", answer="第二答"),
+        ]
+    )
+
+    event = bot.parse_event(
+        message_payload(
+            "event-fb-text",
+            '<at user_id="bot">Bot</at> 反馈 2轮 表格列名看不懂',
+            thread_id=None,
+        )
+    )
+    assert event is not None
+    assert event.prompt == "反馈 2轮 表格列名看不懂"
+
+    bot.process(event)
+
+    description, rows = transcriber.calls[0]
+    assert description == "表格列名看不懂"
+    assert [row["content"] for row in rows] == ["第一问", "第一答", "第二问", "第二答"]
+    _, record = record_store.records[-1]
+    assert record["status"] == "transcribed"
+    assert record["turns_requested"] == 2
+    _, card = sender.cards[-1]
+    assert card["header"]["title"]["content"] == "反馈已收到"
+    assert "已收到，感谢反馈" in card["elements"][0]["text"]["content"]
+
+
+def test_feedback_text_command_defaults_to_one_turn():
+    bot, _, _, transcriber, _ = build_feedback_bot(
+        store_turns=[
+            FeishuConversationTurn(prompt="问1", answer="答1"),
+            FeishuConversationTurn(prompt="问2", answer="答2"),
+        ]
+    )
+
+    bot.process(
+        bot.parse_event(
+            message_payload(
+                "event-fb-default",
+                '<at user_id="bot">Bot</at> 反馈 表格列名看不懂',
+                thread_id=None,
+            )
+        )
+    )
+
+    _, rows = transcriber.calls[0]
+    assert [row["content"] for row in rows] == ["问2", "答2"]
+
+
+def test_feedback_text_command_rejects_invalid_turn_count():
+    bot, sender, _, transcriber, record_store = build_feedback_bot()
+
+    bot.process(
+        bot.parse_event(
+            message_payload("event-fb-bad", '<at user_id="bot">Bot</at> 反馈 4轮 看不懂')
+        )
+    )
+
+    assert transcriber.calls == []
+    assert record_store.records == []
+    assert "轮数只能是 1、2、3 或 5 轮" in sender.replies[-1][1]
+
+
+def test_feedback_text_command_rejects_overlong_description():
+    bot, sender, _, transcriber, record_store = build_feedback_bot()
+
+    bot.process(
+        bot.parse_event(
+            message_payload(
+                "event-fb-long", f'<at user_id="bot">Bot</at> 反馈 {"长" * 501}'
+            )
+        )
+    )
+
+    assert transcriber.calls == []
+    assert record_store.records == []
+    assert "1–500 字" in sender.replies[-1][1]
+
+
+def test_feedback_text_command_accepts_problem_prefix_variant():
+    bot, _, _, transcriber, _ = build_feedback_bot()
+
+    bot.process(
+        bot.parse_event(
+            message_payload(
+                "event-fb-prefix",
+                '<at user_id="bot">Bot</at> 反馈问题 5轮 看不懂',
+            )
+        )
+    )
+
+    description, _ = transcriber.calls[0]
+    assert description == "看不懂"
+
+
+def test_feedback_without_space_still_routes_to_research():
+    bot, sender, _, transcriber, _ = build_feedback_bot()
+
+    bot.process(
+        bot.parse_event(
+            message_payload(
+                "event-fb-research", '<at user_id="bot">Bot</at> 反馈一个策略：回撤买'
+            )
+        )
+    )
+
+    assert transcriber.calls == []
+    assert any(
+        "研究任务已受理" in text for _, text in sender.replies
+    )
+
+
+def test_feedback_text_command_disabled_hint_without_interaction_module():
+    bot, _, sender, _ = build_bot()
+
+    bot.process(
+        bot.parse_event(
+            message_payload("event-fb-off", '<at user_id="bot">Bot</at> 反馈 2轮 看不懂')
+        )
+    )
+
+    assert "反馈功能未启用" in sender.replies[-1][1]

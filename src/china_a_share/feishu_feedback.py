@@ -23,6 +23,16 @@ FEEDBACK_DESCRIPTION_MAX_LENGTH = 500
 FEEDBACK_TURN_CONTENT_MAX_CHARS = 4_000
 # Oldest turns are dropped first once the whole transcript exceeds this budget.
 FEEDBACK_WINDOW_TOTAL_MAX_CHARS = 16_000
+# Plain-text fallback shipped next to the form card: v1 form containers with
+# interactive components render as an "upgrade your client" placeholder on old
+# Feishu clients, while plain text always renders. The one-shot text command
+# gives those clients the same feedback pipeline without any card components.
+FEEDBACK_TEXT_COMMAND_GUIDE = (
+    "已发出反馈表单。若表单无法显示（旧版客户端），可直接发送一条消息完成反馈：\n"
+    "反馈 2轮 问题描述\n"
+    "轮数可选 1/2/3/5，省略则默认最近 1 轮，如：反馈 问题描述"
+)
+FEEDBACK_TEXT_COMMAND_EXAMPLE = "反馈 2轮 表格列名看不懂"
 
 
 class FeedbackTurn(BaseModel):
@@ -159,7 +169,11 @@ def build_feedback_form_card(conversation_id: str) -> Dict[str, Any]:
                 "elements": [
                     {
                         "tag": "plain_text",
-                        "content": "描述最多 500 字；整理结果仅管理员可见。",
+                        "content": (
+                            "描述最多 500 字；整理结果仅管理员可见。"
+                            "看不到上方表单（旧版客户端）时，可直接发送消息："
+                            "反馈 2轮 问题描述（轮数可选 1/2/3/5，默认 1）。"
+                        ),
                     }
                 ],
             },
