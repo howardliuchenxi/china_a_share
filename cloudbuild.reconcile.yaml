@@ -263,7 +263,7 @@ steps:
           --concurrency 4 \
           --timeout 300 \
           --service-account "${_RUNTIME_SERVICE_ACCOUNT}" \
-          --set-env-vars "TUSHARE_CACHE_BUCKET=${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=${_REGION},ANALYSIS_JOB_NAME=${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA,ADMIN_EMAIL=${_ADMIN_EMAIL},GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID},GITHUB_FIX_REPO=${_GITHUB_REPOSITORY},FEISHU_APP_ID=${_FEISHU_APP_ID},LLM_BASE_URL=${_LLM_BASE_URL},LLM_MODEL=${_LLM_MODEL},RESEARCH_SANDBOX_URL=$$(cat /workspace/research-sandbox-url),PUBLIC_APP_URL=${_SERVICE_URL}" \
+          --set-env-vars "TUSHARE_CACHE_BUCKET=${_CACHE_BUCKET},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_REGION=${_REGION},ANALYSIS_JOB_NAME=${_ANALYSIS_JOB},APP_GIT_BRANCH=main,APP_GIT_SHA=$COMMIT_SHA,ADMIN_EMAIL=${_ADMIN_EMAIL},GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID},GITHUB_FIX_REPO=${_GITHUB_REPOSITORY},FEISHU_APP_ID=${_FEISHU_APP_ID},FEISHU_FEEDBACK_ADMIN_OPEN_ID=${_FEISHU_FEEDBACK_ADMIN_OPEN_ID},LLM_BASE_URL=${_LLM_BASE_URL},LLM_MODEL=${_LLM_MODEL},RESEARCH_SANDBOX_URL=$$(cat /workspace/research-sandbox-url),PUBLIC_APP_URL=${_SERVICE_URL}" \
           --set-secrets "TUSHARE_TOKEN=tushare-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,LLM_API_KEY=deepseek-api-key:latest,ZAI_API_KEY=zai-api-key:latest,MASSIVE_API_KEY=massive-api-key:latest,FINNHUB_API_KEY=finnhub-api-key:latest,GITHUB_FIX_TOKEN=github-fix-token:latest,FEISHU_APP_SECRET=feishu-app-secret:latest,FEISHU_VERIFICATION_TOKEN=feishu-verification-token:latest,FEISHU_ENCRYPT_KEY=feishu-encrypt-key:latest" \
           --quiet
 
@@ -418,6 +418,7 @@ substitutions:
   _ADMIN_EMAIL: howardliuchenxi1@gmail.com
   _GOOGLE_OAUTH_CLIENT_ID: 1079739428171-f572obvnhd989gh04onlpp5fmai9cf5q.apps.googleusercontent.com
   _FEISHU_APP_ID: cli_aa2df30a34f51d01
+  _FEISHU_FEEDBACK_ADMIN_OPEN_ID: ou_ea81a844f54447117ca4543465dfb0b8
 
 options:
   logging: CLOUD_LOGGING_ONLY

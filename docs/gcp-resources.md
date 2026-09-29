@@ -76,6 +76,7 @@ idle service to zero.
 | `GOOGLE_OAUTH_CLIENT_ID` | Public Google Web OAuth client identifier |
 | `GITHUB_FIX_REPO` | Plain GitHub owner/repository used for UI feedback dispatch |
 | `FEISHU_APP_ID` | Public Feishu custom-application identifier |
+| `FEISHU_FEEDBACK_ADMIN_OPEN_ID` | Plain Feishu open id mentioned on issue-report result cards (administrator) |
 | `LLM_BASE_URL` | Plain OpenAI-compatible API base URL `https://api.deepseek.com` |
 | `LLM_MODEL` | Plain provider-native model identifier `deepseek-flash` |
 | `RESEARCH_SANDBOX_URL` | Plain private service URL `https://china-a-share-research-sandbox-45b3fkc7pa-df.a.run.app` |

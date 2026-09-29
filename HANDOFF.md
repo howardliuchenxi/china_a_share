@@ -19,6 +19,13 @@
 - 遗留：①已定口径仍只活在 12 轮窗口内——窗口外滚出的条款对闸门不可见，「台账须存具名策略」的持久化仍是悬空项（需用户拍板存储口径）；②真实飞书端到端一次带澄清的对话待用户观察验证。
 - 附注：今日另从 Codex 会话存档（~/.codex/sessions，244 份）恢复 v2.24 逐层标准全表（台账本体在飞书 agent 服务端工作区，不在本仓库）；「L4/L5 到期去向」裁定＝选项 1 语义且为唯一原则唯一合法解。
 
+## [2026-09-29 · ZCode] 配置 FEISHU_FEEDBACK_ADMIN_OPEN_ID：反馈结果卡 @ 管理员闭环
+
+- 做了什么：管理员 open_id 取自用户本人提交的反馈记录的 operator_open_id（`ou_ea81…`，免问手机号）；①直接 `gcloud run services update` 即时生效（revision 00295-lll）；②持久化——cloudbuild.reconcile.yaml 主服务 `--set-env-vars` 与 substitutions 默认值、Makefile deploy 目标、docs/gcp-resources.md 环境变量表同步加 `FEISHU_FEEDBACK_ADMIN_OPEN_ID`（reconcile 是整表覆盖 env，只改服务会被下次对账冲掉，必须进管线）。
+- 关键决定：open_id 以明文进仓库（非凭据，与 ADMIN_EMAIL/FEISHU_APP_ID 同级敏感度）；worker 部署不加（反馈链路只跑在 api 服务）。
+- 验证：全量 996 passed（唯一失败为已知 disclosure/dividend flaky）；推送后盯 reconcile 部署确认 env 存活 + 提醒用户真机复验 @ 提及。
+- 遗留：无。
+
 ## [2026-09-28 · ZCode] 卡片全面去表单化：旧客户端不再出现「请升级客户端」占位
 
 - 背景：用户旧客户端实测反馈——占位条是飞书对不支持的表单容器的兜底 UI，上一轮的文本兜底只是绕行，占位条仍在（快捷菜单的研究输入表单 + 反馈表单两处）；用户拍板「还不够，彻底向下兼容」。
