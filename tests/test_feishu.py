@@ -427,11 +427,10 @@ def test_empty_bot_mention_opens_quick_menu_without_submitting_task():
     assert len(sender.cards) == 1
     message_id, card = sender.cards[0]
     assert message_id == "message-event-menu"
-    form = next(element for element in card["elements"] if element["tag"] == "form")
-    assert {element["name"] for element in form["elements"]} == {
-        "prompt",
-        "submit_research",
-    }
+    # Old clients show an upgrade placeholder for form containers, so the
+    # quick menu must stay render-safe: no form/input anywhere.
+    assert '"tag": "form"' not in json.dumps(card)
+    assert '"tag": "input"' not in json.dumps(card)
     actions = next(
         element for element in card["elements"] if element["tag"] == "action"
     )
@@ -1291,7 +1290,7 @@ def test_quick_menu_card_offers_feedback_button():
     assert feedback_buttons[0]["text"]["content"] == "反馈问题"
 
 
-def test_report_issue_button_opens_feedback_form_bound_to_active_session():
+def test_report_issue_button_opens_render_safe_guide_card():
     bot, sender, _, _, _ = build_feedback_bot()
 
     click_event = bot.parse_card_action(card_action_payload("report_issue"))
@@ -1300,54 +1299,20 @@ def test_report_issue_button_opens_feedback_form_bound_to_active_session():
 
     bot.process(click_event)
 
+    # The guide card must render on every client version: markdown and note
+    # elements only, no form containers that degrade to an upgrade
+    # placeholder, and no extra plain-text companion message.
     assert len(sender.cards) == 1
+    assert sender.replies == []
     _, card = sender.cards[0]
-    form = next(element for element in card["elements"] if element["tag"] == "form")
-    assert [element["name"] for element in form["elements"]] == [
-        "turns",
-        "description",
-        "submit_feedback",
-    ]
-    # The v1 card form whitelist: a select_menu tag makes Feishu drop the
-    # whole form silently, so the dropdown must stay a select_static.
-    assert [element["tag"] for element in form["elements"]] == [
-        "select_static",
-        "input",
-        "button",
-    ]
-    select = form["elements"][0]
-    assert [(option["value"], option["text"]["content"]) for option in select["options"]] == [
-        ("1", "近1轮"),
-        ("2", "近2轮"),
-        ("3", "近3轮"),
-        ("5", "近5轮"),
-    ]
-    description_input = form["elements"][1]
-    assert description_input["max_length"] == 500
-    submit = form["elements"][2]
-    assert submit["action_type"] == "form_submit"
-    assert (
-        submit["value"]["conversation_id"]
-        == "tenant-1:chat-1:root:user-1:session:default"
-    )
-    assert "select_menu" not in json.dumps(card)
-    note = next(
-        element for element in card["elements"] if element["tag"] == "note"
-    )
-    assert "旧版客户端" in note["elements"][0]["content"]
-
-
-def test_feedback_menu_click_ships_plain_text_command_guide():
-    bot, sender, _, _, _ = build_feedback_bot()
-
-    bot.process(bot.parse_card_action(card_action_payload("report_issue")))
-
-    # Old clients cannot render the form container, so the same click must
-    # also deliver a plain-text path that renders everywhere.
-    assert len(sender.cards) == 1
-    guide_texts = [text for _, text in sender.replies if "反馈 2轮" in text]
-    assert len(guide_texts) == 1
-    assert "默认最近 1 轮" in guide_texts[0]
+    assert card["header"]["title"]["content"] == "反馈问题"
+    assert {element["tag"] for element in card["elements"]} == {"div", "note"}
+    content = card["elements"][0]["text"]["content"]
+    assert "反馈 2轮 表格列名看不懂" in content
+    assert "默认最近 1 轮" in content
+    card_json = json.dumps(card)
+    for forbidden in ('"tag": "form"', '"tag": "input"', "select_static"):
+        assert forbidden not in card_json
 
 
 def test_feedback_form_submission_transcribes_and_replies_result_card():

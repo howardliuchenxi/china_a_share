@@ -44,11 +44,10 @@ from china_a_share.feishu_agent import (
 )
 from china_a_share.feishu_feedback import (
     FEEDBACK_DESCRIPTION_MAX_LENGTH,
-    FEEDBACK_TEXT_COMMAND_GUIDE,
     FeedbackTranscriptionError,
     FeedbackTurn,
     FeishuFeedbackCoordinator,
-    build_feedback_form_card,
+    build_feedback_guide_card,
     build_feedback_result_card,
     select_feedback_turn_window,
 )
@@ -1088,14 +1087,13 @@ class FeishuResearchBot:
                     if self._feedback_interaction is None:
                         reply = "反馈功能未启用，请联系管理员。"
                     else:
+                        # Render-safe guide card only (no form container): old
+                        # clients would show an "upgrade your client"
+                        # placeholder for any form, while this card's markdown
+                        # renders on every client version.
                         self._sender.reply_card(
                             event.message_id,
-                            self._feedback_form_reply(event),
-                        )
-                        # Plain text always renders, so ship the one-shot text
-                        # command beside the form for old-client users.
-                        self._sender.reply(
-                            event.message_id, FEEDBACK_TEXT_COMMAND_GUIDE
+                            build_feedback_guide_card(),
                         )
                         reply = None
                 elif FEEDBACK_TEXT_COMMAND_PATTERN.match(event.prompt):
@@ -1319,11 +1317,6 @@ class FeishuResearchBot:
             )
         )
         return None
-
-    def _feedback_form_reply(self, event: FeishuMessageEvent) -> Dict[str, Any]:
-        """Return the issue-report form bound to the reporter's conversation."""
-        conversation_id = self._active_agent_conversation_id(event.conversation_id)
-        return build_feedback_form_card(conversation_id)
 
     @staticmethod
     def _feedback_window_note(
@@ -1783,12 +1776,17 @@ def build_feishu_quick_menu_card(
     model_status: str = "",
     model_options: Optional[List[tuple[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """Return the interactive research form and common command shortcuts.
+    """Return the render-safe quick-menu card and common command shortcuts.
 
-    The model selector is one dropdown form fed by the chat-model registry,
-    so registering an additional model extends the card without layout
-    changes. The status line and the check-marked option both reflect the
-    preference at render time.
+    Old Feishu clients cannot render v1 form containers and would show an
+    "upgrade your client" placeholder where the embedded research input used
+    to sit, so the card now ships only div/action/note elements. Research
+    prompts arrive as ordinary @-mention messages (the primary path), and the
+    submit_research card action stays supported for legacy form cards still
+    present in chat history. The model selector is one dropdown fed by the
+    chat-model registry, so registering an additional model extends the card
+    without layout changes. The status line and the check-marked option both
+    reflect the preference at render time.
     """
     elements: list[Dict[str, Any]] = []
     if model_status:
@@ -1810,30 +1808,6 @@ def build_feishu_quick_menu_card(
                     "content": "输入研究问题，或者选择一个快捷操作。",
                 },
             },
-        {
-            "tag": "form",
-            "name": "research_form",
-            "elements": [
-                {
-                    "tag": "input",
-                    "name": "prompt",
-                    "required": True,
-                    "max_length": 1_000,
-                    "placeholder": {
-                        "tag": "plain_text",
-                        "content": "例如：查询最近5个交易日涨幅最大的10只A股",
-                    },
-                },
-                {
-                    "tag": "button",
-                    "name": "submit_research",
-                    "type": "primary",
-                    "action_type": "form_submit",
-                    "text": {"tag": "plain_text", "content": "开始研究"},
-                    "value": {"action": "submit_research"},
-                },
-            ],
-        },
         {
             "tag": "action",
             "actions": [

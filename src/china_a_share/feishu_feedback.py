@@ -11,27 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
-# Form options for how many recent ask/answer turns the report should carry.
-FEEDBACK_FORM_TURN_OPTIONS = (
-    ("1", "近1轮"),
-    ("2", "近2轮"),
-    ("3", "近3轮"),
-    ("5", "近5轮"),
-)
 FEEDBACK_DESCRIPTION_MAX_LENGTH = 500
 # One recent answer longer than this is trimmed inside the report transcript.
 FEEDBACK_TURN_CONTENT_MAX_CHARS = 4_000
 # Oldest turns are dropped first once the whole transcript exceeds this budget.
 FEEDBACK_WINDOW_TOTAL_MAX_CHARS = 16_000
-# Plain-text fallback shipped next to the form card: v1 form containers with
-# interactive components render as an "upgrade your client" placeholder on old
-# Feishu clients, while plain text always renders. The one-shot text command
-# gives those clients the same feedback pipeline without any card components.
-FEEDBACK_TEXT_COMMAND_GUIDE = (
-    "已发出反馈表单。若表单无法显示（旧版客户端），可直接发送一条消息完成反馈：\n"
-    "反馈 2轮 问题描述\n"
-    "轮数可选 1/2/3/5，省略则默认最近 1 轮，如：反馈 问题描述"
-)
+# Shown inside the guide card as the canonical one-shot feedback command.
 FEEDBACK_TEXT_COMMAND_EXAMPLE = "反馈 2轮 表格列名看不懂"
 
 
@@ -96,8 +81,15 @@ def select_feedback_turn_window(
     return rows, truncated
 
 
-def build_feedback_form_card(conversation_id: str) -> Dict[str, Any]:
-    """Return the v1 issue-report form card bound to one conversation bucket."""
+def build_feedback_guide_card() -> Dict[str, Any]:
+    """Return the render-safe issue-report guide card without a form container.
+
+    Old Feishu clients cannot render v1 form containers (input, dropdowns)
+    and fall back to an "upgrade your client" placeholder, while markdown
+    div and note elements render everywhere. The guide therefore only
+    explains the one-shot plain-text command, which runs the same pipeline
+    on every client version.
+    """
     return {
         "config": {"wide_screen_mode": True},
         "header": {
@@ -110,70 +102,21 @@ def build_feedback_form_card(conversation_id: str) -> Dict[str, Any]:
                 "text": {
                     "tag": "lark_md",
                     "content": (
-                        "请描述你遇到的问题，并选择希望一并带给开发者的最近交互轮数。"
-                        "提交后会自动整理成排查报告并通知管理员。"
+                        "请直接发送一条消息完成反馈：\n"
+                        f"**{FEEDBACK_TEXT_COMMAND_EXAMPLE}**\n"
+                        "轮数可选 1/2/3/5，省略则默认最近 1 轮"
+                        "（如：反馈 问题描述）。\n"
+                        "提交后会自动带上所选轮数的问答原文，整理成排查报告并"
+                        "通知管理员。"
                     ),
                 },
-            },
-            {
-                "tag": "form",
-                "name": "feedback_form",
-                "elements": [
-                    {
-                        # V1 card forms render select_static reliably; a
-                        # select_menu tag makes Feishu drop the whole form
-                        # silently.
-                        "tag": "select_static",
-                        "name": "turns",
-                        "required": True,
-                        "placeholder": {
-                            "tag": "plain_text",
-                            "content": "包含最近几轮交互",
-                        },
-                        "options": [
-                            {
-                                "text": {"tag": "plain_text", "content": label},
-                                "value": value,
-                            }
-                            for value, label in FEEDBACK_FORM_TURN_OPTIONS
-                        ],
-                    },
-                    {
-                        "tag": "input",
-                        "name": "description",
-                        "required": True,
-                        "max_length": FEEDBACK_DESCRIPTION_MAX_LENGTH,
-                        "placeholder": {
-                            "tag": "plain_text",
-                            "content": (
-                                "例如：查询个股资金流时表格列名看不懂，"
-                                "希望加上单位说明"
-                            ),
-                        },
-                    },
-                    {
-                        "tag": "button",
-                        "name": "submit_feedback",
-                        "type": "primary",
-                        "action_type": "form_submit",
-                        "text": {"tag": "plain_text", "content": "提交反馈"},
-                        "value": {
-                            "action": "submit_feedback",
-                            "conversation_id": conversation_id,
-                        },
-                    },
-                ],
             },
             {
                 "tag": "note",
                 "elements": [
                     {
                         "tag": "plain_text",
-                        "content": (
-                            "描述最多 500 字；整理结果仅管理员可见。"
-                            "看不到上方表单（旧版客户端）时，可直接发送消息："
-                            "反馈 2轮 问题描述（轮数可选 1/2/3/5，默认 1）。"
-                        ),
+                        "content": "描述最多 500 字；整理结果仅管理员可见。",
                     }
                 ],
             },
