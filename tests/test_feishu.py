@@ -162,6 +162,24 @@ def test_bootstrap_allows_feishu_availability_range_without_open_id_allowlist(
         "CloudStorageConversationStore",
         lambda bucket_name: store,
     )
+    # The strategy wiring constructs GCS-backed collaborators (StrategyStore,
+    # layered cache, LLM preference store) whose clients need ambient GCP
+    # credentials; keep this bootstrap test hermetic by stubbing them at their
+    # construction sites.
+    monkeypatch.setattr(
+        "china_a_share.strategy.persistence.StrategyStore",
+        lambda bucket_name: object(),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_create_data_provider",
+        lambda settings: object(),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "create_llm_preference_controller",
+        lambda settings: None,
+    )
 
     bot = bootstrap.create_feishu_research_bot(
         Settings(
