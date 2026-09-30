@@ -60,9 +60,15 @@ def render_report(
     stats: pd.DataFrame,
     universe: int,
     dates: pd.DatetimeIndex,
+    path: Optional[str] = None,
+    *,
     portfolio_summary: Optional[pd.DataFrame] = None,
     portfolio_monthly: Optional[pd.DataFrame] = None,
-    path: Optional[str] = None,
+    left_tail_event_summary: Optional[pd.DataFrame] = None,
+    left_tail_annual: Optional[pd.DataFrame] = None,
+    left_tail_portfolio_summary: Optional[pd.DataFrame] = None,
+    left_tail_monthly: Optional[pd.DataFrame] = None,
+    left_tail_yearly: Optional[pd.DataFrame] = None,
 ) -> str:
     """Write the markdown report and return its text."""
     if path is None:
@@ -170,7 +176,110 @@ def render_report(
                 )
             lines.append("")
 
-    lines.append("## 5. 口径与局限")
+    scenario_labels = {
+        "baseline": "基线",
+        "exclude_gap8": "剔除绝对缺口>8%",
+        "cap_1pct": "聚合单票上限1%",
+        "cap_2pct": "聚合单票上限2%",
+        "cap_3pct": "聚合单票上限3%",
+    }
+    if left_tail_event_summary is not None and not left_tail_event_summary.empty:
+        lines.append("## 5. gapdown2 左尾过滤：事件级移动")
+        lines.append("")
+        lines.append(
+            "深缺口过滤仅作为对照，不替换主口径。事件级新条件仍须同时通过月块 CI 与匹配规模随机选股 null95 两关。"
+        )
+        lines.append("")
+        lines.append(
+            "| 方案 | 事件数 | 剔除 | 平均收益 | 超额 | OOS超额 | CI下界 | null95 | 胜率 | p5 | 最差 | 判定 |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for _, row in left_tail_event_summary.iterrows():
+            lines.append(
+                f"| {scenario_labels.get(row['scenario'], row['scenario'])} | {int(row['n'])} | "
+                f"{int(row['removed_events'])} | {_pct(row['mean_ret'])} | "
+                f"{_pct(row['mean_excess'])} | {_pct(row['oos_excess'])} | "
+                f"{_pct(row['ci_low'])} | {_pct(row['null95'])} | "
+                f"{_pct(row['win_rate'])} | {_pct(row['p5_return'])} | "
+                f"{_pct(row['worst_return'])} | {row['verdict']} |"
+            )
+        lines.append("")
+
+    if left_tail_annual is not None and not left_tail_annual.empty:
+        lines.append("### 事件级分年度稳定性")
+        lines.append("")
+        lines.append("| 方案 | 分段 | 事件数 | 平均收益 | 平均超额 | 胜率 | p5 | 最差 |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for _, row in left_tail_annual.iterrows():
+            lines.append(
+                f"| {scenario_labels.get(row['scenario'], row['scenario'])} | {row['period']} | "
+                f"{int(row['event_count'])} | {_pct(row['mean_return'])} | "
+                f"{_pct(row['mean_excess'])} | {_pct(row['win_rate'])} | "
+                f"{_pct(row['p5_return'])} | {_pct(row['worst_return'])} |"
+            )
+        lines.append("")
+
+    if (
+        left_tail_portfolio_summary is not None
+        and not left_tail_portfolio_summary.empty
+    ):
+        lines.append("## 6. gapdown2 左尾治理：组合级代价收益")
+        lines.append("")
+        lines.append(
+            "单票上限在每次入场时按全组合现有同票敞口计算；已有持仓不强制再平衡，受限资金留现金。"
+        )
+        lines.append("")
+        lines.append(
+            "| 方案 | 持仓事件 | 累计净收益 | 累计净超额 | 最大回撤 | 正超额月 | CI下界 | 被过滤 | 因上限未建仓 | 判定 |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        for _, row in left_tail_portfolio_summary.iterrows():
+            lines.append(
+                f"| {scenario_labels.get(row['scenario'], row['scenario'])} | {int(row['positions'])} | "
+                f"{_pct(row['total_net_return'])} | {_pct(row['total_excess_return'])} | "
+                f"{_pct(row['max_drawdown'])} | {int(row['positive_excess_months'])}/{int(row['months'])} | "
+                f"{_pct(row['ci_low'])} | {int(row['filtered_signals'])} | "
+                f"{int(row['capped_out_signals'])} | {row['verdict']} |"
+            )
+        lines.append("")
+
+    if left_tail_yearly is not None and not left_tail_yearly.empty:
+        lines.append("### 组合级分年度稳定性")
+        lines.append("")
+        lines.append("| 方案 | 分段 | 月数 | 净收益 | 池基准 | 超额 | 正超额月 |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for _, row in left_tail_yearly.iterrows():
+            lines.append(
+                f"| {scenario_labels.get(row['scenario'], row['scenario'])} | {row['period']} | "
+                f"{int(row['months'])} | {_pct(row['net_return'])} | "
+                f"{_pct(row['benchmark_return'])} | {_pct(row['excess_return'])} | "
+                f"{int(row['positive_excess_months'])}/{int(row['months'])} |"
+            )
+        lines.append("")
+
+    if left_tail_monthly is not None and not left_tail_monthly.empty:
+        lines.append("### 组合月度超额矩阵")
+        lines.append("")
+        matrix = left_tail_monthly.pivot(
+            index="month", columns="scenario", values="excess_return"
+        )
+        order = [key for key in scenario_labels if key in matrix.columns]
+        matrix = matrix.reindex(columns=order)
+        lines.append(
+            "| 月份 | "
+            + " | ".join(scenario_labels[column] for column in matrix.columns)
+            + " |"
+        )
+        lines.append("|---|" + "---|" * len(matrix.columns))
+        for month, row in matrix.iterrows():
+            lines.append(
+                f"| {month} | "
+                + " | ".join(_pct(row[column]) for column in matrix.columns)
+                + " |"
+            )
+        lines.append("")
+
+    lines.append("## 7. 口径与局限")
     lines.append("")
     lines.append("- 幸存者偏差：股票池按近期流动性选入后回看两年，期间退市个股缺失；两年窗口内大中盘影响有限但存在")
     lines.append("- 交易成本：主表为毛收益；「净超额」列统一扣 10bp 往返成本，未建模滑点与冲击")

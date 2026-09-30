@@ -9,6 +9,7 @@ import pandas as pd
 
 from rfr import panel as panel_mod
 from rfr import rules as rules_mod
+from rfr.left_tail import evaluate_event_filters, evaluate_portfolio_controls
 from rfr.portfolio import evaluate_portfolios
 from rfr.returns import HOLD_GRID, collect_events, null_runs
 from rfr.stats import summarize_with_split, verdict
@@ -99,6 +100,38 @@ def run() -> int:
     portfolio_summary.to_parquet(
         os.path.join(DATA_DIR, "portfolio_summary.parquet"), index=False
     )
+    spec_by_name = {spec.name: spec for spec in rules_mod.RULE_REGISTRY}
+    left_tail_event_summary, left_tail_annual, left_tail_events = (
+        evaluate_event_filters(
+            factors,
+            dates,
+            spec_by_name["gapdown2"],
+            rules_mod.evaluate_rule,
+        )
+    )
+    (
+        left_tail_daily,
+        left_tail_monthly,
+        left_tail_positions,
+        left_tail_portfolio_summary,
+        left_tail_yearly,
+    ) = evaluate_portfolio_controls(
+        factors,
+        dates,
+        spec_by_name["gapdown2"],
+        rules_mod.evaluate_rule,
+    )
+    for name, frame in (
+        ("left_tail_event_summary", left_tail_event_summary),
+        ("left_tail_annual", left_tail_annual),
+        ("left_tail_events", left_tail_events),
+        ("left_tail_daily", left_tail_daily),
+        ("left_tail_monthly", left_tail_monthly),
+        ("left_tail_positions", left_tail_positions),
+        ("left_tail_portfolio_summary", left_tail_portfolio_summary),
+        ("left_tail_yearly", left_tail_yearly),
+    ):
+        frame.to_parquet(os.path.join(DATA_DIR, f"{name}.parquet"), index=False)
     from rfr.report import render_report
 
     render_report(
@@ -107,6 +140,11 @@ def run() -> int:
         dates=dates,
         portfolio_summary=portfolio_summary,
         portfolio_monthly=portfolio_monthly,
+        left_tail_event_summary=left_tail_event_summary,
+        left_tail_annual=left_tail_annual,
+        left_tail_portfolio_summary=left_tail_portfolio_summary,
+        left_tail_monthly=left_tail_monthly,
+        left_tail_yearly=left_tail_yearly,
     )
     print(f"pipeline done -> {REPORT_PATH}", flush=True)
     return 0

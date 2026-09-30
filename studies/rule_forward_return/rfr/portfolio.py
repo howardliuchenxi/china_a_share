@@ -1,7 +1,7 @@
 """Executable overlapping-cohort portfolios for the validated N=5 rules."""
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -34,20 +34,37 @@ def _open_position(
     entry_prices: pd.Series,
     exit_pos: int,
     entry_cost: float,
+    allocations: Optional[pd.Series] = None,
 ) -> Dict[str, object]:
     valid_prices = entry_prices.reindex(symbols).dropna()
     valid_prices = valid_prices[valid_prices > 0.0]
     if valid_prices.empty:
         return {}
-    invested = cash * (1.0 - entry_cost)
-    per_symbol = invested / len(valid_prices)
-    shares = per_symbol / valid_prices
+    if allocations is None:
+        invested = cash * (1.0 - entry_cost)
+        allocation_values = pd.Series(
+            invested / len(valid_prices), index=valid_prices.index
+        )
+        idle_cash = 0.0
+    else:
+        allocation_values = allocations.reindex(valid_prices.index).fillna(0.0)
+        allocation_values = allocation_values[allocation_values > 0.0]
+        valid_prices = valid_prices.reindex(allocation_values.index)
+        if allocation_values.empty:
+            return {}
+        invested = float(allocation_values.sum())
+        idle_cash = cash - invested * (1.0 + entry_cost)
+        if idle_cash < -1e-12:
+            raise ValueError("allocations exceed sleeve cash after entry cost")
+        idle_cash = max(idle_cash, 0.0)
+    shares = allocation_values / valid_prices
     return {
         "shares": shares,
         "exit_pos": exit_pos,
         "entry_prices": valid_prices,
         "cash_before": cash,
-        "per_symbol": per_symbol,
+        "allocations": allocation_values,
+        "idle_cash": idle_cash,
     }
 
 
@@ -71,11 +88,73 @@ def _close_value(
         missing = prices[prices.isna() | (prices <= 0.0)].index.tolist()
         raise ValueError(f"missing close while position is open: {missing[:5]}")
     state["last_prices"] = prices
-    value = float((shares * prices).sum())
+    security_value = float((shares * prices).sum())
     is_exit = pos == state["exit_pos"]
     if is_exit:
-        value *= 1.0 - exit_cost
+        security_value *= 1.0 - exit_cost
+    value = security_value + float(state["idle_cash"])
     return value, is_exit
+
+
+def _open_exposure(
+    states: List[Dict[str, object]],
+    cash: List[float],
+    opens: pd.DataFrame,
+    pos: int,
+) -> Tuple[float, pd.Series]:
+    """Mark current holdings at the entry open for aggregate cap checks."""
+    total_nav = 0.0
+    exposures: Dict[str, float] = {}
+    for sleeve, state in enumerate(states):
+        if not state:
+            total_nav += cash[sleeve]
+            continue
+        prices = opens.iloc[pos].reindex(state["shares"].index)
+        invalid = prices.isna() | (prices <= 0.0)
+        prices = prices.where(~invalid, state["last_prices"])
+        if prices.isna().any() or (prices <= 0.0).any():
+            missing = prices[prices.isna() | (prices <= 0.0)].index.tolist()
+            raise ValueError(f"missing open while applying position cap: {missing[:5]}")
+        values = state["shares"] * prices
+        total_nav += float(values.sum()) + float(state["idle_cash"])
+        for symbol, value in values.items():
+            exposures[symbol] = exposures.get(symbol, 0.0) + float(value)
+    return total_nav, pd.Series(exposures, dtype=float)
+
+
+def _capped_allocations(
+    symbols: pd.Index,
+    cash: float,
+    entry_cost: float,
+    total_nav: float,
+    current_exposure: pd.Series,
+    max_position_weight: float,
+) -> Optional[pd.Series]:
+    """Equal-weight a new cohort subject to aggregate single-name headroom."""
+    base_invested = cash * (1.0 - entry_cost)
+    base_equal = base_invested / len(symbols)
+    cap_value = max_position_weight * total_nav
+    existing = current_exposure.reindex(symbols).fillna(0.0)
+    rooms = (cap_value - existing).clip(lower=0.0)
+    if (base_equal <= rooms + 1e-15).all():
+        return None
+
+    remaining = min(cash / (1.0 + entry_cost), float(rooms.sum()))
+    allocations = pd.Series(0.0, index=symbols)
+    active = list(symbols[rooms > 0.0])
+    while active and remaining > 1e-15:
+        equal = remaining / len(active)
+        newly_capped = [symbol for symbol in active if rooms.loc[symbol] <= equal]
+        if not newly_capped:
+            allocations.loc[active] = equal
+            remaining = 0.0
+            break
+        for symbol in newly_capped:
+            value = float(rooms.loc[symbol])
+            allocations.loc[symbol] = value
+            remaining -= value
+            active.remove(symbol)
+    return allocations
 
 
 def run_overlapping_portfolio(
@@ -85,6 +164,8 @@ def run_overlapping_portfolio(
     evaluate_fn,
     hold_days: int = PORTFOLIO_HOLD_DAYS,
     round_trip_cost: float = ROUND_TRIP_COST,
+    max_abs_open_gap: Optional[float] = None,
+    max_position_weight: Optional[float] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Run five rotating sleeves and return daily NAV plus position audit rows.
 
@@ -97,6 +178,10 @@ def run_overlapping_portfolio(
         raise ValueError("hold_days must be positive")
     if round_trip_cost < 0.0 or round_trip_cost >= 1.0:
         raise ValueError("round_trip_cost must be in [0, 1)")
+    if max_abs_open_gap is not None and max_abs_open_gap <= 0.0:
+        raise ValueError("max_abs_open_gap must be positive")
+    if max_position_weight is not None and not 0.0 < max_position_weight <= 1.0:
+        raise ValueError("max_position_weight must be in (0, 1]")
 
     opens = _pivot(factors, "open", calendar)
     closes = _pivot(factors, "close", calendar)
@@ -115,12 +200,21 @@ def run_overlapping_portfolio(
     for pos, ts in enumerate(calendar):
         entries = 0
         signal_count = 0
+        raw_signal_count = 0
+        filtered_signals = 0
+        capped_out_signals = 0
+        skipped_missing_entry = 0
         skipped_missing_exit = 0
         if pos > 0 and pos + hold_days - 1 < len(calendar):
             signal_ts = calendar[pos - 1]
             signal_day = by_date[signal_ts]
             mask = evaluate_fn(spec, signal_day)
             selected = signal_day.loc[mask]
+            raw_signal_count = len(selected)
+            if max_abs_open_gap is not None:
+                keep = selected["open_gap"].abs() <= max_abs_open_gap
+                filtered_signals = int((~keep).sum())
+                selected = selected.loc[keep]
             if not selected.empty:
                 sleeve = pos % hold_days
                 if strategy_states[sleeve] or benchmark_states[sleeve]:
@@ -134,13 +228,38 @@ def run_overlapping_portfolio(
                 skipped_missing_exit = int((~valid_exit).sum())
                 selected_symbols = selected_symbols[valid_exit]
                 selected = selected[selected["symbol"].isin(selected_symbols)]
+                selected_entry_prices = opens.iloc[pos].reindex(selected_symbols)
+                valid_entry = selected_entry_prices.notna() & selected_entry_prices.gt(0.0)
+                skipped_missing_entry = int((~valid_entry).sum())
+                selected_symbols = selected_symbols[valid_entry]
+                selected = selected[selected["symbol"].isin(selected_symbols)]
+                if selected.empty:
+                    selected_symbols = pd.Index([], dtype=object)
+                allocations = None
+                total_nav_open = float("nan")
+                exposure_before = pd.Series(dtype=float)
+                if max_position_weight is not None and len(selected_symbols):
+                    total_nav_open, exposure_before = _open_exposure(
+                        strategy_states, strategy_cash, opens, pos
+                    )
+                    allocations = _capped_allocations(
+                        selected_symbols,
+                        strategy_cash[sleeve],
+                        entry_cost,
+                        total_nav_open,
+                        exposure_before,
+                        max_position_weight,
+                    )
                 strategy_state = _open_position(
                     strategy_cash[sleeve],
                     selected_symbols,
                     opens.iloc[pos],
                     pos + hold_days - 1,
                     entry_cost,
+                    allocations=allocations,
                 )
+                if not strategy_state and max_position_weight is not None:
+                    capped_out_signals = len(selected_symbols)
                 if strategy_state:
                     strategy_state["last_prices"] = strategy_state[
                         "entry_prices"
@@ -171,6 +290,8 @@ def run_overlapping_portfolio(
                     benchmark_states[sleeve] = benchmark_state
                     entries = 1
                     signal_count = len(strategy_state["shares"])
+                    if max_position_weight is not None:
+                        capped_out_signals = len(selected_symbols) - signal_count
 
                     pool_exit = closes.iloc[pos + hold_days - 1].reindex(
                         benchmark_state["shares"].index
@@ -243,7 +364,19 @@ def run_overlapping_portfolio(
                                 "benchmark_return": benchmark_return,
                                 "excess_return": gross_return - benchmark_return,
                                 "entry_weight": float(
-                                    strategy_state["per_symbol"] / total_nav_before
+                                    strategy_state["allocations"].loc[symbol]
+                                    / total_nav_before
+                                ),
+                                "aggregate_weight_after_entry": (
+                                    float("nan")
+                                    if max_position_weight is None
+                                    else float(
+                                        (
+                                            exposure_before.get(symbol, 0.0)
+                                            + strategy_state["allocations"].loc[symbol]
+                                        )
+                                        / total_nav_open
+                                    )
                                 ),
                             }
                         )
@@ -251,6 +384,7 @@ def run_overlapping_portfolio(
         strategy_nav = 0.0
         benchmark_nav = 0.0
         active_positions = 0
+        cap_idle_cash = 0.0
         for sleeve in range(hold_days):
             strategy_state = strategy_states[sleeve]
             if strategy_state:
@@ -259,6 +393,7 @@ def run_overlapping_portfolio(
                 )
                 strategy_nav += value
                 active_positions += len(strategy_state["shares"])
+                cap_idle_cash += float(strategy_state["idle_cash"])
                 if is_exit:
                     strategy_cash[sleeve] = value
                     strategy_states[sleeve] = {}
@@ -285,8 +420,13 @@ def run_overlapping_portfolio(
                 "benchmark_nav": benchmark_nav,
                 "entries": entries,
                 "signal_count": signal_count,
+                "raw_signal_count": raw_signal_count,
+                "filtered_signals": filtered_signals,
+                "capped_out_signals": capped_out_signals,
+                "skipped_missing_entry": skipped_missing_entry,
                 "skipped_missing_exit": skipped_missing_exit,
                 "active_positions": active_positions,
+                "cap_idle_cash": cap_idle_cash,
             }
         )
 
@@ -294,6 +434,7 @@ def run_overlapping_portfolio(
     daily["net_return"] = daily["strategy_nav"].pct_change().fillna(0.0)
     daily["benchmark_return"] = daily["benchmark_nav"].pct_change().fillna(0.0)
     daily["daily_excess"] = daily["net_return"] - daily["benchmark_return"]
+    daily["cap_idle_weight"] = daily["cap_idle_cash"] / daily["strategy_nav"]
     positions = pd.DataFrame(position_rows)
     return daily, positions
 

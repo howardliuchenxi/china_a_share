@@ -100,6 +100,76 @@ def test_terminal_missing_signal_is_skipped_and_baseline_matches_events():
     assert daily["skipped_missing_exit"].sum() == 1
 
 
+def test_missing_entry_is_reported_separately_from_position_cap():
+    dates = business_dates("2025-01-01", 8)
+    frame = make_bars("AAA", dates, closes=np.full(len(dates), 10.0))
+    frame.loc[frame["date"] == dates[1], "open"] = np.nan
+    frame["in_pool"] = True
+    frame["bool_forced"] = frame["date"] == dates[0]
+    for column in ("open_gap", "ret_5d", "ret_20d", "vol_ratio", "adv20"):
+        frame[column] = 0.0
+    spec = RuleSpec("forced", "forced", "bool", "bool_forced")
+    daily, positions = run_overlapping_portfolio(
+        frame,
+        dates,
+        spec,
+        lambda rule, day: day[rule.column],
+        max_position_weight=0.10,
+    )
+
+    assert positions.empty
+    assert daily["skipped_missing_entry"].sum() == 1
+    assert daily["capped_out_signals"].sum() == 0
+
+
+def test_deep_gap_filter_removes_only_signals_beyond_threshold():
+    dates = business_dates("2025-01-01", 8)
+    frames = []
+    for symbol, gap in (("AAA", -0.05), ("BBB", -0.10)):
+        frame = make_bars(symbol, dates, closes=np.full(len(dates), 10.0))
+        frame["in_pool"] = True
+        frame["bool_forced"] = frame["date"] == dates[0]
+        frame["open_gap"] = gap
+        for column in ("ret_5d", "ret_20d", "vol_ratio", "adv20"):
+            frame[column] = 0.0
+        frames.append(frame)
+    factors = pd.concat(frames, ignore_index=True)
+    spec = RuleSpec("forced", "forced", "bool", "bool_forced")
+    daily, positions = run_overlapping_portfolio(
+        factors,
+        dates,
+        spec,
+        lambda rule, day: day[rule.column],
+        max_abs_open_gap=0.08,
+    )
+
+    assert positions["symbol"].tolist() == ["AAA"]
+    assert daily["filtered_signals"].sum() == 1
+
+
+def test_position_cap_uses_aggregate_existing_exposure():
+    dates = business_dates("2025-01-01", 12)
+    frame = make_bars("AAA", dates, closes=np.full(len(dates), 10.0))
+    frame["in_pool"] = True
+    frame["bool_forced"] = frame["date"] < dates[7]
+    for column in ("open_gap", "ret_5d", "ret_20d", "vol_ratio", "adv20"):
+        frame[column] = 0.0
+    spec = RuleSpec("forced", "forced", "bool", "bool_forced")
+    daily, positions = run_overlapping_portfolio(
+        frame,
+        dates,
+        spec,
+        lambda rule, day: day[rule.column],
+        max_position_weight=0.10,
+    )
+
+    assert len(positions) == 2
+    assert positions["signal_date"].tolist() == [dates[0], dates[5]]
+    assert positions["aggregate_weight_after_entry"].max() <= 0.10 + 1e-12
+    assert daily["capped_out_signals"].sum() > 0
+    assert daily["cap_idle_cash"].max() > 0.0
+
+
 def test_monthly_summary_requires_both_stability_gates():
     dates = pd.date_range("2024-10-31", periods=24, freq="ME")
     excess = np.full(24, 0.01)
