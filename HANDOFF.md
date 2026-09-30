@@ -26,6 +26,14 @@
   - 为什么：未经对齐的改动会累积架构不一致；中途打断破坏执行连续性。规则全文已落在各工具全局配置（~/.codex/AGENTS.md、~/.claude/CLAUDE.md、~/.gemini/GEMINI.md，ZCode 侧为其持久记忆）。
   - 可推翻当：用户明确要求恢复「直接开工」或「逐步确认」模式。
 
+## [2026-09-30 · Codex] 复验美股规则并完成组合化与左尾治理
+
+- 原 15 项测试与完整流水线复验通过，85.5 万事件及 gapdown2 / mom252 / high52w 锚点精确一致；新增后共 24 项测试通过。
+- P1 将 4 条 N=5 事件规则实现为 5 袖套重叠组合；四条均未同时通过月度 CI 下界与 16/24 正超额月稳定性线。
+- P2 明示深缺口过滤和 1%/2%/3% 聚合单票上限：过滤未改善左尾或组合超额；上限降低回撤但也削弱累计超额，五方案均未通过组合判定。
+- 交付 `REPORT.md` 与两页审计工作簿（69,458 条完整持仓事件）；提交为 `502fd28d`（P1）和 `519307c5`（P2）。
+- P3 A 股复验按本轮对齐结果延期，未改动既有 1,000 万行分片面板。
+
 ## [2026-09-29 · Codex] Validated six A-share strategy families
 
 - Added an isolated, reproducible study under `studies/a_share_strategy_search/`; no production application code was changed.
