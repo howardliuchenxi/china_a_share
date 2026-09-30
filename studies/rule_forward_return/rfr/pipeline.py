@@ -9,6 +9,7 @@ import pandas as pd
 
 from rfr import panel as panel_mod
 from rfr import rules as rules_mod
+from rfr.portfolio import evaluate_portfolios
 from rfr.returns import HOLD_GRID, collect_events, null_runs
 from rfr.stats import summarize_with_split, verdict
 
@@ -78,9 +79,35 @@ def run() -> int:
     stats_table = evaluate(factors)
     stats_table.to_parquet(os.path.join(DATA_DIR, "stats.parquet"), index=False)
     save_events(factors)
+    portfolio_daily, portfolio_monthly, portfolio_positions, portfolio_summary = (
+        evaluate_portfolios(
+            factors,
+            dates,
+            rules_mod.RULE_REGISTRY,
+            rules_mod.evaluate_rule,
+        )
+    )
+    portfolio_daily.to_parquet(
+        os.path.join(DATA_DIR, "portfolio_daily.parquet"), index=False
+    )
+    portfolio_monthly.to_parquet(
+        os.path.join(DATA_DIR, "portfolio_monthly.parquet"), index=False
+    )
+    portfolio_positions.to_parquet(
+        os.path.join(DATA_DIR, "portfolio_positions.parquet"), index=False
+    )
+    portfolio_summary.to_parquet(
+        os.path.join(DATA_DIR, "portfolio_summary.parquet"), index=False
+    )
     from rfr.report import render_report
 
-    render_report(stats_table, universe=universe, dates=dates)
+    render_report(
+        stats_table,
+        universe=universe,
+        dates=dates,
+        portfolio_summary=portfolio_summary,
+        portfolio_monthly=portfolio_monthly,
+    )
     print(f"pipeline done -> {REPORT_PATH}", flush=True)
     return 0
 

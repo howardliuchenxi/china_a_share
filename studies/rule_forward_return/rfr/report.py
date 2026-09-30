@@ -60,6 +60,8 @@ def render_report(
     stats: pd.DataFrame,
     universe: int,
     dates: pd.DatetimeIndex,
+    portfolio_summary: Optional[pd.DataFrame] = None,
+    portfolio_monthly: Optional[pd.DataFrame] = None,
     path: Optional[str] = None,
 ) -> str:
     """Write the markdown report and return its text."""
@@ -71,6 +73,12 @@ def render_report(
     span = f"{dates.min().date()} – {dates.max().date()}" if len(dates) else "—"
 
     lines: list = []
+    portfolio_labels = {
+        "gapdown2": "开盘低开≤-2%",
+        "mom20_top10": "20日动量·池内前10%",
+        "rev5_bot10": "5日反转·池内后10%买入",
+        "volspike2": "量比≥2",
+    }
     lines.append("# 规则前向收益研究报告（美股）")
     lines.append("")
     lines.append(f"生成时间：{now} · 数据：Massive 日线（前复权） · 本地运行")
@@ -116,12 +124,62 @@ def render_report(
             lines.append(_row_cells(row))
         lines.append("")
 
-    lines.append("## 3. 口径与局限")
+    if portfolio_summary is not None and not portfolio_summary.empty:
+        lines.append("## 3. N=5 重叠持仓组合")
+        lines.append("")
+        lines.append(
+            "组合使用 5 个轮换资金袖套；每日新袖套占初始组合的 20%，当日命中股等权，"
+            "T+1 开盘买入、T+5 收盘退出。策略按买卖各 5bp 扣除完整往返 10bp，"
+            "池基准采用同一入场日与持有期但不扣成本。"
+        )
+        lines.append("")
+        lines.append(
+            "| 规则 | 月数 | 累计净收益 | 池基准 | 累计净超额 | 最大回撤 | 月度胜率 | 正超额月 | 超额均值CI下界 | 判定 |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        for _, row in portfolio_summary.iterrows():
+            lines.append(
+                f"| {portfolio_labels.get(row['rule'], row['rule'])} | {int(row['months'])} | "
+                f"{_pct(row['total_net_return'])} | {_pct(row['total_benchmark_return'])} | "
+                f"{_pct(row['total_excess_return'])} | {_pct(row['max_drawdown'])} | "
+                f"{_pct(row['monthly_win_rate'])} | {int(row['positive_excess_months'])}/{int(row['months'])} | "
+                f"{_pct(row['ci_low'])} | {row['verdict']} |"
+            )
+        lines.append("")
+        lines.append(
+            "判定线：月度超额均值 bootstrap 95%CI 下界 > 0，且 24 个月中至少 16 个月超额为正。"
+        )
+        lines.append("")
+
+    if portfolio_monthly is not None and not portfolio_monthly.empty:
+        lines.append("## 4. 组合月度净收益与超额")
+        lines.append("")
+        for rule_name in portfolio_monthly["rule"].drop_duplicates():
+            block = portfolio_monthly[portfolio_monthly["rule"] == rule_name]
+            lines.append(
+                f"### {portfolio_labels.get(rule_name, rule_name)}（{rule_name}）"
+            )
+            lines.append("")
+            lines.append("| 月份 | 净收益 | 池基准 | 超额 | 月末净值 |")
+            lines.append("|---|---|---|---|---|")
+            for _, row in block.iterrows():
+                lines.append(
+                    f"| {row['month']} | {_pct(row['net_return'])} | "
+                    f"{_pct(row['benchmark_return'])} | {_pct(row['excess_return'])} | "
+                    f"{_fmt(row['strategy_nav'], 4)} |"
+                )
+            lines.append("")
+
+    lines.append("## 5. 口径与局限")
     lines.append("")
     lines.append("- 幸存者偏差：股票池按近期流动性选入后回看两年，期间退市个股缺失；两年窗口内大中盘影响有限但存在")
     lines.append("- 交易成本：主表为毛收益；「净超额」列统一扣 10bp 往返成本，未建模滑点与冲击")
     lines.append("- 252 日类规则（动量 252、52 周新高、均线金叉）有效信号窗约为面板后半段一年")
     lines.append("- 停牌/缺 K 线事件跳过并计入 skipped；面板末端窗口不完整的事件同样跳过")
+    lines.append(
+        "- 组合回测沿用事件级缺失口径：退出日无收盘价的信号不纳入组合；"
+        "持有期中途缺 K 线时以上一可得价格估值，不改变退出日"
+    )
     lines.append(
         "- 个别极端事件（逼空/题材炒作，如样本内 SPCX 2026-06 单日 +582%）会拉动均值，"
         "读表时以中位数与超额列互为印证"
