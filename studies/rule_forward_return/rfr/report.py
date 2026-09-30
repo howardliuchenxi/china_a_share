@@ -69,6 +69,10 @@ def render_report(
     left_tail_portfolio_summary: Optional[pd.DataFrame] = None,
     left_tail_monthly: Optional[pd.DataFrame] = None,
     left_tail_yearly: Optional[pd.DataFrame] = None,
+    improvement_event_summary: Optional[pd.DataFrame] = None,
+    improvement_summary: Optional[pd.DataFrame] = None,
+    improvement_monthly: Optional[pd.DataFrame] = None,
+    improvement_regime: Optional[pd.DataFrame] = None,
 ) -> str:
     """Write the markdown report and return its text."""
     if path is None:
@@ -84,6 +88,10 @@ def render_report(
         "mom20_top10": "20日动量·池内前10%",
         "rev5_bot10": "5日反转·池内后10%买入",
         "volspike2": "量比≥2",
+    }
+    candidate_type_labels = {
+        "composite": "复合规则",
+        "ensemble": "组合",
     }
     lines.append("# 规则前向收益研究报告（美股）")
     lines.append("")
@@ -279,7 +287,108 @@ def render_report(
             )
         lines.append("")
 
-    lines.append("## 7. 口径与局限")
+    if improvement_event_summary is not None and not improvement_event_summary.empty:
+        lines.append("## 7. 预登记复合规则：事件级两关")
+        lines.append("")
+        lines.append(
+            "本轮固定三条复合规则后一次性评估，不根据结果调整阈值。"
+            "它们仍须通过月块 CI 与匹配规模随机选股 null95 两关。"
+        )
+        lines.append("")
+        lines.append(
+            "| 候选 | 事件数 | 平均收益 | 超额 | IS超额 | OOS超额 | CI下界 | null95 | 胜率 | 判定 |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        for _, row in improvement_event_summary.iterrows():
+            lines.append(
+                f"| {row['label']} | {int(row['n'])} | {_pct(row['mean_ret'])} | "
+                f"{_pct(row['mean_excess'])} | {_pct(row['is_excess'])} | "
+                f"{_pct(row['oos_excess'])} | {_pct(row['ci_low'])} | "
+                f"{_pct(row['null95'])} | {_pct(row['win_rate'])} | {row['verdict']} |"
+            )
+        lines.append("")
+
+    if improvement_summary is not None and not improvement_summary.empty:
+        lines.append("## 8. 六个改良候选：组合级结果")
+        lines.append("")
+        lines.append(
+            "组合层候选使用四条已过事件级两关的底层规则；复合规则必须先过事件级两关，"
+            "再过组合月度门槛。逆波动方案仅使用月初之前 60 个交易日，"
+            "月度调仓另扣单边 5bp。共享上限方案在四规则 20 个袖套间共同执行 2% 入场敞口上限。"
+        )
+        lines.append("")
+        lines.append(
+            "| 候选 | 类型 | 月数 | 累计净收益 | 池基准 | 累计净超额 | 最大回撤 | 正超额月 | CI下界 | 事件关 | 组合关 | 最终 |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for _, row in improvement_summary.iterrows():
+            readiness = (
+                "门槛通过·待新样本确认"
+                if row["final_verdict"] == "通过"
+                else "未通过"
+            )
+            lines.append(
+                f"| {row['label']} | "
+                f"{candidate_type_labels.get(row['candidate_type'], row['candidate_type'])} | "
+                f"{int(row['months'])} | "
+                f"{_pct(row['total_net_return'])} | {_pct(row['total_benchmark_return'])} | "
+                f"{_pct(row['total_excess_return'])} | {_pct(row['max_drawdown'])} | "
+                f"{int(row['positive_excess_months'])}/{int(row['months'])} | "
+                f"{_pct(row['ci_low'])} | {row['event_verdict']} | "
+                f"{row['verdict']} | {readiness} |"
+            )
+        lines.append("")
+        lines.append(
+            "重要：2024–2026 数据已经用于提出这些改良，所以即便门槛通过，也只是开发期结果，"
+            "不能重新称为真正 OOS。最终采用需要更长历史或后续新增数据确认。"
+        )
+        lines.append("")
+
+    if improvement_monthly is not None and not improvement_monthly.empty:
+        lines.append("### 改良候选月度超额矩阵")
+        lines.append("")
+        label_map = (
+            improvement_summary.set_index("candidate")["label"].to_dict()
+            if improvement_summary is not None
+            else {}
+        )
+        matrix = improvement_monthly.pivot(
+            index="month", columns="rule", values="excess_return"
+        )
+        lines.append(
+            "| 月份 | "
+            + " | ".join(label_map.get(column, column) for column in matrix.columns)
+            + " |"
+        )
+        lines.append("|---|" + "---|" * len(matrix.columns))
+        for month, row in matrix.iterrows():
+            lines.append(
+                f"| {month} | "
+                + " | ".join(_pct(row[column]) for column in matrix.columns)
+                + " |"
+            )
+        lines.append("")
+
+    if improvement_regime is not None and not improvement_regime.empty:
+        lines.append("### 风险环境诊断（不作为追加候选）")
+        lines.append("")
+        lines.append(
+            "risk_on 定义为信号日池内至少 50 只有 60 日收益，且其中位数大于 0；"
+            "该分段只用于解释收益来源，不据此追加第七条规则。"
+        )
+        lines.append("")
+        lines.append("| 规则 | 环境 | 事件数 | 平均收益 | 超额 | OOS超额 | CI下界 | p5 | 最差 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
+        for _, row in improvement_regime.iterrows():
+            lines.append(
+                f"| {portfolio_labels.get(row['rule'], row['rule'])} | {row['regime']} | "
+                f"{int(row['n'])} | {_pct(row['mean_ret'])} | {_pct(row['mean_excess'])} | "
+                f"{_pct(row['oos_excess'])} | {_pct(row['ci_low'])} | "
+                f"{_pct(row['p5_return'])} | {_pct(row['worst_return'])} |"
+            )
+        lines.append("")
+
+    lines.append("## 9. 口径与局限")
     lines.append("")
     lines.append("- 幸存者偏差：股票池按近期流动性选入后回看两年，期间退市个股缺失；两年窗口内大中盘影响有限但存在")
     lines.append("- 交易成本：主表为毛收益；「净超额」列统一扣 10bp 往返成本，未建模滑点与冲击")

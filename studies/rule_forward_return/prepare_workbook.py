@@ -13,7 +13,10 @@ DATA_DIR = os.path.join(HERE, "data")
 
 
 def _records(frame: pd.DataFrame):
-    clean = frame.replace({np.nan: None})
+    clean = frame.copy()
+    for column in clean.select_dtypes(include=["datetime", "datetimetz"]):
+        clean[column] = clean[column].dt.strftime("%Y-%m-%d")
+    clean = clean.replace({np.nan: None})
     return clean.to_dict(orient="records")
 
 
@@ -28,6 +31,13 @@ def _scenario_weight_maps(
             for row in frame.itertuples()
         }
     return maps
+
+
+def _improvement_memberships(events: pd.DataFrame) -> Dict[tuple, str]:
+    grouped = events.groupby(["date", "symbol"])["candidate"].agg(
+        lambda values: ";".join(sorted(set(values)))
+    )
+    return grouped.to_dict()
 
 
 def prepare() -> tuple:
@@ -58,6 +68,27 @@ def prepare() -> tuple:
     control_positions = pd.read_parquet(
         os.path.join(DATA_DIR, "left_tail_positions.parquet")
     )
+    improvement_event_summary = pd.read_parquet(
+        os.path.join(DATA_DIR, "improvement_event_summary.parquet")
+    )
+    improvement_events = pd.read_parquet(
+        os.path.join(DATA_DIR, "improvement_events.parquet")
+    )
+    improvement_summary = pd.read_parquet(
+        os.path.join(DATA_DIR, "improvement_summary.parquet")
+    )
+    improvement_monthly = pd.read_parquet(
+        os.path.join(DATA_DIR, "improvement_monthly.parquet")
+    )
+    improvement_regime = pd.read_parquet(
+        os.path.join(DATA_DIR, "improvement_regime.parquet")
+    )
+    improvement_weights = pd.read_parquet(
+        os.path.join(DATA_DIR, "improvement_weights.parquet")
+    )
+    improvement_positions = pd.read_parquet(
+        os.path.join(DATA_DIR, "improvement_positions.parquet")
+    )
 
     weight_maps = _scenario_weight_maps(control_positions)
     gap_mask = positions["rule"] == "gapdown2"
@@ -65,11 +96,42 @@ def prepare() -> tuple:
     positions["deep_gap_excluded"] = np.where(
         gap_mask, positions["open_gap"].abs() > 0.08, False
     )
-    keys = list(zip(positions.loc[gap_mask, "signal_date"], positions.loc[gap_mask, "symbol"]))
+    keys = list(
+        zip(
+            positions.loc[gap_mask, "signal_date"],
+            positions.loc[gap_mask, "symbol"],
+        )
+    )
     for scenario, weight_map in weight_maps.items():
         column = f"{scenario}_aggregate_weight"
         positions[column] = np.nan
         positions.loc[gap_mask, column] = [weight_map.get(key, 0.0) for key in keys]
+
+    memberships = _improvement_memberships(improvement_events)
+    positions["improvement_memberships"] = [
+        memberships.get((row.signal_date, row.symbol), "")
+        for row in positions.itertuples()
+    ]
+    cap_positions = improvement_positions[
+        improvement_positions["candidate"] == "ensemble_cap2"
+    ]
+    cap_entry_weights = {
+        (row.rule, row.signal_date, row.symbol): row.entry_weight
+        for row in cap_positions.itertuples()
+    }
+    cap_aggregate_weights = {
+        (row.rule, row.signal_date, row.symbol): row.aggregate_weight_after_entry
+        for row in cap_positions.itertuples()
+    }
+    position_keys = [
+        (row.rule, row.signal_date, row.symbol) for row in positions.itertuples()
+    ]
+    positions["ensemble_cap2_entry_weight"] = [
+        cap_entry_weights.get(key, np.nan) for key in position_keys
+    ]
+    positions["ensemble_cap2_aggregate_weight"] = [
+        cap_aggregate_weights.get(key, np.nan) for key in position_keys
+    ]
 
     detail_columns = [
         "rule",
@@ -99,6 +161,9 @@ def prepare() -> tuple:
         "cap_1pct_aggregate_weight",
         "cap_2pct_aggregate_weight",
         "cap_3pct_aggregate_weight",
+        "improvement_memberships",
+        "ensemble_cap2_entry_weight",
+        "ensemble_cap2_aggregate_weight",
     ]
     detail = positions[detail_columns].sort_values(
         ["rule", "signal_date", "symbol"]
@@ -128,6 +193,11 @@ def prepare() -> tuple:
         "control_summary": _records(control_summary),
         "control_monthly": _records(control_monthly),
         "control_yearly": _records(control_yearly),
+        "improvement_event_summary": _records(improvement_event_summary),
+        "improvement_summary": _records(improvement_summary),
+        "improvement_monthly": _records(improvement_monthly),
+        "improvement_regime": _records(improvement_regime),
+        "improvement_weights": _records(improvement_weights),
     }
 
     summary_path = os.path.join(DATA_DIR, "workbook_summary.json")

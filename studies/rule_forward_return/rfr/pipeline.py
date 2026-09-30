@@ -9,6 +9,7 @@ import pandas as pd
 
 from rfr import panel as panel_mod
 from rfr import rules as rules_mod
+from rfr.improvements import evaluate_improvements
 from rfr.left_tail import evaluate_event_filters, evaluate_portfolio_controls
 from rfr.portfolio import evaluate_portfolios
 from rfr.returns import HOLD_GRID, collect_events, null_runs
@@ -132,6 +133,15 @@ def run() -> int:
         ("left_tail_yearly", left_tail_yearly),
     ):
         frame.to_parquet(os.path.join(DATA_DIR, f"{name}.parquet"), index=False)
+    improvement_results = evaluate_improvements(
+        factors,
+        dates,
+        rules_mod.RULE_REGISTRY,
+        rules_mod.evaluate_rule,
+        portfolio_daily,
+    )
+    for name, frame in improvement_results.items():
+        frame.to_parquet(os.path.join(DATA_DIR, f"{name}.parquet"), index=False)
     from rfr.report import render_report
 
     render_report(
@@ -145,6 +155,12 @@ def run() -> int:
         left_tail_portfolio_summary=left_tail_portfolio_summary,
         left_tail_monthly=left_tail_monthly,
         left_tail_yearly=left_tail_yearly,
+        improvement_event_summary=improvement_results[
+            "improvement_event_summary"
+        ],
+        improvement_summary=improvement_results["improvement_summary"],
+        improvement_monthly=improvement_results["improvement_monthly"],
+        improvement_regime=improvement_results["improvement_regime"],
     )
     print(f"pipeline done -> {REPORT_PATH}", flush=True)
     return 0
