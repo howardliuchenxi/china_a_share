@@ -66,6 +66,7 @@ from china_a_share.llm_preference import (
 )
 from china_a_share.research_sandbox import RemotePythonSandbox
 from china_a_share.vix.history import CloudStorageVixHistoryStore, VixHistory
+from china_a_share.vix.positions import CloudStorageVixPositionStore
 from china_a_share.vix.rules import CloudStorageVixRuleStore
 from china_a_share.vix.scanner import (
     CloudStorageAlertClaimStore,
@@ -73,6 +74,7 @@ from china_a_share.vix.scanner import (
     build_default_quote_fetcher,
     default_now_fn,
 )
+from china_a_share.vix.source import fetch_spx_quote
 
 
 def create_analysis_service(settings: Settings) -> AnalysisService:
@@ -202,6 +204,8 @@ def create_vix_alert_service(
         dispatcher=dispatcher,
         quote_fetcher=build_default_quote_fetcher(),
         now_fn=default_now_fn,
+        positions=CloudStorageVixPositionStore(settings.tushare_cache_bucket),
+        index_quote_fetcher=fetch_spx_quote,
     )
 
 

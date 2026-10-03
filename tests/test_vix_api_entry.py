@@ -241,7 +241,7 @@ def test_vix_commands_do_not_reach_research_submission():
     bot.process(event)
     assert len(sender.replies) == 1
     assert "本群" in sender.replies[0][1]
-    assert "研究" not in sender.replies[0][1]
+    assert "研究任务已受理" not in sender.replies[0][1]
 
 
 def test_disabled_vix_service_answers_with_notice():

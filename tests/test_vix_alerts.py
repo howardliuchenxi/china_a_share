@@ -19,20 +19,28 @@ from china_a_share.vix.history import (
     VixHistory,
     parse_fred_vixcls_csv,
 )
+from china_a_share.vix.positions import (
+    MemoryVixPositionStore,
+    VixPosition,
+    close_reason,
+)
 from china_a_share.vix.rules import (
     MemoryVixRuleStore,
     VixRule,
     new_vix_rule,
+    suggest_expected_return_pct,
 )
 from china_a_share.vix.scanner import (
     MemoryAlertClaimStore,
     VixAlertService,
     compose_alert_message,
+    compose_closing_message,
 )
 from china_a_share.vix.source import (
     VixQuote,
     eastern_wall_clock,
     fetch_vix_quote,
+    fetch_spx_quote,
     parse_vix_quote,
 )
 
@@ -42,6 +50,12 @@ CNBC_PAYLOAD = """
 "change":"-1.08","change_pct":"-6.59%","previous_day_closing":"16.39",
 "last_time":"2026-10-02","last_timedate":"10/02/26 EDT","open":"16.15",
 "high":"16.24","low":"15.30","type":"INDEX","realTime":"true"}]}}
+"""
+
+SPX_PAYLOAD = """
+{"FormattedQuoteResult":{"FormattedQuote":[{"symbol":".SPX","last":"5767.57",
+"change":"-47.12","change_pct":"-0.81%","previous_day_closing":"5814.69",
+"last_time":"2026-10-02","last_timedate":"10/02/26 EDT","type":"INDEX"}]}}
 """
 
 FRED_PAYLOAD = """observation_date,VIXCLS
@@ -78,6 +92,8 @@ def build_service(
     quote=None,
     claims=None,
     now=None,
+    index_quote=None,
+    positions=None,
 ):
     history_store = MemoryVixHistoryStore(closes if closes is not None else {})
     history = VixHistory(history_store, http_get=lambda url, timeout: FRED_PAYLOAD)
@@ -91,20 +107,26 @@ def build_service(
         dispatcher=dispatcher or FakeDispatcher(),
         quote_fetcher=(lambda: quote) if quote is not None else (lambda: None),
         now_fn=lambda: now or eastern(2026, 10, 2, 18, 0),
+        positions=positions if positions is not None else MemoryVixPositionStore(),
+        index_quote_fetcher=(lambda: index_quote) if index_quote is not None else (lambda: None),
     )
 
 
-def up_rule(threshold, rule_id="r-up"):
-    return VixRule(rule_id, "up", threshold, "user", "2026-10-01T00:00:00+00:00")
+def up_rule(threshold, rule_id="r-up", **kwargs):
+    return VixRule(rule_id, "up", threshold, "user", "2026-10-01T00:00:00+00:00", **kwargs)
 
 
-def down_rule(threshold, rule_id="r-down"):
-    return VixRule(rule_id, "down", threshold, "user", "2026-10-01T00:00:00+00:00")
+def down_rule(threshold, rule_id="r-down", **kwargs):
+    return VixRule(rule_id, "down", threshold, "user", "2026-10-01T00:00:00+00:00", **kwargs)
 
 
 def intraday_quote(change_pct=-6.59, date_str="2026-10-02", close=15.31):
     prev = close / (1 + change_pct / 100.0)
     return VixQuote(date_str, close, round(prev, 4), change_pct, date_str)
+
+
+def spx_quote(close=5767.57, date_str="2026-10-02"):
+    return VixQuote(date_str, close, 5814.69, -0.81, date_str)
 
 
 # --- source -----------------------------------------------------------------
@@ -325,11 +347,19 @@ def test_scan_without_quote_reports_skip():
 
 def test_compose_message_formats_two_decimals_and_rules():
     message = compose_alert_message(
-        intraday_quote(change_pct=11.111), [up_rule(10.0, "r1")]
+        intraday_quote(change_pct=11.111), [up_rule(10.0, "r1")], 5767.57
     )
     assert "上涨 11.11%" in message
     assert "≥10.00%" in message
+    assert "标普500 5767.57 点" in message
     assert "[r1]" not in message  # ids are not part of alert text
+
+
+def test_compose_message_degrades_when_index_level_missing():
+    message = compose_alert_message(
+        intraday_quote(change_pct=11.111), [up_rule(10.0, "r1")], None
+    )
+    assert "标普500点位暂不可得" in message
 
 
 # --- lookback ---------------------------------------------------------------
@@ -440,3 +470,285 @@ def test_rules_listing_empty_then_populated():
 def test_non_vix_prompts_return_none():
     service = build_service()
     assert handle_vix_command(service, CHAT_ID, "帮我看看茅台", "user") is None
+
+
+# --- v2: research-context auto-fill ------------------------------------------
+
+
+def test_suggested_expectation_follows_research_band_only():
+    inside = [suggest_expected_return_pct("up", t) for t in (8.0, 9.0, 10.0, 11.0, 12.0)]
+    assert inside == [pytest.approx(0.46)] * 5
+    outside = [
+        suggest_expected_return_pct("up", 7.9),
+        suggest_expected_return_pct("up", 20.0),
+        suggest_expected_return_pct("down", 10.0),
+    ]
+    assert outside == [0.0, 0.0, 0.0]
+
+
+def test_v1_rule_object_loads_with_v2_defaults():
+    legacy = {
+        "id": "old1",
+        "direction": "up",
+        "threshold_pct": 12.0,
+        "created_by": "u",
+        "created_at": "2026-10-01T00:00:00+00:00",
+    }
+    rule = VixRule.from_dict(legacy)
+    assert rule.expected_return_pct == 0.0
+    assert rule.exit_kind == "days" and rule.exit_days == 1
+
+
+def test_full_rule_round_trip_keeps_every_field():
+    rule = new_vix_rule(
+        "up", 10.0, "u", "x",
+        expected_return_pct=0.5,
+        exit_kind="vix_below",
+        exit_days=1,
+        exit_vix_below=20.0,
+    )
+    restored = VixRule.from_dict(rule.to_dict())
+    assert restored == rule
+
+
+# --- v2: command surface ------------------------------------------------------
+
+
+def test_add_rule_autofills_from_context_and_reports_it():
+    service = build_service()
+    reply = handle_vix_command(service, CHAT_ID, "VIX提醒 上涨10%", "user")
+    assert "自动填入" in reply
+    assert "+0.46%" in reply
+    assert "1个交易日后卖出" in reply
+    stored = service.rules.load(CHAT_ID)[0]
+    assert stored.expected_return_pct == pytest.approx(0.46)
+    assert stored.exit_kind == "days" and stored.exit_days == 1
+
+
+def test_add_rule_autofill_outside_research_band_flags_it():
+    service = build_service()
+    reply = handle_vix_command(service, CHAT_ID, "VIX提醒 上涨25%", "user")
+    assert "无研究结论" in reply
+    stored = service.rules.load(CHAT_ID)[0]
+    assert stored.expected_return_pct == 0.0
+
+
+@pytest.mark.parametrize(
+    "prompt,expected,kind,days,level",
+    [
+        ("VIX提醒 上涨10% 预期0.9% 3日后卖出", 0.9, "days", 3, None),
+        ("VIX提醒 下跌5% 预期-1.2% VIX低于18.5卖出", -1.2, "vix_below", None, 18.5),
+        ("VIX提醒 上涨10% 预期0.46% 不卖出", 0.46, "none", None, None),
+    ],
+)
+def test_add_rule_full_syntax_parses_all_fields(prompt, expected, kind, days, level):
+    service = build_service()
+    reply = handle_vix_command(service, CHAT_ID, prompt, "user")
+    assert "已添加规则" in reply
+    stored = service.rules.load(CHAT_ID)[0]
+    assert stored.expected_return_pct == pytest.approx(expected)
+    assert stored.exit_kind == kind
+    if days is not None:
+        assert stored.exit_days == days
+    if level is not None:
+        assert stored.exit_vix_below == pytest.approx(level)
+
+
+def test_add_rule_rejects_two_exit_kinds_at_once():
+    service = build_service()
+    reply = handle_vix_command(
+        service, CHAT_ID, "VIX提醒 上涨10% 3日后卖出 不卖出", "user"
+    )
+    assert "无法添加规则" in reply and "只能指定一种" in reply
+
+
+def test_modify_rule_updates_exit_and_expectation():
+    service = build_service(rules={CHAT_ID: [up_rule(10.0, "r1")]})
+    reply = handle_vix_command(
+        service, CHAT_ID, "VIX修改规则 r1 预期1.5% VIX低于20卖出", "user"
+    )
+    assert "已修改规则" in reply
+    updated = service.rules.load(CHAT_ID)[0]
+    assert updated.expected_return_pct == pytest.approx(1.5)
+    assert updated.exit_kind == "vix_below" and updated.exit_vix_below == 20.0
+
+
+def test_modify_rule_can_change_trigger_and_keeps_creation_date():
+    service = build_service(rules={CHAT_ID: [up_rule(10.0, "r1")]})
+    reply = handle_vix_command(
+        service, CHAT_ID, "VIX修改规则 r1 下跌8%", "user"
+    )
+    assert "已修改规则" in reply
+    updated = service.rules.load(CHAT_ID)[0]
+    assert updated.direction == "down"
+    assert updated.threshold_pct == 8.0
+    assert updated.created_at == "2026-10-01T00:00:00+00:00"
+
+
+def test_modify_rule_rejects_lone_threshold_without_direction():
+    service = build_service(rules={CHAT_ID: [up_rule(10.0, "r1")]})
+    reply = handle_vix_command(service, CHAT_ID, "VIX修改规则 r1 上涨", "user")
+    # "上涨" alone lacks a threshold; nothing parses, no fields change.
+    stored = service.rules.load(CHAT_ID)[0]
+    assert stored.threshold_pct == 10.0
+
+
+# --- v2: position lifecycle ---------------------------------------------------
+
+
+def test_open_position_suppresses_realert_same_event_and_next_day():
+    dispatcher = FakeDispatcher()
+    rule = down_rule(5.0, "r1")
+    service = build_service(
+        rules={CHAT_ID: [rule]},
+        dispatcher=dispatcher,
+        quote=intraday_quote(change_pct=-6.59, date_str="2026-10-02"),
+        now=eastern(2026, 10, 2, 12, 0),
+        index_quote=spx_quote(),
+    )
+    first = service.run_hourly_scan()
+    assert first["alerts_sent"] == 1
+    assert first["positions_opened"] == 1
+
+    # Same event, next day, condition still holds -> suppressed by position.
+    service.quote_fetcher = lambda: intraday_quote(change_pct=-7.0, date_str="2026-10-03", close=14.0)
+    service.now_fn = lambda: eastern(2026, 10, 3, 12, 0)
+    second = service.run_hourly_scan()
+    assert second["alerts_sent"] == 0
+    assert len(dispatcher.sent) == 1  # only the original alert
+
+
+def test_days_exit_closes_position_with_actual_vs_expected_report():
+    dispatcher = FakeDispatcher()
+    rule = up_rule(10.0, "r1", expected_return_pct=0.46, exit_kind="days", exit_days=2)
+    service = build_service(
+        rules={CHAT_ID: [rule]},
+        dispatcher=dispatcher,
+        quote=intraday_quote(change_pct=11.0, date_str="2026-10-02"),
+        now=eastern(2026, 10, 2, 12, 0),
+        index_quote=spx_quote(close=5700.0),
+    )
+    assert service.run_hourly_scan()["positions_opened"] == 1
+
+    # Day+1: only one settled day passed -> still open.
+    service.history.record_settlement("2026-10-02", 17.0)
+    service.quote_fetcher = lambda: intraday_quote(change_pct=1.0, date_str="2026-10-03", close=17.17)
+    service.now_fn = lambda: eastern(2026, 10, 3, 18, 0)
+    service.index_quote_fetcher = lambda: spx_quote(close=5800.0, date_str="2026-10-03")
+    assert service.run_hourly_scan()["positions_closed"] == 0
+
+    # Day+2: second settled day closes it with the bookkeeping report.
+    service.history.record_settlement("2026-10-03", 17.0)
+    service.quote_fetcher = lambda: intraday_quote(change_pct=-0.5, date_str="2026-10-05", close=17.08)
+    service.now_fn = lambda: eastern(2026, 10, 5, 18, 0)
+    service.index_quote_fetcher = lambda: spx_quote(close=5782.8, date_str="2026-10-05")
+    summary = service.run_hourly_scan()
+    assert summary["positions_closed"] == 1
+    closing = dispatcher.sent[-1][1]
+    assert "对账" in closing
+    assert "实际收益 +1.45%" in closing
+    assert "预期收益 +0.46%" in closing
+    assert "达到预期" in closing
+    assert "持有2个交易日到期" in closing
+    # Position is gone: the same rule can alert again on a new event.
+    assert service.positions.get(CHAT_ID, "r1") is None
+
+
+def test_vix_below_exit_closes_when_level_breaks():
+    dispatcher = FakeDispatcher()
+    rule = up_rule(10.0, "r1", exit_kind="vix_below", exit_vix_below=20.0)
+    service = build_service(
+        rules={CHAT_ID: [rule]},
+        dispatcher=dispatcher,
+        quote=intraday_quote(change_pct=11.0, date_str="2026-10-02", close=21.0),
+        now=eastern(2026, 10, 2, 12, 0),
+        index_quote=spx_quote(close=5700.0),
+    )
+    service.run_hourly_scan()
+    assert service.positions.get(CHAT_ID, "r1") is not None
+
+    service.quote_fetcher = lambda: intraday_quote(change_pct=-8.0, date_str="2026-10-03", close=19.3)
+    service.now_fn = lambda: eastern(2026, 10, 3, 12, 0)
+    service.index_quote_fetcher = lambda: spx_quote(close=5750.0, date_str="2026-10-03")
+    summary = service.run_hourly_scan()
+    assert summary["positions_closed"] == 1
+    assert "VIX 跌破 20.00" in dispatcher.sent[-1][1]
+    assert service.positions.get(CHAT_ID, "r1") is None
+
+
+def test_none_exit_closes_when_condition_fades_on_later_day():
+    dispatcher = FakeDispatcher()
+    rule = up_rule(10.0, "r1", exit_kind="none", expected_return_pct=0.0)
+    service = build_service(
+        rules={CHAT_ID: [rule]},
+        dispatcher=dispatcher,
+        quote=intraday_quote(change_pct=11.0, date_str="2026-10-02", close=21.0),
+        now=eastern(2026, 10, 2, 12, 0),
+        index_quote=spx_quote(close=5700.0),
+    )
+    service.run_hourly_scan()
+
+    # Later day, condition faded -> closes even without any market-timed exit.
+    service.quote_fetcher = lambda: intraday_quote(change_pct=1.0, date_str="2026-10-03", close=21.2)
+    service.now_fn = lambda: eastern(2026, 10, 3, 12, 0)
+    service.index_quote_fetcher = lambda: spx_quote(close=5719.0, date_str="2026-10-03")
+    summary = service.run_hourly_scan()
+    assert summary["positions_closed"] == 1
+    assert "触发条件消退" in dispatcher.sent[-1][1]
+    assert "实际收益 +0.33%" in dispatcher.sent[-1][1]
+
+
+def test_closing_report_degrades_without_index_levels():
+    dispatcher = FakeDispatcher()
+    position = VixPosition.from_rule(
+        up_rule(10.0, "r1", expected_return_pct=0.46),
+        CHAT_ID,
+        intraday_quote(change_pct=11.0),
+        None,
+    )
+    message = compose_closing_message(
+        position, intraday_quote(change_pct=1.0), None, "持有1个交易日到期"
+    )
+    assert "无法计算" in message
+    assert "+0.46%" in message
+
+
+def test_close_reason_days_requires_settled_day_counts():
+    position = VixPosition.from_rule(
+        up_rule(10.0, "r1", exit_kind="days", exit_days=1),
+        CHAT_ID,
+        intraday_quote(change_pct=11.0, date_str="2026-10-02"),
+        None,
+    )
+    assert close_reason(position, intraday_quote(date_str="2026-10-02"), 0) is None
+    assert close_reason(position, intraday_quote(date_str="2026-10-03"), 1) is not None
+
+
+def test_fetch_spx_quote_parses_index_payload():
+    quote = fetch_spx_quote(lambda url, timeout: SPX_PAYLOAD)
+    assert quote is not None
+    assert quote.close == pytest.approx(5767.57)
+    assert quote.prev_close == pytest.approx(5814.69)
+
+
+def test_fetch_spx_quote_returns_none_on_failure():
+    def broken(url, timeout):
+        raise RuntimeError("down")
+
+    assert fetch_spx_quote(broken) is None
+
+
+def test_remove_all_rules_also_clears_open_positions():
+    dispatcher = FakeDispatcher()
+    rule = down_rule(5.0, "r1")
+    service = build_service(
+        rules={CHAT_ID: [rule]},
+        dispatcher=dispatcher,
+        quote=intraday_quote(change_pct=-6.59),
+        now=eastern(2026, 10, 2, 12, 0),
+        index_quote=spx_quote(),
+    )
+    service.run_hourly_scan()
+    assert service.positions.get(CHAT_ID, "r1") is not None
+    handle_vix_command(service, CHAT_ID, "VIX删除规则 全部", "user")
+    assert service.positions.get(CHAT_ID, "r1") is None

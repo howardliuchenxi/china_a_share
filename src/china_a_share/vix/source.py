@@ -31,6 +31,10 @@ CNBC_QUOTE_URL = (
     "https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol"
     "?symbols=VIX&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json"
 )
+CNBC_SPX_QUOTE_URL = (
+    "https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol"
+    "?symbols=.SPX&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json"
+)
 QUOTE_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
@@ -69,10 +73,24 @@ def fetch_vix_quote(
     now_utc: Optional[datetime] = None,
 ) -> Optional[VixQuote]:
     """Fetch one VIX snapshot, retrying transient failures; None when unusable."""
+    return _fetch_quote(CNBC_QUOTE_URL, http_get)
+
+
+def fetch_spx_quote(http_get: Optional[HttpGet] = None) -> Optional[VixQuote]:
+    """Fetch one S&P 500 snapshot for measuring alert outcomes; None on failure.
+
+    The index level is best-effort context for the entry/exit bookkeeping: a
+    failure degrades the closing report (no return numbers) but never blocks
+    an alert.
+    """
+    return _fetch_quote(CNBC_SPX_QUOTE_URL, http_get)
+
+
+def _fetch_quote(url: str, http_get: Optional[HttpGet]) -> Optional[VixQuote]:
     getter = http_get or _default_http_get
     for attempt in range(1, QUOTE_ATTEMPTS + 1):
         try:
-            payload = getter(CNBC_QUOTE_URL, QUOTE_TIMEOUT_SECONDS)
+            payload = getter(url, QUOTE_TIMEOUT_SECONDS)
             return parse_vix_quote(payload)
         except Exception as exc:
             log_event(
