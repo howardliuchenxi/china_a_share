@@ -383,7 +383,19 @@ GitHub authorization.
 | State | Enabled; one verified manual run returned HTTP 200 in ~6 ms |
 | Retry count | Scheduler default; a missed ping is harmless because the next one arrives within five minutes |
 | Purpose | Keep a Cloud Run instance resident so Feishu card-action callbacks are answered inside Feishu's 3-second deadline; cold starts after scale-to-zero previously produced 3.2–6.2 s first responses and the client error toast |
-| Expected cost impact | 8,640 authenticated GETs per month at ~5 ms each under request-based billing (well under USD 0.10); with this job the project holds exactly three Scheduler jobs, the maximum of the monthly free allowance, so any fourth job would start incurring Scheduler charges |
+| Expected cost impact | 8,640 authenticated GETs per month at ~5 ms each under request-based billing (well under USD 0.10) |
+
+| Setting | Value |
+| --- | --- |
+| Job | `china-a-share-vix-hourly-scan` |
+| Region | `asia-east2` |
+| Schedule | Hourly (`0 * * * *`, America/New_York) |
+| Target | POST `https://china-a-share-lab-1079739428171.asia-east2.run.app/api/vix/scan` |
+| Invocation identity | `china-a-share-scheduler@china-a-share-lab.iam.gserviceaccount.com` (OIDC token, audience set to the full route URL; the API also accepts the optional `VIX_SCAN_TOKEN` static bearer) |
+| State | Enabled; created with the VIX group-alert release and one verified manual run (HTTP 200, 2026-10-03) |
+| Retry count | Scheduler default; the endpoint is idempotent per rule per trading day (GCS generation-zero claim) and per open event position |
+| Purpose | Hourly VIX patrol: fetch the CNBC VIX quote, evaluate each group's chat-configured rules, deliver hit alerts, and close open alert positions with an actual-versus-expected bookkeeping message |
+| Expected cost impact | This is the project's fourth Scheduler job, beyond the three-job monthly free allowance; ~730 hourly POSTs per month are expected to cost well under USD 0.10 |
 
 Google-managed Cloud Run, Cloud Build, Artifact Registry, Container Registry,
 and Pub/Sub service agents also exist. They are platform-managed identities and
@@ -528,4 +540,6 @@ enforced by this repository. They must be reconciled here when observed.
 
 | 2026-09-20 | Created Cloud Scheduler job `china-a-share-keep-alive` (asia-east2, `*/5 * * * *`, OIDC GET to `/api/health` as `china-a-share-scheduler@`) and verified a manual run returned 200 in ~6 ms. Rationale: request logs showed first Feishu card-action callback after each idle period cold-starting for 3.2–6.2 s, past Feishu's 3-second card-callback deadline, producing the client error toast while the action still executed. No IAM boundary, lifecycle policy, or Cloud Run setting changed; the project now holds exactly three Scheduler jobs (the monthly free-allowance maximum), and expected added spend is well under USD 0.10 per month from ~8,640 five-millisecond health requests. |
 | 2026-09-20 | Deployed revision `china-a-share-lab-00264-hz9` through the main push trigger from `main@61393eb6` (merge of `codex/nl-rule-compiler`); verified 100% traffic, public health, and a manual scheduler invocation succeeding. The release accepts natural-language strategy conditions: the existing DeepSeek planner compiles free text into locally re-validated pydantic rules at authoring time, ambiguous phrasings return candidate option buttons, and out-of-vocabulary requests return a guidance card; daily scans remain deterministic. No resource type, IAM boundary, lifecycle policy, or material cost changed; each unclear authoring attempt costs one deepseek-flash call. |
+| 2026-10-03 | Deployed revisions `china-a-share-lab-00298-kkp` then the current revision through the main push trigger from `main@19ac3589` and `main@d82298db`; verified the deployed `APP_GIT_SHA` equals `d82298db31425e5b67273261fb68b5d242564b31` and unauthenticated probes return 401. The release adds the VIX group-alert capability: a CNBC-quote adapter (key-free, intraday), FRED-seeded VIX close history, per-chat rules under the existing bucket's `vix/` prefix with expectations and exit conditions auto-filled from the research context and editable by chat command, event-level deduplication through open positions, closing bookkeeping messages comparing actual S&P 500 return with the rule's expectation, a chat lookback command, and an authenticated `POST /api/vix/scan` entry. No resource type, IAM boundary, lifecycle policy, or material cost changed; storage grows only with user-created rules, positions, and per-day claims. |
+| 2026-10-03 | Created Cloud Scheduler job `china-a-share-vix-hourly-scan` (asia-east2, `0 * * * *` America/New_York, OIDC POST to `/api/vix/scan` as `china-a-share-scheduler@`, audience set to the full route URL) and verified two manual runs returned 200 (17:50:57Z and 18:05:52Z). This is the project's fourth Scheduler job, beyond the three-job monthly free allowance; expected spend is well under USD 0.10 per month from ~730 hourly POSTs. No IAM change was needed because the scheduler identity already invokes Cloud Run services in this project. |
 

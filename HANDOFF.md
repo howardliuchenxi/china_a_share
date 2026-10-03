@@ -11,6 +11,14 @@
      注：2026-09-22 前 main 无本文件；历史决策条目暂存于分叉分支
      codex/technical-pattern-studies 的 HANDOFF.md，随小单元移植逐步回填。 -->
 
+## [2026-10-03 · ZCode] VIX 群提醒上线：群命令 + 每小时巡检 + 事件去重 + 对账
+
+- 新模块 `src/china_a_share/vix/`（研究仓 vix_index_relationship 结论的最小单元移植）：CNBC 免 key 行情适配（VIX 盘中+收盘，含重试/陈旧判定/自实现美东 DST 时钟）、FRED 全史回填的收盘序列（GCS `vix/history.json`，懒初始化、只增不改）、每群规则（`vix/rules/{sha256(chat)}.json`）、触发即开仓的持仓（`vix/positions/`）与每规则每交易日去重占位（`vix/alerts/`，if_generation_match=0 原子 claim，发送失败回收下小时重试）。
+- 群命令：`VIX提醒 上涨10%`（预期收益/卖出条件缺省时按研究结论自动填入并回执说明，可用后缀全量指定：`预期0.9% 3日后卖出 | VIX低于20卖出 | 不卖出`）、`VIX修改规则`、`VIX规则`、`VIX删除规则`、`VIX回溯 2026-04-04`（FRED 历史逐规则判定命中）。阈值/预期/卖出全部存于群配置对象，代码零默认规则。
+- 事件级去重：命中开仓后同一规则不再重复提醒；满足卖出条件（N 交易日 / VIX 跌破 X / 不卖出时触发条件消退）自动发对账消息，列入场/出场 VIX 与标普500点位、实际收益 vs 规则预期、达标结论（标普点位取自 CNBC `.SPX`，取不到时降级说明）。
+- 入口与调度：`POST /api/vix/scan`（鉴权泛化自 strategy-scan 的 `_verify_scheduler_scan_authorization`：静态 token 常量时间比较或 Google OIDC audience 校验）；Cloud Scheduler `china-a-share-vix-hourly-scan`（每小时，America/New_York，OIDC audience=完整路由）已建并两次手动触发 200（17:50:57Z / 18:05:52Z）；部署 `APP_GIT_SHA=d82298db` 已核验。测试 83 项 vix + 全仓 1068 通过；gcp-resources.md 已记第四个 Scheduler（超免费额度，月成本 <$0.10）。
+- 遗留：群规则须由用户在群内首条 `VIX提醒` 命令创建（未预置）；CNBC 属非官方端点，若变更需换源（备选源矩阵见研究仓 README）；「不卖出」的退出语义=触发条件在后续交易日消退，对账在那时发出。
+
 ## [2026-09-28 · ZCode] 澄清提问加台账一致性闸门（选项矛盾剔除/引文核验/已定即结论）
 
 - 背景（用户反馈）：agent 抛选择题时「单看选项很详细、联系整体逻辑不通」——实锤案例即 L4/L5 保留期之问：v2.24 唯一原则已写死三态纪律，选项 2/3 违反仍被并列 offered，且题设漏 r60 与 L6 自动进层。根因：已定口径只活在 12 轮对话窗口文本里，澄清工具契约（question+options 2–4 个）没有任何「对照已定条款」的强制。
