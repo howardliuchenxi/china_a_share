@@ -65,6 +65,14 @@ from china_a_share.llm_preference import (
     resolve_active_provider,
 )
 from china_a_share.research_sandbox import RemotePythonSandbox
+from china_a_share.vix.history import CloudStorageVixHistoryStore, VixHistory
+from china_a_share.vix.rules import CloudStorageVixRuleStore
+from china_a_share.vix.scanner import (
+    CloudStorageAlertClaimStore,
+    VixAlertService,
+    build_default_quote_fetcher,
+    default_now_fn,
+)
 
 
 def create_analysis_service(settings: Settings) -> AnalysisService:
@@ -176,6 +184,24 @@ def create_feishu_research_bot(settings: Settings) -> FeishuResearchBot:
         strategy_interaction=strategy_interaction,
         feedback_interaction=feedback_interaction,
         llm_switcher=create_llm_preference_controller(settings),
+        vix_service=create_vix_alert_service(settings, feishu_client),
+    )
+
+
+def create_vix_alert_service(
+    settings: Settings,
+    dispatcher,
+) -> Optional[VixAlertService]:
+    """Assemble the VIX group-alert service when persistence is available."""
+    if not settings.tushare_cache_bucket:
+        return None
+    return VixAlertService(
+        history=VixHistory(CloudStorageVixHistoryStore(settings.tushare_cache_bucket)),
+        rules=CloudStorageVixRuleStore(settings.tushare_cache_bucket),
+        claims=CloudStorageAlertClaimStore(settings.tushare_cache_bucket),
+        dispatcher=dispatcher,
+        quote_fetcher=build_default_quote_fetcher(),
+        now_fn=default_now_fn,
     )
 
 

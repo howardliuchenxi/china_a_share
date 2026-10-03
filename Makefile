@@ -36,6 +36,8 @@ FEISHU_TEST_FILES := \
 	tests/test_repository_context.py \
 	tests/test_server.py \
 	tests/test_tasks.py \
+	tests/test_vix_alerts.py \
+	tests/test_vix_api_entry.py \
 	tests/test_worker.py
 
 GCLOUD := $(shell command -v gcloud 2>/dev/null || { test -x "$$HOME/google-cloud-sdk/bin/gcloud" && printf '%s' "$$HOME/google-cloud-sdk/bin/gcloud"; })

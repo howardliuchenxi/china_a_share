@@ -81,6 +81,7 @@ UI_FEEDBACK_CHAT_API_ROUTE = "/api/ui-feedback/chat"
 LIVE_CASES_API_ROUTE = "/api/e2e-cases"
 FEISHU_EVENTS_API_ROUTE = "/api/integrations/feishu/events"
 RESEARCH_VISUALIZATION_API_ROUTE = "/api/research/visualizations"
+VIX_SCAN_API_ROUTE = "/api/vix/scan"
 MONITORED_API_ROUTES = {
     ANALYSIS_API_ROUTE,
     HEALTH_API_ROUTE,
@@ -90,6 +91,7 @@ MONITORED_API_ROUTES = {
     UI_FEEDBACK_CONFIG_API_ROUTE,
     UI_FEEDBACK_CHAT_API_ROUTE,
     LIVE_CASES_API_ROUTE,
+    VIX_SCAN_API_ROUTE,
     FEISHU_EVENTS_API_ROUTE,
     RESEARCH_VISUALIZATION_API_ROUTE,
 }
@@ -114,6 +116,21 @@ def _administrator_bearer_token(authorization: str) -> str:
 
 
 def _verify_strategy_scan_authorization(authorization: str) -> None:
+    """Accept the configured static scan token or one Google-issued identity token."""
+    _verify_scheduler_scan_authorization(
+        authorization,
+        STRATEGY_SCAN_API_ROUTE,
+        Settings.from_env().strategy_scan_token,
+        "Strategy scan authentication is required.",
+    )
+
+
+def _verify_scheduler_scan_authorization(
+    authorization: str,
+    api_route: str,
+    static_token: str,
+    error_detail: str,
+) -> None:
     """Accept the configured static scan token or one Google-issued identity token.
 
     The static token is compared in constant time. When no static token is
@@ -125,12 +142,12 @@ def _verify_strategy_scan_authorization(authorization: str) -> None:
     supplied = _administrator_bearer_token(authorization)
     settings = Settings.from_env()
     verified = False
-    if settings.strategy_scan_token:
-        verified = secrets.compare_digest(supplied, settings.strategy_scan_token)
+    if static_token:
+        verified = secrets.compare_digest(supplied, static_token)
     if not verified and settings.public_app_url:
         audiences = (
             settings.public_app_url,
-            f"{settings.public_app_url}{STRATEGY_SCAN_API_ROUTE}",
+            f"{settings.public_app_url}{api_route}",
         )
         for audience in audiences:
             try:
@@ -150,7 +167,7 @@ def _verify_strategy_scan_authorization(authorization: str) -> None:
     if not verified:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Strategy scan authentication is required.",
+            detail=error_detail,
         )
 
 
@@ -421,6 +438,54 @@ def create_app(
                 detail="Strategy daily scan failed.",
             ) from exc
         return {"status": "completed"}
+
+    @application.post(VIX_SCAN_API_ROUTE)
+    def trigger_vix_hourly_scan(
+        http_request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict:
+        """Run one VIX hourly scan so the scheduler can retry failures."""
+        try:
+            _verify_scheduler_scan_authorization(
+                authorization,
+                VIX_SCAN_API_ROUTE,
+                Settings.from_env().vix_scan_token,
+                "VIX scan authentication is required.",
+            )
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        try:
+            bot = get_feishu_research_bot()
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        vix_service = bot.vix_service
+        if vix_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="VIX alert service is not configured.",
+            )
+        try:
+            summary = vix_service.run_hourly_scan()
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "vix_hourly_scan_failed",
+                api_route=VIX_SCAN_API_ROUTE,
+                request_id=http_request.state.request_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="VIX hourly scan failed.",
+            ) from exc
+        return {"status": "completed", **summary}
 
     def get_ui_feedback_service() -> UiFeedbackService:
         """Build the optional administrator workflow only when it is requested."""

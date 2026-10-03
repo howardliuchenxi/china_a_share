@@ -34,6 +34,10 @@ from china_a_share.core.contracts import (
     FeishuFeedbackSubmission,
 )
 from china_a_share.observability import log_event
+from china_a_share.vix.commands import (
+    handles_vix_command,
+    handle_vix_command,
+)
 from china_a_share.feishu_agent import (
     FEISHU_MESSAGE_WITHDRAWN_CODE,
     FeishuAgentConversationTurn,
@@ -609,6 +613,30 @@ class FeishuOpenApiClient:
             raise RuntimeError("Feishu chat card send omitted the message ID.")
         return sent_message_id
 
+    def send_chat_text(self, chat_id: str, text: str) -> str:
+        """Send one new text message to a chat without a source message."""
+        token = self._tenant_access_token()
+        response = self._session.post(
+            f"{FEISHU_API_BASE_URL}/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "receive_id": chat_id,
+                "msg_type": "text",
+                "content": json.dumps(
+                    {"text": text[:MAX_FEISHU_MESSAGE_LENGTH]}, ensure_ascii=False
+                ),
+            },
+            timeout=FEISHU_MESSAGE_TIMEOUT_SECONDS,
+        )
+        self._raise_for_feishu_error(response, "chat text send")
+        sent_message_id = str(
+            ((response.json().get("data") or {}).get("message_id") or "")
+        ).strip()
+        if not sent_message_id:
+            raise RuntimeError("Feishu chat text send omitted the message ID.")
+        return sent_message_id
+
     def reply_file(self, message_id: str, path: "Path") -> None:
         """Upload one generated workbook and reply with the resulting file key."""
         token = self._tenant_access_token()
@@ -735,6 +763,7 @@ class FeishuResearchBot:
         strategy_interaction: Optional[StrategyInteractionCoordinator] = None,
         feedback_interaction: Optional[FeishuFeedbackCoordinator] = None,
         llm_switcher: Optional[Any] = None,
+        vix_service: Optional[Any] = None,
     ) -> None:
         if not verification_token or not encrypt_key:
             raise FeishuConfigurationError(
@@ -750,6 +779,7 @@ class FeishuResearchBot:
         self._strategy_interaction = strategy_interaction
         self._feedback_interaction = feedback_interaction
         self._llm_switcher = llm_switcher
+        self._vix_service = vix_service
 
     @property
     def strategy_scanner(self):
@@ -757,6 +787,11 @@ class FeishuResearchBot:
         if self._strategy_interaction is None:
             return None
         return self._strategy_interaction.scanner
+
+    @property
+    def vix_service(self):
+        """Return the VIX group-alert service wired into the bot, if any."""
+        return self._vix_service
 
     def verify_signature(
         self,
@@ -1101,6 +1136,8 @@ class FeishuResearchBot:
                         reply = "反馈功能未启用，请联系管理员。"
                     else:
                         reply = self._feedback_text_command_reply(event)
+                elif handles_vix_command(event.prompt):
+                    reply = self._vix_command_reply(event)
                 else:
                     reply = self._submit_reply(event)
             if reply is not None:
@@ -1333,6 +1370,17 @@ class FeishuResearchBot:
         if truncated:
             notes.append("部分较早交互或超长回答在报告中省略。")
         return "；".join(notes)
+
+    def _vix_command_reply(self, event: FeishuMessageEvent) -> Optional[str]:
+        """Answer one VIX rule or lookback command for the sending chat."""
+        if self._vix_service is None:
+            return "VIX 提醒功能未启用，请联系管理员。"
+        return handle_vix_command(
+            self._vix_service,
+            event.chat_id,
+            event.prompt,
+            event.sender_open_id,
+        )
 
     def _submit_reply(self, event: FeishuMessageEvent) -> Optional[str]:
         """Create one durable analysis task and return its tracking commands."""
